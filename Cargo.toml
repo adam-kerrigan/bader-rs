@@ -1,0 +1,19 @@
+[package]
+name = "bader"
+version = "0.1.0"
+authors = ["Adam Kerrigan <ak1014@york.ac.uk>"]
+edition = "2018"
+description = "Grid based Bader charge partitioning"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/kerrigoon/bader-rs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rayon = "1.1"
+regex = "1"
+prettytable-rs = "^0.8"
+clap = "3.0.0-beta.1"
+indicatif = "*"
+atomic-counter = "1.0.1"

@@ -1,0 +1,3 @@
+reorder_imports = true
+indent_style = "Visual"
+max_width = 80
