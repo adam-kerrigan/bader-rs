@@ -10,12 +10,14 @@ pub fn ongrid_step(p: isize, density: &Density) -> isize {
     let mut pt = p.clone();
     let control = density[pn];
     let mut max_val = density[pt];
-    let distance = density.voxel_lattice.distance_matrix;
     // colllect the shift and distances and iterate over them
-    for (i, p_shift) in density.full_shift(p).iter().enumerate() {
-        pt = p + p_shift;
+    for (shift, d) in density.full_shift(p)
+                             .iter()
+                             .zip(&density.voxel_lattice.distance_matrix)
+    {
+        pt = p + shift;
         // calculate the gradient and if it is greater that the current max
-        let rho = control + (density[pt] - control) / distance[i];
+        let rho = control + (density[pt] - control) / d;
         if rho > max_val {
             max_val = rho;
             pn = pt;
@@ -117,4 +119,58 @@ pub fn neargrid(p: usize, density: &Density) -> isize {
         };
     };
     return vol_num;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::atoms::Lattice;
+
+    #[test]
+    fn methods_ongrid_step() {
+        let data = (0..64).map(|x| x as f64).collect::<Vec<f64>>();
+        let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
+        let density = Density::new(&data,
+                                   [4, 4, 4],
+                                   lattice.to_cartesian,
+                                   Some(1E-3),
+                                   [0., 0., 0.0]);
+        assert_eq!(ongrid_step(61, &density), 62)
+    }
+
+    #[test]
+    fn methods_ongrid() {
+        let data = (0..64).map(|x| x as f64).collect::<Vec<f64>>();
+        let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
+        let density = Density::new(&data,
+                                   [4, 4, 4],
+                                   lattice.to_cartesian,
+                                   Some(1E-3),
+                                   [0., 0., 0.0]);
+        assert_eq!(ongrid(61, &density), 63)
+    }
+
+    #[test]
+    fn methods_neargrid_step() {
+        let data = (0..64).map(|x| x as f64).collect::<Vec<f64>>();
+        let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
+        let density = Density::new(&data,
+                                   [4, 4, 4],
+                                   lattice.to_cartesian,
+                                   Some(1E-3),
+                                   [0., 0., 0.0]);
+        assert_eq!(neargrid_step(61, &mut [0., 0., -1.], &density), 61)
+    }
+
+    #[test]
+    fn methods_neargrid() {
+        let data = (0..64).map(|x| x as f64).collect::<Vec<f64>>();
+        let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
+        let density = Density::new(&data,
+                                   [4, 4, 4],
+                                   lattice.to_cartesian,
+                                   Some(1E-3),
+                                   [0., 0., 0.0]);
+        assert_eq!(neargrid(61, &density), 63)
+    }
 }

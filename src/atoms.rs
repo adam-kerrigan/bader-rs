@@ -33,9 +33,10 @@ impl Atoms {
             Vec::<usize>::with_capacity(map.bader_maxima.len());
         let mut assigned_distance =
             Vec::<f64>::with_capacity(map.bader_maxima.len());
-        let maximas = match density.vacuum_tolerance {
-            Some(_) => &map.bader_maxima[1..],
-            None => &map.bader_maxima[..],
+        let maximas = if map.bader_maxima[0] == -1 {
+            &map.bader_maxima[1..]
+        } else {
+            &map.bader_maxima[..]
         };
         for maxima in maximas.iter() {
             let bx = density.voxel_origin[0]
@@ -168,6 +169,7 @@ impl Lattice {
                 lattice[1][0] * lattice[2][1] - lattice[1][1] * lattice[2][0];
             let determinant = lattice[0][0] * minor00 - lattice[0][1] * minor01
                               + lattice[0][2] * minor02;
+            assert_ne!(determinant, 0., "Lattice doesn't span 3D space");
             [[minor00 / determinant,
               (lattice[0][2] * lattice[2][1] - lattice[2][2] * lattice[0][1])
               / determinant,
@@ -206,5 +208,104 @@ impl Lattice {
                       to_fractional,
                       to_cartesian,
                       volume };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn atoms_new() {
+        let positions = vec![[0.; 3]];
+        let lattice = Lattice::new([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]);
+        let text = String::new();
+        let atoms = Atoms::new(lattice, positions, text);
+        let positions = vec![[0.; 3]];
+        let lattice = Lattice::new([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]);
+        let text = String::new();
+        assert_eq!(atoms.lattice.to_cartesian, lattice.to_cartesian);
+        assert_eq!(atoms.positions, positions);
+        assert_eq!(atoms.text, text);
+    }
+
+    #[test]
+    fn atoms_assign_maxima() {
+        let positions = vec![[0.; 3]];
+        let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
+        let text = String::new();
+        let atoms = Atoms::new(lattice, positions, text);
+        let map = vec![63; 64];
+        let bader_maxima = vec![63];
+        let voxel_map = VoxelMap::new(map, bader_maxima);
+        let data = (0..64).map(|x| x as f64).collect::<Vec<f64>>();
+        let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
+        let density = Density::new(&data,
+                                   [4, 4, 4],
+                                   lattice.to_cartesian,
+                                   None,
+                                   [0., 0., 0.]);
+        let (atom, distance) = atoms.assign_maxima(&voxel_map, &density);
+        assert_eq!(atom, vec![0]);
+        assert_eq!(distance[0], density.voxel_lattice.distance_matrix[0])
+    }
+
+    #[test]
+    fn atoms_assign_maxima_vacuum() {
+        let positions = vec![[0.; 3]];
+        let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
+        let text = String::new();
+        let atoms = Atoms::new(lattice, positions, text);
+        let map = vec![63; 64];
+        let bader_maxima = vec![-1, 63];
+        let voxel_map = VoxelMap::new(map, bader_maxima);
+        let data = (0..64).map(|x| x as f64).collect::<Vec<f64>>();
+        let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
+        let density = Density::new(&data,
+                                   [4, 4, 4],
+                                   lattice.to_cartesian,
+                                   None,
+                                   [0., 0., 0.]);
+        let (atom, distance) = atoms.assign_maxima(&voxel_map, &density);
+        assert_eq!(atom, vec![0]);
+        assert_eq!(distance[0], density.voxel_lattice.distance_matrix[0])
+    }
+
+    #[test]
+    fn lattice_new() {
+        let lattice = Lattice::new([[1., 0., 0.], [0., 2., 0.], [0., 0., 2.]]);
+        let distance_matrix = [3.,
+                               5f64.powf(0.5),
+                               3.,
+                               5f64.powf(0.5),
+                               1.,
+                               5f64.powf(0.5),
+                               3.,
+                               5f64.powf(0.5),
+                               3.,
+                               8f64.powf(0.5),
+                               2.,
+                               8f64.powf(0.5),
+                               2.,
+                               2.,
+                               8f64.powf(0.5),
+                               2.,
+                               8f64.powf(0.5),
+                               3.,
+                               5f64.powf(0.5),
+                               3.,
+                               5f64.powf(0.5),
+                               1.,
+                               5f64.powf(0.5),
+                               3.,
+                               5f64.powf(0.5),
+                               3.];
+        assert_eq!(lattice.distance_matrix, distance_matrix)
+    }
+
+    #[test]
+    #[should_panic]
+    fn lattice_new_non_invert() {
+        let _ = Lattice::new([[1., 0., 0.], [1., 0., 0.], [0., 0., 2.]]);
     }
 }

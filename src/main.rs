@@ -1,16 +1,18 @@
-use bader::arguments::{Args, Reference};
+use bader::arguments::{Args, ClapApp, Reference};
 use bader::density::{Density, VoxelMap};
 use bader::io::{self, ReadFunction};
 use bader::methods::StepMethod;
 use bader::progress::Bar;
+use indicatif::ProgressBar;
 use rayon::prelude::*;
 
 fn main() {
-    rayon::ThreadPoolBuilder::new().num_threads(0)
+    let app = ClapApp::App;
+    let args = Args::new(app.get().get_matches());
+
+    rayon::ThreadPoolBuilder::new().num_threads(args.threads)
                                    .build_global()
                                    .unwrap();
-
-    let args = Args::new();
 
     let read_function: ReadFunction = args.read;
     let (voxel_origin, grid, atoms, densities) = match read_function(args.file)
@@ -63,9 +65,8 @@ fn main() {
 
     let method: StepMethod = args.method;
 
-    let pbar = Bar::new(reference.size.total as u64,
-                        100,
-                        String::from("Bader Calculation:"));
+    let pbar = ProgressBar::new(reference.size.total as u64);
+    let pbar = Bar::new(pbar, 100, String::from("Bader Calculation:"));
     let map = (0..reference.size.total).into_par_iter()
                                        .map(|i| {
                                            pbar.tick();
@@ -82,17 +83,18 @@ fn main() {
         voxel_map.surface_distance(&assigned_atom, &atoms, &reference);
     let (bader_charge, bader_volume, vacuum_charge, vacuum_volume) =
         { voxel_map.charge_sum(&densities) };
-    match io::results(voxel_map,
-                      bader_charge,
-                      bader_volume,
-                      assigned_atom,
-                      assigned_distance,
-                      surface_distance,
-                      vacuum_charge,
-                      vacuum_volume,
-                      reference,
-                      atoms)
-    {
+    let results = io::Results::new(voxel_map,
+                                   bader_charge,
+                                   bader_volume,
+                                   assigned_atom,
+                                   assigned_distance,
+                                   surface_distance,
+                                   vacuum_charge,
+                                   vacuum_volume,
+                                   reference,
+                                   atoms,
+                                   args.zyx_format);
+    match results.write() {
         Ok(_) => {}
         Err(e) => println!("{}", e),
     }

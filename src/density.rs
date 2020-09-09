@@ -1046,10 +1046,22 @@ impl VoxelMap {
     }
 
     /// Is the point known, use shifts to move around
-    pub fn is_known(&self, p: usize, shifts: [isize; 6]) -> bool {
+    fn is_known(&self,
+                p: usize,
+                atom_number: usize,
+                shifts: [isize; 6],
+                assigned_atom: &Vec<usize>)
+                -> bool {
         for shift in shifts.iter() {
-            if self.map[p] != self.map[(p as isize + shift) as usize] {
-                return false;
+            match self.index.get(&self.map[(p as isize + shift) as usize]) {
+                Some(i) => {
+                    if atom_number != assigned_atom[*i] {
+                        return false;
+                    } else {
+                        continue;
+                    }
+                }
+                None => return false,
             }
         }
         return true;
@@ -1096,7 +1108,12 @@ impl VoxelMap {
             if *maxima < 0 {
                 continue;
             }
-            if self.is_known(p, density.reduced_shift(p as isize)) {
+            let atom_num = assigned_atom[self.index[maxima]];
+            if self.is_known(p,
+                             atom_num,
+                             density.reduced_shift(p as isize),
+                             assigned_atom)
+            {
                 continue;
             }
             let px = density.voxel_origin[0]
@@ -1108,7 +1125,6 @@ impl VoxelMap {
                      + (p as isize).rem_euclid(density.size.z) as f64;
             let p_cartesian =
                 utils::dot([px, py, pz], density.voxel_lattice.to_cartesian);
-            let atom_num = assigned_atom[self.index[maxima]];
             let atom = atoms.positions[atom_num];
             for atom_shift in atoms.lattice.shift_matrix.iter() {
                 let distance = {
@@ -1327,7 +1343,7 @@ mod tests {
         let map: Vec<isize> = vec![1, 1, 1, 2, 2, 1, 2, 2, 2, 1, 1, 1];
         let bader_maxima = vec![1, 2];
         let voxel_map = VoxelMap::new(map, bader_maxima);
-        assert!(voxel_map.is_known(0, [1, 2, 5, 9, 10, 11]))
+        assert!(voxel_map.is_known(0, 0, [1, 2, 5, 9, 10, 11], &vec![0, 1]))
     }
 
     #[test]
@@ -1336,7 +1352,7 @@ mod tests {
         let map: Vec<isize> = vec![1, 1, 1, 2, 2, 1, 2, 2, 2, 1, 1, 1];
         let bader_maxima = vec![1, 2];
         let voxel_map = VoxelMap::new(map, bader_maxima);
-        assert!(voxel_map.is_known(0, [1, 2, 5, 8, 10, 11]))
+        assert!(voxel_map.is_known(0, 0, [1, 2, 5, 8, 10, 11], &vec![0, 1]))
     }
 
     #[test]

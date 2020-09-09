@@ -13,8 +13,10 @@ pub struct Bar {
 
 impl Bar {
     /// Creates the Bar struct with a size, refresh_rate and prefix for the bar
-    pub fn new(total_size: u64, refresh_rate: u64, prefix: String) -> Self {
-        let progress_bar = ProgressBar::new(total_size);
+    pub fn new(progress_bar: ProgressBar,
+               refresh_rate: u64,
+               prefix: String)
+               -> Self {
         progress_bar.set_prefix(&prefix);
         progress_bar.set_style(
             ProgressStyle::default_bar()
@@ -48,5 +50,25 @@ impl Drop for Bar {
             self.pbar.set_position(value);
             self.pbar.finish_and_clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn progress_new() {
+        let bar = ProgressBar::hidden();
+        let bar = Bar::new(bar, 1, String::new());
+        assert_eq!(bar.counter.get(), 0);
+    }
+
+    #[test]
+    fn progress_tick() {
+        let bar = ProgressBar::hidden();
+        let bar = Bar::new(bar, 1, String::new());
+        bar.tick();
+        assert_eq!(bar.counter.get(), 1)
     }
 }
