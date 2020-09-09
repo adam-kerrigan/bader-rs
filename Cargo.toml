@@ -7,6 +7,8 @@ description = "Grid based Bader charge partitioning"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/kerrigoon/bader-rs"
+categories = ["command-line-utilities", "science"]
+keywords = ["Analysis", "Materials_Science", "Physics", "Chemistry", "Multi-Threading"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
