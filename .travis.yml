@@ -9,7 +9,10 @@ jobs:
     - rust: nightly
   fast_finish: true
 cache: cargo
+before-script:
+  - rustup install nightly
 script:
-  - cargo test --locked
+  - cargo build --verbose
+  - cargo test --verbose
   - rustup component add rustfmt-preview --toolchain nightly
   - cargo +nightly fmt --all -- --check
