@@ -202,19 +202,19 @@ impl Results {
         }
         let footer = match bader_charge.len() {
             1 => format!(
-                "  Vacuum Charge: {:>14.4}\n  Vacuum Volume: {:>14.4}\n  No. Electrons: {:>14.4}",
+                "  Vacuum Charge: {:>14.4}\n  Vacuum Volume: {:>14.4}\n  Total Charge: {:>15.4}",
                 vacuum_charge * density.voxel_lattice.volume,
                 vacuum_volume as f64 * density.voxel_lattice.volume,
                 charge_t[0],
             ),
             2 =>  format!(
-                "  Vacuum Charge: {:>14.4}\n  Vacuum Volume: {:>14.4}\n  No. Electrons: {:>14.4}\n  Total Spin: {:>17.4}",
+                "  Vacuum Charge: {:>14.4}\n  Vacuum Volume: {:>14.4}\n  Total Charge: {:>15.4}\n  Total Spin: {:>17.4}",
                 vacuum_charge * density.voxel_lattice.volume,
                 vacuum_volume as f64 * density.voxel_lattice.volume,
                 charge_t[0], charge_t[1]
             ),
             _ =>  format!(
-                "  Vacuum Charge: {:>14.4}\n  Vacuum Volume: {:>14.4}\n  No. Electrons: {:>14.4}\n  Total Spin X: {:>15.4}\n  Total Spin Y: {:>15.4}\n  Total Spin Z: {:>15.4}",
+                "  Vacuum Charge: {:>14.4}\n  Vacuum Volume: {:>14.4}\n  Total Charge: {:>15.4}\n  Total Spin X: {:>15.4}\n  Total Spin Y: {:>15.4}\n  Total Spin Z: {:>15.4}",
                 vacuum_charge * density.voxel_lattice.volume,
                 vacuum_volume as f64 * density.voxel_lattice.volume,
                 charge_t[0], charge_t[1], charge_t[2], charge_t[3]
