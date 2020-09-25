@@ -1,5 +1,4 @@
 use crate::io::{self, ReadFunction};
-use crate::methods::{self, StepMethod};
 use clap::{crate_authors, App, Arg, ArgMatches};
 
 /// Indicates how many reference files are passed
@@ -10,6 +9,20 @@ pub enum Reference {
     None,
 }
 
+// Indicates which method to use
+#[derive(Clone)]
+pub enum Method {
+    OnGrid,
+    NearGrid,
+    Weight,
+}
+
+#[derive(Clone)]
+pub enum Weight {
+    Atoms,
+    Volumes,
+    None,
+}
 /// Create a container for dealing with clap and being able to test arg parsing
 pub enum ClapApp {
     App,
@@ -30,12 +43,29 @@ impl ClapApp {
                 .takes_value(true)
                 .possible_value("ongrid")
                 .possible_value("neargrid")
+                .possible_value("weight")
                 .case_insensitive(false)
                 .about("method by which to partition the charge density")
                 .long_about(
 "Use the \"near-grid\" or \"on-grid\" methods based on the algorithms presented
 in W. Tang et al. A grid-based Bader analysis algorithm without lattice bias,
 J. Phys.: Condens. Matter 21, 084204 (2009)"))
+            .arg(Arg::with_name("weight")
+                .short('w')
+                .long("weight")
+                .takes_value(true)
+                .possible_value("atoms")
+                .possible_value("volumes")
+                .possible_value("none")
+                .default_value("volumes")
+                .case_insensitive(false)
+                .about("How to calculate the weight of the boundary voxels")
+                .long_about(
+"Determins the condition for a voxel to be considered at boundary. When multiple
+Bader volumes are assigned to the same atom it can be faster to only consider
+voxels that neighbour a different atom to be at a boundary. Selecting none
+disregards the weighting of voxels and their full charge is assigned to their
+Bader volume."))
             .arg(Arg::with_name("file type")
                 .short('t')
                 .long("type")
@@ -89,7 +119,8 @@ to allow the program to best decide how to use the available hardware."))
 pub struct Args {
     pub file: String,
     pub read: ReadFunction,
-    pub method: StepMethod,
+    pub method: Method,
+    pub weight: Weight,
     pub reference: Reference,
     pub threads: usize,
     pub vacuum_tolerance: Option<f64>,
@@ -130,11 +161,20 @@ impl Args {
                 }
             }
         };
+        let weight = match arguments.value_of("weight") {
+            Some("atoms") => Weight::Atoms,
+            Some("volumes") => Weight::Volumes,
+            Some("none") => Weight::None,
+            _ => Weight::Volumes,
+        };
         let method = match arguments.value_of("method") {
-            Some("neargrid") => methods::neargrid,
-            Some("ongrid") => methods::ongrid,
-            Some(_) => methods::neargrid,
-            None => methods::neargrid,
+            Some("neargrid") => Method::NearGrid,
+            Some("weight") => Method::Weight,
+            Some("ongrid") => Method::OnGrid,
+            _ => match arguments.value_of("weight") {
+                Some("none") => Method::NearGrid,
+                _ => Method::Weight,
+            },
         };
         // safe to unwrap as threads has a default value of 0
         let threads =
@@ -177,6 +217,7 @@ impl Args {
         return Self { file,
                       read,
                       method,
+                      weight,
                       reference,
                       threads,
                       vacuum_tolerance,
@@ -216,8 +257,10 @@ mod tests {
         let matches =
             app.get_matches_from(vec!["bader", "CHGCAR", "-m", "ongrid"]);
         let args = Args::new(matches);
-        let method: StepMethod = methods::ongrid;
-        assert_eq!(args.method as usize, method as usize);
+        match args.method {
+            Method::OnGrid => (),
+            _ => panic!("OnGrid passed but didnt get OnGrid"),
+        }
     }
 
     #[test]
@@ -226,8 +269,22 @@ mod tests {
         let matches = app.get_matches_from(vec!["bader", "CHGCAR",
                                                 "--method", "neargrid"]);
         let args = Args::new(matches);
-        let method: StepMethod = methods::neargrid;
-        assert_eq!(args.method as usize, method as usize);
+        match args.method {
+            Method::NearGrid => (),
+            _ => panic!("NearGrid passed but didnt get NearGrid"),
+        }
+    }
+
+    #[test]
+    fn argument_method_default_no_weight() {
+        let app = ClapApp::App.get();
+        let matches =
+            app.get_matches_from(vec!["bader", "CHGCAR", "-w", "none"]);
+        let args = Args::new(matches);
+        match args.method {
+            Method::NearGrid => (),
+            _ => panic!("No argument passed, didnt get NearGrid"),
+        }
     }
 
     #[test]
@@ -235,8 +292,10 @@ mod tests {
         let app = ClapApp::App.get();
         let matches = app.get_matches_from(vec!["bader", "CHGCAR"]);
         let args = Args::new(matches);
-        let method: StepMethod = methods::neargrid;
-        assert_eq!(args.method as usize, method as usize);
+        match args.method {
+            Method::Weight => (),
+            _ => panic!("No argument passed, didnt get Weight"),
+        }
     }
 
     #[test]

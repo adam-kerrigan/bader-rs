@@ -1,6 +1,10 @@
+use crate::arguments::Weight;
 use crate::atoms::{Atoms, Lattice};
+use crate::progress::Bar;
 use crate::utils;
-use std::collections::HashMap;
+use crate::voronoi::Voronoi;
+use indicatif::ProgressBar;
+use rayon::prelude::*;
 use std::ops::Index;
 
 /// Structure for managing the reference density and movement within it
@@ -15,6 +19,7 @@ pub struct Density<'a> {
     shift: Shift,
     pub size: Size,
     pub vacuum_tolerance: Option<f64>,
+    pub voronoi: Voronoi,
     pub voxel_lattice: Lattice,
     pub voxel_origin: [f64; 3],
 }
@@ -48,10 +53,12 @@ impl<'a> Density<'a> {
                                           [lattice[2][0] / grid[2] as f64,
                                            lattice[2][1] / grid[2] as f64,
                                            lattice[2][2] / grid[2] as f64]]);
+        let voronoi = Voronoi::new(&voxel_lattice);
         Self { data,
                shift,
                size,
                vacuum_tolerance,
+               voronoi,
                voxel_lattice,
                voxel_origin }
     }
@@ -81,6 +88,49 @@ impl<'a> Density<'a> {
         let i = (gradient[0] * 9f64 + gradient[1] * 3f64 + gradient[2] + 13f64)
                 as usize;
         return shift[i];
+    }
+
+    pub fn voronoi_shift(&self, p: isize, shift: &Vec<usize>) -> isize {
+        let mut pn = p;
+        for p_shift in shift.iter() {
+            pn += self.shift.get(pn)[*p_shift];
+        }
+        return pn;
+    }
+
+    pub fn probability(&self,
+                       probabilities: Vec<(isize, f64)>,
+                       voxel_map: &VoxelMap,
+                       weight_map: &mut utils::BTMap)
+                       -> Vec<(isize, f64)> {
+        let mut weights = Vec::<(isize, f64)>::with_capacity(14);
+        let mut out = Vec::<(isize, f64)>::with_capacity(14);
+        for (pt, probability) in probabilities.into_iter() {
+            match weight_map.get(pt) {
+                Some(w) => {
+                    for (volume_number, w) in w.into_iter() {
+                        weights.push((volume_number, w * probability))
+                    }
+                }
+                None => weights.push((voxel_map[pt], probability)),
+            };
+        }
+        weights.par_sort_by_key(|k| k.0);
+        let mut len = 0;
+        for weight in weights.into_iter() {
+            match out.last() {
+                Some((volume_number, probability)) => {
+                    if *volume_number == weight.0 {
+                        out[len] = (*volume_number, probability + weight.1);
+                    } else {
+                        out.push(weight);
+                        len += 1;
+                    }
+                }
+                None => out.push(weight),
+            }
+        }
+        out
     }
 }
 
@@ -1015,6 +1065,11 @@ impl Size {
     }
 }
 
+enum Boundary {
+    Weight((Vec<(isize, f64)>, usize, bool)),
+    None(bool),
+}
+
 /// VoxelMap - enum for mapping the voxels to bader volumes
 ///
 /// > Just(Vec<usize>) - Just the voxel map (ongrid)
@@ -1023,80 +1078,222 @@ impl Size {
 pub struct VoxelMap {
     pub map: Vec<isize>,
     pub bader_maxima: Vec<isize>,
-    index: HashMap<isize, usize>,
+    index: Vec<usize>,
+}
+
+impl Index<isize> for VoxelMap {
+    type Output = isize;
+
+    /// Index the reference charge inside the Density structure
+    fn index(&self, i: isize) -> &Self::Output {
+        return &self.map[i as usize];
+    }
+}
+
+impl Index<usize> for VoxelMap {
+    type Output = isize;
+
+    /// Index the reference charge inside the Density structure
+    fn index(&self, i: usize) -> &Self::Output {
+        return &self.map[i];
+    }
 }
 
 impl VoxelMap {
     /// Initialise the structure. Create a HashMap to index the volumes.
     pub fn new(map: Vec<isize>, bader_maxima: Vec<isize>) -> Self {
-        let index = if bader_maxima[0] < 0 {
-            bader_maxima[1..].iter()
-                             .enumerate()
-                             .map(|(i, v)| (*v, i))
-                             .collect::<HashMap<isize, usize>>()
+        let mut index = vec![0usize; map.len()];
+        if bader_maxima[0] < 0 {
+            for (i, maxima) in bader_maxima[1..].iter().enumerate() {
+                index[*maxima as usize] = i;
+            }
         } else {
-            bader_maxima[..].iter()
-                            .enumerate()
-                            .map(|(i, v)| (*v, i))
-                            .collect::<HashMap<isize, usize>>()
-        };
+            for (i, maxima) in bader_maxima.iter().enumerate() {
+                index[*maxima as usize] = i;
+            }
+        }
         return Self { map,
                       bader_maxima,
                       index };
     }
 
+    pub fn index_get(&self, p: isize) -> usize {
+        self.index[self[p] as usize]
+    }
+
     /// Is the point known, use shifts to move around
-    fn is_known(&self,
-                p: usize,
-                atom_number: usize,
-                shifts: [isize; 6],
-                assigned_atom: &Vec<usize>)
-                -> bool {
-        for shift in shifts.iter() {
-            match self.index.get(&self.map[(p as isize + shift) as usize]) {
-                Some(i) => {
-                    if atom_number != assigned_atom[*i] {
-                        return false;
-                    } else {
-                        continue;
+    fn is_boundary_atoms(map: &Self,
+                         p: isize,
+                         atom_number: usize,
+                         density: &Density,
+                         assigned_atom: &Vec<usize>,
+                         weight_map: &utils::BTMap)
+                         -> Boundary {
+        let mut t = Vec::<(isize, f64)>::with_capacity(14);
+        let mut t_total = 0.;
+        let rho = density[p];
+        let mut is_boundary = false;
+        let mut is_atom = false;
+        let mut count = 0;
+        for (shift, alpha) in
+            density.voronoi.vectors.iter().zip(&density.voronoi.alphas)
+        {
+            let pn = density.voronoi_shift(p, shift);
+            if density[pn] > rho {
+                if !is_atom {
+                    match weight_map.get_sly(pn) {
+                        Some(volume_numbers) => {
+                            for (vn, _) in volume_numbers.iter() {
+                                if atom_number
+                                   != assigned_atom[map.index[*vn as usize]]
+                                {
+                                    is_atom = true;
+                                }
+                            }
+                        }
+                        None => {
+                            if atom_number != assigned_atom[map.index_get(pn)] {
+                                is_atom = true;
+                            }
+                        }
                     }
                 }
-                None => return false,
+                t.push((pn, alpha * (density[pn] - rho)));
+                t_total += t.last().unwrap().1;
+            } else {
+                count += 1;
+                if map[pn] >= 0 {
+                    if atom_number != assigned_atom[map.index_get(pn)] {
+                        is_boundary = true;
+                    }
+                } else {
+                    is_boundary = true;
+                }
             }
         }
-        return true;
+        if is_atom {
+            return Boundary::Weight((t.into_iter()
+                                      .map(|(i, x)| (i, x / t_total))
+                                      .collect(),
+                                     count,
+                                     true));
+        } else {
+            return Boundary::None(is_boundary);
+        }
+    }
+
+    fn is_boundary_volumes(map: &Self,
+                           p: isize,
+                           atom_number: usize,
+                           density: &Density,
+                           assigned_atom: &Vec<usize>,
+                           weight_map: &utils::BTMap)
+                           -> Boundary {
+        let volume_number = map[p];
+        let mut t = Vec::<(isize, f64)>::with_capacity(14);
+        let mut t_total = 0.;
+        let rho = density[p];
+        let mut is_boundary = false;
+        let mut is_volume = false;
+        let mut count = 0;
+        for (shift, alpha) in
+            density.voronoi.vectors.iter().zip(&density.voronoi.alphas)
+        {
+            let pn = density.voronoi_shift(p, shift);
+            if density[pn] > rho {
+                if !is_boundary && !is_volume {
+                    match weight_map.get_sly(pn) {
+                        Some(volume_numbers) => {
+                            for (vn, _) in volume_numbers.into_iter() {
+                                if atom_number
+                                   != assigned_atom[map.index[vn as usize]]
+                                {
+                                    is_boundary = true;
+                                }
+                            }
+                            is_volume = true;
+                        }
+                        None => {
+                            if map[pn] != volume_number {
+                                if atom_number
+                                   != assigned_atom[map.index_get(pn)]
+                                {
+                                    is_boundary = true;
+                                }
+                                is_volume = true
+                            }
+                        }
+                    }
+                }
+                t.push((pn, alpha * (density[pn] - rho)));
+                t_total += t.last().unwrap().1;
+            } else {
+                count += 1;
+                if map[pn] >= 0 {
+                    if atom_number != assigned_atom[map.index_get(pn)] {
+                        is_boundary = true;
+                    }
+                } else {
+                    is_boundary = true;
+                }
+            }
+        }
+        if is_volume {
+            return Boundary::Weight((t.into_iter()
+                                      .map(|(i, x)| (i, x / t_total))
+                                      .collect(),
+                                     count,
+                                     is_boundary));
+        } else {
+            return Boundary::None(is_boundary);
+        }
+    }
+
+    fn is_boundary(map: &VoxelMap,
+                   p: isize,
+                   atom_number: usize,
+                   density: &Density,
+                   assigned_atom: &Vec<usize>,
+                   _weight_map: &utils::BTMap)
+                   -> Boundary {
+        for shift in density.voronoi.vectors.iter() {
+            let pn = density.voronoi_shift(p, shift);
+            if map[pn] >= 0 {
+                if atom_number != assigned_atom[map.index_get(pn)] {
+                    return Boundary::None(true);
+                }
+            } else {
+                return Boundary::None(true);
+            }
+        }
+        return Boundary::None(false);
     }
 
     /// Sum the densities for each bader volume
     pub fn charge_sum(&self,
-                      densities: &Vec<Vec<f64>>)
-                      -> (Vec<Vec<f64>>, Vec<usize>, f64, usize) {
-        let mut vacuum_charge = 0f64;
-        let mut vacuum_volume = 0usize;
-        let mut bader_volume = vec![0usize; self.index.len()];
+                      densities: &Vec<Vec<f64>>,
+                      assigned_atom: &Vec<usize>,
+                      atoms: &Atoms,
+                      density: &Density,
+                      index: Vec<usize>,
+                      weight: Weight)
+                      -> (Vec<Vec<f64>>, Vec<f64>, Vec<f64>) {
+        type WeightMethod = fn(&VoxelMap,
+                               isize,
+                               usize,
+                               &Density,
+                               &Vec<usize>,
+                               &utils::BTMap)
+                               -> Boundary;
+        let is_boundary: WeightMethod = match weight {
+            Weight::Atoms => Self::is_boundary_atoms,
+            Weight::Volumes => Self::is_boundary_volumes,
+            Weight::None => Self::is_boundary,
+        };
+        let mut weight_map = utils::BTMap::new(density.size.total);
+        let mut bader_volume = vec![0.; self.bader_maxima.len()];
         let mut bader_charge =
-            vec![vec![0f64; self.index.len()]; densities.len()];
-        for (i, maxima) in self.map.iter().enumerate() {
-            if *maxima < 0 {
-                vacuum_charge += densities[0][i];
-                vacuum_volume += 1;
-            } else {
-                bader_volume[self.index[maxima]] += 1;
-                for j in 0..densities.len() {
-                    bader_charge[j][self.index[maxima]] += densities[j][i];
-                }
-            }
-        }
-        return (bader_charge, bader_volume, vacuum_charge, vacuum_volume);
-    }
-
-    /// Calculates the minimum distance to the surface from the bader maxima
-    pub fn surface_distance(&self,
-                            assigned_atom: &Vec<usize>,
-                            atoms: &Atoms,
-                            density: &Density)
-                            -> Vec<f64> {
-        // keep two distance vectors as atoms without volume have zero distance
+            { vec![vec![0f64; self.bader_maxima.len()]; densities.len()] };
         let mut surface_distance = vec![0f64; atoms.positions.len()];
         let mut minimum_distance = {
             vec![
@@ -1104,41 +1301,91 @@ impl VoxelMap {
                 atoms.positions.len()
             ]
         };
-        for (p, maxima) in self.map.iter().enumerate() {
-            if *maxima < 0 {
+
+        let pbar = ProgressBar::new(density.size.total as u64);
+        let pbar = Bar::new(pbar, 100, String::from("Summing Charge: "));
+        for p in index.into_iter() {
+            let maxima = self[p];
+            if maxima < 0 {
+                for j in 0..densities.len() {
+                    bader_charge[j][self.bader_maxima.len() - 1] +=
+                        densities[j][p];
+                }
+                bader_volume[self.bader_maxima.len() - 1] += 1.;
                 continue;
             }
-            let atom_num = assigned_atom[self.index[maxima]];
-            if self.is_known(p,
-                             atom_num,
-                             density.reduced_shift(p as isize),
-                             assigned_atom)
+            let i = self.index[maxima as usize];
+            let atom_num = assigned_atom[i];
+            let boundary = match is_boundary(&self,
+                                             p as isize,
+                                             atom_num,
+                                             density,
+                                             assigned_atom,
+                                             &weight_map)
             {
-                continue;
-            }
-            let px = density.voxel_origin[0]
-                     + (p as isize / (density.size.y * density.size.z)) as f64;
-            let py = density.voxel_origin[1]
-                     + (p as isize / density.size.z).rem_euclid(density.size.y)
-                       as f64;
-            let pz = density.voxel_origin[2]
-                     + (p as isize).rem_euclid(density.size.z) as f64;
-            let p_cartesian =
-                utils::dot([px, py, pz], density.voxel_lattice.to_cartesian);
-            let atom = atoms.positions[atom_num];
-            for atom_shift in atoms.lattice.shift_matrix.iter() {
-                let distance = {
-                    (p_cartesian[0] - (atom[0] + atom_shift[0])).powi(2)
-                    + (p_cartesian[1] - (atom[1] + atom_shift[1])).powi(2)
-                    + (p_cartesian[2] - (atom[2] + atom_shift[2])).powi(2)
-                };
-                if distance < minimum_distance[atom_num] {
-                    surface_distance[atom_num] = distance.powf(0.5);
-                    minimum_distance[atom_num] = distance;
+                Boundary::Weight((probabilities, count, is_boundary)) => {
+                    let weights = density.probability(probabilities,
+                                                      self,
+                                                      &mut weight_map);
+                    for (maxima, w) in weights.iter() {
+                        let i = self.index[*maxima as usize];
+                        bader_volume[i] += w;
+                        for j in 0..densities.len() {
+                            bader_charge[j][i] += w * densities[j][p];
+                        }
+                    }
+                    weight_map.insert(p as isize, weights, count);
+                    is_boundary
+                }
+                Boundary::None(boundary) => {
+                    bader_volume[i] += 1.;
+                    for j in 0..densities.len() {
+                        bader_charge[j][i] += densities[j][p];
+                    }
+                    boundary
+                }
+            };
+            if boundary {
+                let px = density.voxel_origin[0]
+                         + (p as isize / (density.size.y * density.size.z))
+                           as f64;
+                let py =
+                    density.voxel_origin[1]
+                    + (p as isize / density.size.z).rem_euclid(density.size.y)
+                      as f64;
+                let pz = density.voxel_origin[2]
+                         + (p as isize).rem_euclid(density.size.z) as f64;
+                let p_cartesian = utils::dot([px, py, pz],
+                                             density.voxel_lattice
+                                                    .to_cartesian);
+                let mut p_lll_fractional = utils::dot(p_cartesian,
+                                                      atoms.reduced_lattice
+                                                           .to_fractional);
+                for i in 0..3 {
+                    p_lll_fractional[i] = p_lll_fractional[i].rem_euclid(1.);
+                }
+                let p_lll_cartesian = utils::dot(p_lll_fractional,
+                                                 atoms.reduced_lattice
+                                                      .to_cartesian);
+                let atom = atoms.reduced_positions[atom_num];
+                for atom_shift in
+                    atoms.reduced_lattice.cartesian_shift_matrix.iter()
+                {
+                    let distance = {
+                        (p_lll_cartesian[0] - (atom[0] + atom_shift[0])).powi(2)
+                        + (p_lll_cartesian[1] - (atom[1] + atom_shift[1])).powi(2)
+                        + (p_lll_cartesian[2] - (atom[2] + atom_shift[2])).powi(2)
+                    };
+                    if distance < minimum_distance[atom_num] {
+                        surface_distance[atom_num] = distance.powf(0.5);
+                        minimum_distance[atom_num] = distance;
+                    }
                 }
             }
+            pbar.tick();
         }
-        return surface_distance;
+        drop(pbar);
+        return (bader_charge, bader_volume, surface_distance);
     }
 }
 
@@ -1325,8 +1572,8 @@ mod tests {
         let map: Vec<isize> = vec![1, 1, 1, 2, 2, 1, -1, 2, 2, -1, 2, 1];
         let bader_maxima = vec![-1, 1, 2];
         let voxel_map = VoxelMap::new(map, bader_maxima);
-        assert_eq!(voxel_map.index[&1], 0);
-        assert_eq!(voxel_map.index[&2], 1);
+        assert_eq!(voxel_map.index[1], 0);
+        assert_eq!(voxel_map.index[2], 1);
     }
 
     #[test]
@@ -1334,67 +1581,7 @@ mod tests {
         let map: Vec<isize> = vec![1, 1, 1, 2, 2, 1, 2, 2, 2, 1];
         let bader_maxima = vec![1, 2];
         let voxel_map = VoxelMap::new(map, bader_maxima);
-        assert_eq!(voxel_map.index[&1], 0);
-        assert_eq!(voxel_map.index[&2], 1);
-    }
-
-    #[test]
-    fn voxel_map_is_known() {
-        let map: Vec<isize> = vec![1, 1, 1, 2, 2, 1, 2, 2, 2, 1, 1, 1];
-        let bader_maxima = vec![1, 2];
-        let voxel_map = VoxelMap::new(map, bader_maxima);
-        assert!(voxel_map.is_known(0, 0, [1, 2, 5, 9, 10, 11], &vec![0, 1]))
-    }
-
-    #[test]
-    #[should_panic]
-    fn voxel_map_not_known() {
-        let map: Vec<isize> = vec![1, 1, 1, 2, 2, 1, 2, 2, 2, 1, 1, 1];
-        let bader_maxima = vec![1, 2];
-        let voxel_map = VoxelMap::new(map, bader_maxima);
-        assert!(voxel_map.is_known(0, 0, [1, 2, 5, 8, 10, 11], &vec![0, 1]))
-    }
-
-    #[test]
-    fn voxel_map_charge_sum() {
-        let map: Vec<isize> = vec![1, 1, 1, 2, 2, 1, 2, 2, 2, -1, -1, -1];
-        let bader_maxima = vec![-1, 1, 2];
-        let voxel_map = VoxelMap::new(map, bader_maxima);
-        let densities =
-            vec![vec![1., 1., 1., 2., 2., 1., 2., 2., 2., 1., 1., 1.],
-                 vec![1., -1., 1., 0., 0., 1., 0., 0., 0., 1., -1., 1.],];
-        assert_eq!(voxel_map.charge_sum(&densities),
-                   (vec![vec![4., 10.], vec![2., 0.]], vec![4, 5], 3., 3))
-    }
-
-    #[test]
-    fn voxel_map_surface_distance() {
-        let mut map: Vec<isize> = vec![-1; 4usize.pow(3)];
-        let mut data: Vec<f64> = vec![0.; 4usize.pow(3)];
-        for i in [0usize, 1, 3, 4, 5, 7, 12, 13, 15, 16, 17, 19, 20, 21, 23,
-                  28, 29, 31, 48, 49, 51, 52, 53, 55, 60, 61, 63].iter()
-        {
-            map[*i] = 0;
-            data[*i] = 1.;
-        }
-        let bader_maxima = vec![-1, 0];
-        let voxel_map = VoxelMap::new(map, bader_maxima);
-        let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
-        let atoms = Atoms::new(lattice, vec![[0., 0., 0.]], String::new());
-        let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
-        let density = Density::new(&data,
-                                   [4, 4, 4],
-                                   lattice.to_cartesian,
-                                   Some(1E-3),
-                                   [0., 0., 0.1]);
-        assert_eq!(voxel_map.surface_distance(&vec![0], &atoms, &density),
-                   vec![density.voxel_lattice
-                               .distance_matrix
-                               .iter()
-                               .min_by(|a, b| a.partial_cmp(b).unwrap())
-                               .unwrap()
-                               .clone()
-                        - 0.1
-                          * utils::norm(density.voxel_lattice.to_cartesian[2])])
+        assert_eq!(voxel_map.index[1], 0);
+        assert_eq!(voxel_map.index[2], 1);
     }
 }

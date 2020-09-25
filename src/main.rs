@@ -1,10 +1,13 @@
-use bader::arguments::{Args, ClapApp, Reference};
+use bader::arguments::{Args, ClapApp, Method, Reference, Weight};
 use bader::density::{Density, VoxelMap};
 use bader::io::{self, ReadFunction};
-use bader::methods::StepMethod;
+use bader::methods::{self, StepMethod};
 use bader::progress::Bar;
 use indicatif::ProgressBar;
 use rayon::prelude::*;
+use std::collections::BTreeSet;
+use std::sync::atomic::AtomicIsize;
+use std::sync::Arc;
 
 fn main() {
     // print splash
@@ -65,32 +68,74 @@ fn main() {
                           args.vacuum_tolerance,
                           voxel_origin),
     };
+    let mut index: Vec<usize> = (0..reference.size.total).collect();
+    let method: StepMethod = match args.method {
+        Method::OnGrid => methods::ongrid,
+        Method::Weight => methods::weight,
+        Method::NearGrid => methods::neargrid,
+    };
+    match args.weight.clone() {
+        Weight::None => (),
+        _ => match args.method {
+            Method::NearGrid => (),
+            _ => {
+                println!("Sorting the density.");
+                index.par_sort_unstable_by(|a, b| {
+                         reference.data[b.clone()].partial_cmp(&reference.data
+                                                                   [a.clone()])
+                                                  .unwrap()
+                     });
+            }
+        },
+    }
     // Start a thread-safe progress bar and run the main calculation
     let pbar = ProgressBar::new(reference.size.total as u64);
-    let pbar = Bar::new(pbar, 100, String::from("Bader Calculation:"));
-    let method: StepMethod = args.method;
-    let map = (0..reference.size.total).into_par_iter()
-                                       .map(|i| {
-                                           pbar.tick();
-                                           method(i, &reference)
-                                       })
-                                       .collect::<Vec<isize>>();
+    let pbar = Bar::new(pbar, 100, String::from("Bader Calculation: "));
+    let mut map = Vec::new();
+    map.resize_with(reference.size.total, || AtomicIsize::new(-1));
+    let map = Arc::new(map);
+    let bader_maxima = index.par_iter()
+                            .map(|p| {
+                                pbar.tick();
+                                method(*p, &reference, Arc::clone(&map))
+                            })
+                            .collect::<BTreeSet<isize>>();
     // each maxima is a unique value in the map with vacuum being -1
     drop(pbar);
-    let mut bader_maxima = map.clone();
-    bader_maxima.par_sort();
-    bader_maxima.dedup();
-    let voxel_map = VoxelMap::new(map, bader_maxima);
+    let map = match Arc::try_unwrap(map) {
+        Ok(map) => map.into_par_iter()
+                      .map(|bv| bv.into_inner())
+                      .collect::<Vec<isize>>(),
+        Err(_) => panic!(), // I don't know why this would panic
+    };
+    let voxel_map = VoxelMap::new(map, bader_maxima.into_iter().collect());
     // find the nearest atom to each Bader maxima
     println!("Assigning maxima to atoms.");
     let (assigned_atom, assigned_distance) =
         atoms.assign_maxima(&voxel_map, &reference);
     // find the nearest point to the atom and sum the atoms charge
-    // this could be one function?
-    let surface_distance =
-        voxel_map.surface_distance(&assigned_atom, &atoms, &reference);
-    let (bader_charge, bader_volume, vacuum_charge, vacuum_volume) =
-        { voxel_map.charge_sum(&densities) };
+    match args.weight.clone() {
+        Weight::None => (),
+        _ => match args.method {
+            Method::NearGrid => {
+                println!("Sorting the density.");
+                index.par_sort_unstable_by(|a, b| {
+                         reference.data[b.clone()].partial_cmp(&reference.data
+                                                                   [a.clone()])
+                                                  .unwrap()
+                     });
+            }
+            _ => (),
+        },
+    }
+    let (bader_charge, bader_volume, surface_distance) = {
+        voxel_map.charge_sum(&densities,
+                             &assigned_atom,
+                             &atoms,
+                             &reference,
+                             index,
+                             args.weight)
+    };
     // build the results
     println!("Writing output files:");
     let results = io::Results::new(voxel_map,
@@ -99,8 +144,6 @@ fn main() {
                                    assigned_atom,
                                    assigned_distance,
                                    surface_distance,
-                                   vacuum_charge,
-                                   vacuum_volume,
                                    reference,
                                    atoms,
                                    args.zyx_format);

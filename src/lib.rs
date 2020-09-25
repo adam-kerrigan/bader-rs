@@ -5,3 +5,4 @@ pub mod io;
 pub mod methods;
 pub mod progress;
 pub mod utils;
+pub mod voronoi;

@@ -27,17 +27,19 @@ pub struct Results {
 impl Results {
     pub fn new(voxel_map: VoxelMap,
                bader_charge: Vec<Vec<f64>>,
-               bader_volume: Vec<usize>,
+               bader_volume: Vec<f64>,
                assigned_atom: Vec<usize>,
                assigned_distance: Vec<f64>,
                surface_distance: Vec<f64>,
-               vacuum_charge: f64,
-               vacuum_volume: usize,
                density: Density,
                atoms: Atoms,
                vasp_flag: bool)
                -> Self {
+        let mut vacuum_charge = 0.;
+        let mut vacuum_volume = 0.;
         let bader_maxima = if voxel_map.bader_maxima[0] == -1 {
+            vacuum_charge = bader_charge[0][bader_charge[0].len() - 1];
+            vacuum_volume = bader_volume[bader_volume.len() - 1];
             &voxel_map.bader_maxima[1..]
         } else {
             &voxel_map.bader_maxima[..]
@@ -171,7 +173,7 @@ impl Results {
                                                              .to_cartesian);
                     let (x, y, z) = position_format(maxima_cartesian);
                     let volume =
-                        bader_volume[ii] as f64 * density.voxel_lattice.volume;
+                        bader_volume[ii] * density.voxel_lattice.volume;
                     volume_a += volume;
                     let mut charge = vec![0f64; bader_charge.len()];
                     for j in 0..bader_charge.len() {
@@ -204,19 +206,19 @@ impl Results {
             1 => format!(
                 "  Vacuum Charge: {:>14.4}\n  Vacuum Volume: {:>14.4}\n  Total Charge: {:>15.4}",
                 vacuum_charge * density.voxel_lattice.volume,
-                vacuum_volume as f64 * density.voxel_lattice.volume,
+                vacuum_volume * density.voxel_lattice.volume,
                 charge_t[0],
             ),
             2 =>  format!(
                 "  Vacuum Charge: {:>14.4}\n  Vacuum Volume: {:>14.4}\n  Total Charge: {:>15.4}\n  Total Spin: {:>17.4}",
                 vacuum_charge * density.voxel_lattice.volume,
-                vacuum_volume as f64 * density.voxel_lattice.volume,
+                vacuum_volume * density.voxel_lattice.volume,
                 charge_t[0], charge_t[1]
             ),
             _ =>  format!(
                 "  Vacuum Charge: {:>14.4}\n  Vacuum Volume: {:>14.4}\n  Total Charge: {:>15.4}\n  Total Spin X: {:>15.4}\n  Total Spin Y: {:>15.4}\n  Total Spin Z: {:>15.4}",
                 vacuum_charge * density.voxel_lattice.volume,
-                vacuum_volume as f64 * density.voxel_lattice.volume,
+                vacuum_volume * density.voxel_lattice.volume,
                 charge_t[0], charge_t[1], charge_t[2], charge_t[3]
             ),
         };
@@ -241,6 +243,7 @@ impl Results {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::arguments::Weight;
     use crate::atoms::Lattice;
 
     #[test]
@@ -265,10 +268,14 @@ mod tests {
                                      [0., 0., 0.1]);
         let (assigned_atom, assigned_distance) =
             atoms.assign_maxima(&voxel_map, &reference);
-        let surface_distance =
-            voxel_map.surface_distance(&assigned_atom, &atoms, &reference);
-        let (bader_charge, bader_volume, vacuum_charge, vacuum_volume) =
-            { voxel_map.charge_sum(&densities) };
+        let (bader_charge, bader_volume, surface_distance) = {
+            voxel_map.charge_sum(&densities,
+                                 &assigned_atom,
+                                 &atoms,
+                                 &reference,
+                                 (0..64).collect(),
+                                 Weight::None)
+        };
         let min_len = reference.voxel_lattice.distance_matrix[4];
         let results = Results::new(voxel_map,
                                    bader_charge,
@@ -276,8 +283,6 @@ mod tests {
                                    assigned_atom,
                                    assigned_distance,
                                    surface_distance,
-                                   vacuum_charge,
-                                   vacuum_volume,
                                    reference,
                                    atoms,
                                    true);
@@ -322,10 +327,14 @@ mod tests {
                                      [0., 0., 0.1]);
         let (assigned_atom, assigned_distance) =
             atoms.assign_maxima(&voxel_map, &reference);
-        let surface_distance =
-            voxel_map.surface_distance(&assigned_atom, &atoms, &reference);
-        let (bader_charge, bader_volume, vacuum_charge, vacuum_volume) =
-            { voxel_map.charge_sum(&densities) };
+        let (bader_charge, bader_volume, surface_distance) = {
+            voxel_map.charge_sum(&densities,
+                                 &assigned_atom,
+                                 &atoms,
+                                 &reference,
+                                 (0..64).collect(),
+                                 Weight::None)
+        };
         let min_len = reference.voxel_lattice.distance_matrix[4];
         let results = Results::new(voxel_map,
                                    bader_charge,
@@ -333,8 +342,6 @@ mod tests {
                                    assigned_atom,
                                    assigned_distance,
                                    surface_distance,
-                                   vacuum_charge,
-                                   vacuum_volume,
                                    reference,
                                    atoms,
                                    false);
@@ -379,10 +386,14 @@ mod tests {
                                      [0., 0., 0.]);
         let (assigned_atom, assigned_distance) =
             atoms.assign_maxima(&voxel_map, &reference);
-        let surface_distance =
-            voxel_map.surface_distance(&assigned_atom, &atoms, &reference);
-        let (bader_charge, bader_volume, vacuum_charge, vacuum_volume) =
-            { voxel_map.charge_sum(&densities) };
+        let (bader_charge, bader_volume, surface_distance) = {
+            voxel_map.charge_sum(&densities,
+                                 &assigned_atom,
+                                 &atoms,
+                                 &reference,
+                                 (0..64).collect(),
+                                 Weight::None)
+        };
         let min_len = reference.voxel_lattice.distance_matrix[4];
         let results = Results::new(voxel_map,
                                    bader_charge,
@@ -390,8 +401,6 @@ mod tests {
                                    assigned_atom,
                                    assigned_distance,
                                    surface_distance,
-                                   vacuum_charge,
-                                   vacuum_volume,
                                    reference,
                                    atoms,
                                    true);

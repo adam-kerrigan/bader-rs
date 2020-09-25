@@ -20,7 +20,7 @@ impl Bar {
         progress_bar.set_prefix(&prefix);
         progress_bar.set_style(
             ProgressStyle::default_bar()
-                .template("{prefix}[{bar:40}] [{elapsed_precise}] ({eta})")
+                .template("{prefix}[{bar:40}] [{elapsed_precise}] {percent:>3}%")
                 .progress_chars("=>-"),
         );
         let pb = Arc::new(progress_bar);
