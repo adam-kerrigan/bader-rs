@@ -34,10 +34,10 @@ impl ClapApp {
         App::new("Multi-threaded Bader Charge Analysis")
             .author(crate_authors!())
             .version("0.1.0")
-            .arg(Arg::with_name("file")
+            .arg(Arg::new("file")
                 .required(true)
                 .index(1))
-            .arg(Arg::with_name("method")
+            .arg(Arg::new("method")
                 .short('m')
                 .long("method")
                 .takes_value(true)
@@ -50,7 +50,7 @@ impl ClapApp {
 "Use the \"near-grid\" or \"on-grid\" methods based on the algorithms presented
 in W. Tang et al. A grid-based Bader analysis algorithm without lattice bias,
 J. Phys.: Condens. Matter 21, 084204 (2009)"))
-            .arg(Arg::with_name("weight")
+            .arg(Arg::new("weight")
                 .short('w')
                 .long("weight")
                 .takes_value(true)
@@ -66,7 +66,7 @@ Bader volumes are assigned to the same atom it can be faster to only consider
 voxels that neighbour a different atom to be at a boundary. Selecting none
 disregards the weighting of voxels and their full charge is assigned to their
 Bader volume."))
-            .arg(Arg::with_name("file type")
+            .arg(Arg::new("file type")
                 .short('t')
                 .long("type")
                 .takes_value(true)
@@ -77,7 +77,7 @@ Bader volume."))
                 .long_about(
 "The file type of the input file. If this is not supplied the type will attempt
 to be infered from the filename"))
-            .arg(Arg::with_name("reference")
+            .arg(Arg::new("reference")
                 .short('r')
                 .long("ref")
                 .multiple(true)
@@ -88,14 +88,14 @@ to be infered from the filename"))
 "A reference charge to do the partitioning upon. Two files can be passed
 by using multiple flags (bader CHGCAR -r AECCAR0 -r AECCAR2). If two files are
 passed they are summed together."))
-            .arg(Arg::with_name("all electron")
+            .arg(Arg::new("all electron")
                 .short('a')
                 .long("aec")
                 .about("convience flag for reading both aeccars")
                 .takes_value(false)
                 .multiple(false)
                 .conflicts_with("reference"))
-            .arg(Arg::with_name("vacuum tolerance")
+            .arg(Arg::new("vacuum tolerance")
                 .short('v')
                 .long("vac")
                 .takes_value(true)
@@ -103,7 +103,7 @@ passed they are summed together."))
                 .long_about(
 "Values of density below the supplied value are considered vacuum and are not
 included in the calculation. A value of \"auto\" can be passed to use 1E-3 C*m^-3"))
-            .arg(Arg::with_name("threads")
+            .arg(Arg::new("threads")
                 .short('J')
                 .long("threads")
                 .takes_value(true)

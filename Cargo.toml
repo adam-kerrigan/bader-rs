@@ -16,6 +16,6 @@ keywords = ["Analysis", "Materials_Science", "Physics", "Chemistry", "Multi-Thre
 rayon = "1.1"
 regex = "1"
 prettytable-rs = "^0.8"
-clap = "3.0.0-beta.1"
+clap = "3.0.0-beta.2"
 indicatif = "*"
 atomic-counter = "1.0.1"
