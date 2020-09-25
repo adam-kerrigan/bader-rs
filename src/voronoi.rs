@@ -94,7 +94,6 @@ impl Voronoi {
             for i in 0..3 {
                 ry[i] *= r_coeff;
             }
-            println!("{:?}", c_shift);
             vertices.sort_unstable_by({
                         |a, b| {
                             let c = vdot(*a, ry).atan2(vdot(*a, rx));
