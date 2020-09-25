@@ -215,14 +215,14 @@ impl Args {
             1 => Reference::One(String::from(references[0])),
             _ => Reference::None,
         };
-        return Self { file,
-                      read,
-                      method,
-                      weight,
-                      reference,
-                      threads,
-                      vacuum_tolerance,
-                      zyx_format };
+        Self { file,
+               read,
+               method,
+               weight,
+               reference,
+               threads,
+               vacuum_tolerance,
+               zyx_format }
     }
 }
 
@@ -371,10 +371,7 @@ mod tests {
         let matches =
             app.get_matches_from(vec!["bader", "CHGCAR", "-r", "CHGCAR_sum"]);
         let args = Args::new(matches);
-        let flag = match args.reference {
-            Reference::One(_) => true,
-            _ => false,
-        };
+        let flag = matches!(args.reference, Reference::One(_));
         assert!(flag)
     }
 
@@ -384,10 +381,7 @@ mod tests {
         let v = vec!["bader", "CHGCAR", "-r", "AECCAR0", "--ref", "AECCAR2"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
-        let flag = match args.reference {
-            Reference::Two(_, _) => true,
-            _ => false,
-        };
+        let flag = matches!(args.reference, Reference::Two(_, _));
         assert!(flag)
     }
 
@@ -397,10 +391,7 @@ mod tests {
         let v = vec!["bader", "CHGCAR"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
-        let flag = match args.reference {
-            Reference::None => true,
-            _ => false,
-        };
+        let flag = matches!(args.reference, Reference::None);
         assert!(flag)
     }
 
@@ -411,15 +402,7 @@ mod tests {
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
         let flag = match args.reference {
-            Reference::Two(x, y) => {
-                if (x == String::from("AECCAR0"))
-                   && (y == String::from("AECCAR2"))
-                {
-                    true
-                } else {
-                    false
-                }
-            }
+            Reference::Two(x, y) => (x == *"AECCAR0") && (y == *"AECCAR2"),
             _ => false,
         };
         assert!(flag)

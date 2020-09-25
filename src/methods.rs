@@ -8,8 +8,8 @@ pub type StepMethod = fn(usize, &Density, Arc<Vec<AtomicIsize>>) -> isize;
 
 /// Steps in the density grid, from point p, following the gradient
 pub fn ongrid_step(p: isize, density: &Density) -> isize {
-    let mut pn = p.clone();
-    let mut pt = p.clone();
+    let mut pn = p;
+    let mut pt = p;
     let control = density[pn];
     let mut max_val = density[pt];
     // colllect the shift and distances and iterate over them
@@ -25,7 +25,7 @@ pub fn ongrid_step(p: isize, density: &Density) -> isize {
             pn = pt;
         }
     }
-    return pn;
+    pn
 }
 
 /// Finds the maxima associated with the current point, p.
@@ -34,13 +34,10 @@ pub fn ongrid(p: usize,
               voxel_map: Arc<Vec<AtomicIsize>>)
               -> isize {
     let mut pt = p as isize;
-    match density.vacuum_tolerance {
-        Some(x) => {
-            if density[pt] <= x {
-                return -1;
-            }
+    if let Some(x) = density.vacuum_tolerance {
+        if density[pt] <= x {
+            return -1;
         }
-        None => (),
     }
     let mut pn = pt;
     let maxima = 'pathloop: loop {
@@ -59,7 +56,7 @@ pub fn ongrid(p: usize,
         };
     };
     voxel_map[p].store(maxima, Ordering::Relaxed);
-    return maxima;
+    maxima
 }
 
 /// Step in the density grid following the gradient.
@@ -70,7 +67,7 @@ pub fn neargrid_step(p: isize, dr: &mut [f64; 3], density: &Density) -> isize {
     let mut den_t = [0f64; 2];
     let mut grad = [0f64; 3];
     let mut max_grad = -1f64;
-    let mut pt = p.clone();
+    let mut pt = p;
     // retrive the [+x, -x, +y, -y, +z, -z] shifts
     let p_shift = density.reduced_shift(p);
     for i in 0..3 {
@@ -83,9 +80,9 @@ pub fn neargrid_step(p: isize, dr: &mut [f64; 3], density: &Density) -> isize {
     }
     // convert the gradient to the lattice basis and find the max value
     grad = utils::dot(grad, density.voxel_lattice.gradient_transform);
-    for i in 0..3 {
-        if grad[i].abs() > max_grad {
-            max_grad = grad[i].abs();
+    for g in &grad {
+        if g.abs() > max_grad {
+            max_grad = g.abs();
         }
     }
     // if we arent at a maxima make a step in the gradient
@@ -101,7 +98,7 @@ pub fn neargrid_step(p: isize, dr: &mut [f64; 3], density: &Density) -> isize {
         pt += density.gradient_shift(pt, grad);
         pt += density.gradient_shift(pt, dr_i);
     }
-    return pt;
+    pt
 }
 
 /// Find the maxima assiociated with the current point using the neargrid method
@@ -110,13 +107,10 @@ pub fn neargrid(p: usize,
                 voxel_map: Arc<Vec<AtomicIsize>>)
                 -> isize {
     let mut pt = p as isize;
-    match density.vacuum_tolerance {
-        Some(x) => {
-            if density[pt] <= x {
-                return -1;
-            }
+    if let Some(x) = density.vacuum_tolerance {
+        if density[pt] <= x {
+            return -1;
         }
-        None => (),
     }
     let mut pn = pt;
     let mut dr = [0f64; 3];
@@ -135,11 +129,11 @@ pub fn neargrid(p: usize,
         };
     };
     voxel_map[p].store(maxima, Ordering::Relaxed);
-    return maxima;
+    maxima
 }
 
 pub fn weight_step(p: isize, density: &Density) -> isize {
-    let mut pn = p.clone();
+    let mut pn = p;
     let control = density[pn];
     let mut max_val = 0.;
     // colllect the shift and distances and iterate over them
@@ -154,7 +148,7 @@ pub fn weight_step(p: isize, density: &Density) -> isize {
             pn = pt;
         }
     }
-    return pn;
+    pn
 }
 
 /// Finds the maxima associated with the current point, p.
@@ -163,13 +157,10 @@ pub fn weight(p: usize,
               voxel_map: Arc<Vec<AtomicIsize>>)
               -> isize {
     let mut pt = p as isize;
-    match density.vacuum_tolerance {
-        Some(x) => {
-            if density[pt] <= x {
-                return -1;
-            }
+    if let Some(x) = density.vacuum_tolerance {
+        if density[pt] <= x {
+            return -1;
         }
-        None => (),
     }
     let mut pn = pt;
     let maxima = 'pathloop: loop {
@@ -188,7 +179,7 @@ pub fn weight(p: usize,
         };
     };
     voxel_map[p].store(maxima, Ordering::Relaxed);
-    return maxima;
+    maxima
 }
 
 #[cfg(test)]

@@ -7,10 +7,10 @@ pub fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 /// compute the dot product between a vector and a matrix
 pub fn dot(v: [f64; 3], m: [[f64; 3]; 3]) -> [f64; 3] {
     let mut out = [0f64; 3];
-    for i in 0..3 {
-        out[i] = v[0] * m[0][i] + v[1] * m[1][i] + v[2] * m[2][i]
+    for (i, out) in out.iter_mut().enumerate() {
+        *out = v[0] * m[0][i] + v[1] * m[1][i] + v[2] * m[2][i]
     }
-    return out;
+    out
 }
 
 /// compute the dot product between two vectors
@@ -19,7 +19,7 @@ pub fn vdot(a: [f64; 3], b: [f64; 3]) -> f64 {
     for i in 0..3 {
         out += a[i] * b[i]
     }
-    return out;
+    out
 }
 
 /// compute the norm of a vector

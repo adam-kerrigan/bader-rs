@@ -153,7 +153,10 @@ impl Results {
         };
 
         let mut charge_t = vec![0f64; bader_charge.len()];
-        for i in 0..atoms.positions.len() {
+        for (i, s_dist) in surface_distance.iter()
+                                           .enumerate()
+                                           .take(atoms.positions.len())
+        {
             let mut charge_a = vec![0f64; 4];
             let mut volume_a = 0f64;
             for (ii, atom_num) in assigned_atom.iter().enumerate() {
@@ -194,13 +197,7 @@ impl Results {
                 }
             }
             let (x, y, z) = position_format(atoms.positions[i]);
-            add_row(&mut atoms_table,
-                    x,
-                    y,
-                    z,
-                    charge_a,
-                    volume_a,
-                    surface_distance[i]);
+            add_row(&mut atoms_table, x, y, z, charge_a, volume_a, *s_dist);
         }
         let footer = match bader_charge.len() {
             1 => format!(
@@ -236,7 +233,7 @@ impl Results {
         bader_file.write_all(self.bader_charge_file.as_bytes())?;
         let mut atoms_file = File::create("ACF.dat")?;
         atoms_file.write_all(self.atoms_charge_file.as_bytes())?;
-        return Ok(());
+        Ok(())
     }
 }
 
@@ -286,14 +283,14 @@ mod tests {
                                    reference,
                                    atoms,
                                    true);
-        let acf = match results.atoms_charge_file.split("\n").nth(2) {
+        let acf = match results.atoms_charge_file.split('\n').nth(2) {
             Some(s) => s.split(" | ")
                         .map(|x| x.trim().parse::<f64>().unwrap())
                         .collect::<Vec<f64>>(),
             //Some(s) => s.split(" | ").collect::<Vec<_>>(),
             None => panic!("No acf table content"),
         };
-        let bcf = match results.bader_charge_file.split("\n").nth(2) {
+        let bcf = match results.bader_charge_file.split('\n').nth(2) {
             Some(s) => s.split(" | ")
                         .map(|x| x.trim().parse::<f64>().unwrap())
                         .collect::<Vec<f64>>(),
@@ -345,13 +342,13 @@ mod tests {
                                    reference,
                                    atoms,
                                    false);
-        let acf = match results.atoms_charge_file.split("\n").nth(2) {
+        let acf = match results.atoms_charge_file.split('\n').nth(2) {
             Some(s) => s.split(" | ")
                         .map(|x| x.trim().parse::<f64>().unwrap())
                         .collect::<Vec<f64>>(),
             None => panic!("No acf table content"),
         };
-        let bcf = match results.bader_charge_file.split("\n").nth(2) {
+        let bcf = match results.bader_charge_file.split('\n').nth(2) {
             Some(s) => s.split(" | ")
                         .map(|x| x.trim().parse::<f64>().unwrap())
                         .collect::<Vec<f64>>(),
@@ -404,13 +401,13 @@ mod tests {
                                    reference,
                                    atoms,
                                    true);
-        let acf = match results.atoms_charge_file.split("\n").nth(2) {
+        let acf = match results.atoms_charge_file.split('\n').nth(2) {
             Some(s) => s.split(" | ")
                         .map(|x| x.trim().parse::<f64>().unwrap())
                         .collect::<Vec<f64>>(),
             None => panic!("No acf table content"),
         };
-        let bcf = match results.bader_charge_file.split("\n").nth(2) {
+        let bcf = match results.bader_charge_file.split('\n').nth(2) {
             Some(s) => s.split(" | ")
                         .map(|x| x.trim().parse::<f64>().unwrap())
                         .collect::<Vec<f64>>(),

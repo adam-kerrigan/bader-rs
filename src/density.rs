@@ -29,7 +29,7 @@ impl<'a> Index<isize> for Density<'a> {
 
     /// Index the reference charge inside the Density structure
     fn index(&self, i: isize) -> &Self::Output {
-        return &self.data[i as usize];
+        &self.data[i as usize]
     }
 }
 
@@ -66,19 +66,18 @@ impl<'a> Density<'a> {
     /// get the full shift to visit the surrounding 26 voxels
     pub fn full_shift(&self, p: isize) -> [isize; 26] {
         let shift = self.shift.get(p);
-        return [shift[0], shift[1], shift[2], shift[3], shift[4], shift[5],
-                shift[6], shift[7], shift[8], shift[9], shift[10], shift[11],
-                shift[12], shift[14], shift[15], shift[16], shift[17],
-                shift[18], shift[19], shift[20], shift[21], shift[22],
-                shift[23], shift[24], shift[25], shift[26]];
+        [shift[0], shift[1], shift[2], shift[3], shift[4], shift[5], shift[6],
+         shift[7], shift[8], shift[9], shift[10], shift[11], shift[12],
+         shift[14], shift[15], shift[16], shift[17], shift[18], shift[19],
+         shift[20], shift[21], shift[22], shift[23], shift[24], shift[25],
+         shift[26]]
     }
 
     /// get the reduced shift to visit the surrounding 6 voxels
     pub fn reduced_shift(&self, p: isize) -> [isize; 6] {
         let shift = self.shift.get(p);
         // [ +x, -x, +y, -y, +z, -z ]
-        return [shift[22], shift[4], shift[16], shift[10], shift[14],
-                shift[12]];
+        [shift[22], shift[4], shift[16], shift[10], shift[14], shift[12]]
     }
 
     /// Get the gradient shift from the current point
@@ -87,7 +86,7 @@ impl<'a> Density<'a> {
         // [ [-x, 0, +x], [-y, 0, +y], [-z, 0, +z] ]
         let i = (gradient[0] * 9f64 + gradient[1] * 3f64 + gradient[2] + 13f64)
                 as usize;
-        return shift[i];
+        shift[i]
     }
 
     pub fn voronoi_shift(&self, p: isize, shift: &Vec<usize>) -> isize {
@@ -95,7 +94,7 @@ impl<'a> Density<'a> {
         for p_shift in shift.iter() {
             pn += self.shift.get(pn)[*p_shift];
         }
-        return pn;
+        pn
     }
 
     pub fn probability(&self,
@@ -144,7 +143,7 @@ impl Shift {
     /// Gets the periodic boundary shift
     fn get(&self, i: isize) -> [isize; 27] {
         let ii = self.index[i as usize] as usize;
-        return self.di[ii];
+        self.di[ii]
     }
 
     /// Generate the indices for Shift.index
@@ -244,7 +243,7 @@ impl Shift {
             i += 1;
         }
         index[i] = 13;
-        return index;
+        index
     }
 
     /// Creates the shift matrix for moving in the array
@@ -263,18 +262,18 @@ impl Shift {
         let mut di = [[0isize; 27]; 27];
         let index = Shift::index_gen(size);
 
-        let _x: isize = -1 * (size.y * size.z);
+        let _x: isize = -(size.y * size.z);
         let _xx: isize = (size.x * size.y * size.z) + _x;
         let x: isize = size.y * size.z;
-        let xx: isize = -1 * (size.x * size.y * size.z) + x;
-        let _y: isize = -1 * size.z;
+        let xx: isize = -(size.x * size.y * size.z) + x;
+        let _y: isize = -size.z;
         let _yy: isize = (size.y * size.z) + _y;
         let y: isize = size.z;
-        let yy: isize = -1 * (size.y * size.z) + y;
+        let yy: isize = -(size.y * size.z) + y;
         let _z: isize = -1;
         let _zz: isize = size.z + _z;
         let z: isize = 1;
-        let zz: isize = (-1 * size.z) + z;
+        let zz: isize = -size.z + z;
 
         // GET READY FOR SOME FRESH HELL VECTOR CREATION
         // We need to make the 27 index shifts for the 27 different positions
@@ -1036,7 +1035,7 @@ impl Shift {
                   x + y + _zz,
                   x + y,
                   x + y + z];
-        return Self { di, index };
+        Self { di, index }
     }
 }
 
@@ -1061,7 +1060,7 @@ impl Size {
             },
             None => panic!("Grid size is too large!"),
         };
-        return Self { x, y, z, total };
+        Self { x, y, z, total }
     }
 }
 
@@ -1086,7 +1085,7 @@ impl Index<isize> for VoxelMap {
 
     /// Index the reference charge inside the Density structure
     fn index(&self, i: isize) -> &Self::Output {
-        return &self.map[i as usize];
+        &self.map[i as usize]
     }
 }
 
@@ -1095,7 +1094,7 @@ impl Index<usize> for VoxelMap {
 
     /// Index the reference charge inside the Density structure
     fn index(&self, i: usize) -> &Self::Output {
-        return &self.map[i];
+        &self.map[i]
     }
 }
 
@@ -1112,9 +1111,9 @@ impl VoxelMap {
                 index[*maxima as usize] = i;
             }
         }
-        return Self { map,
-                      bader_maxima,
-                      index };
+        Self { map,
+               bader_maxima,
+               index }
     }
 
     pub fn index_get(&self, p: isize) -> usize {
@@ -1172,13 +1171,13 @@ impl VoxelMap {
             }
         }
         if is_atom {
-            return Boundary::Weight((t.into_iter()
-                                      .map(|(i, x)| (i, x / t_total))
-                                      .collect(),
-                                     count,
-                                     true));
+            Boundary::Weight((t.into_iter()
+                               .map(|(i, x)| (i, x / t_total))
+                               .collect(),
+                              count,
+                              true))
         } else {
-            return Boundary::None(is_boundary);
+            Boundary::None(is_boundary)
         }
     }
 
@@ -1239,13 +1238,13 @@ impl VoxelMap {
             }
         }
         if is_volume {
-            return Boundary::Weight((t.into_iter()
-                                      .map(|(i, x)| (i, x / t_total))
-                                      .collect(),
-                                     count,
-                                     is_boundary));
+            Boundary::Weight((t.into_iter()
+                               .map(|(i, x)| (i, x / t_total))
+                               .collect(),
+                              count,
+                              is_boundary))
         } else {
-            return Boundary::None(is_boundary);
+            Boundary::None(is_boundary)
         }
     }
 
@@ -1266,7 +1265,7 @@ impl VoxelMap {
                 return Boundary::None(true);
             }
         }
-        return Boundary::None(false);
+        Boundary::None(false)
     }
 
     /// Sum the densities for each bader volume
@@ -1361,8 +1360,8 @@ impl VoxelMap {
                 let mut p_lll_fractional = utils::dot(p_cartesian,
                                                       atoms.reduced_lattice
                                                            .to_fractional);
-                for i in 0..3 {
-                    p_lll_fractional[i] = p_lll_fractional[i].rem_euclid(1.);
+                for f in &mut p_lll_fractional {
+                    *f = f.rem_euclid(1.);
                 }
                 let p_lll_cartesian = utils::dot(p_lll_fractional,
                                                  atoms.reduced_lattice
@@ -1385,7 +1384,7 @@ impl VoxelMap {
             pbar.tick();
         }
         drop(pbar);
-        return (bader_charge, bader_volume, surface_distance);
+        (bader_charge, bader_volume, surface_distance)
     }
 }
 

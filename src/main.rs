@@ -56,7 +56,7 @@ fn main() {
             vec![d]
         }
     };
-    let reference = match args.reference.clone() {
+    let reference = match args.reference {
         Reference::None => Density::new(&densities[0],
                                         grid,
                                         atoms.lattice.to_cartesian,
@@ -74,16 +74,15 @@ fn main() {
         Method::Weight => methods::weight,
         Method::NearGrid => methods::neargrid,
     };
-    match args.weight.clone() {
+    match args.weight {
         Weight::None => (),
         _ => match args.method {
             Method::NearGrid => (),
             _ => {
                 println!("Sorting the density.");
                 index.par_sort_unstable_by(|a, b| {
-                         reference.data[b.clone()].partial_cmp(&reference.data
-                                                                   [a.clone()])
-                                                  .unwrap()
+                         reference.data[*b].partial_cmp(&reference.data[*a])
+                                           .unwrap()
                      });
             }
         },
@@ -114,19 +113,17 @@ fn main() {
     let (assigned_atom, assigned_distance) =
         atoms.assign_maxima(&voxel_map, &reference);
     // find the nearest point to the atom and sum the atoms charge
-    match args.weight.clone() {
+    match args.weight {
         Weight::None => (),
-        _ => match args.method {
-            Method::NearGrid => {
+        _ => {
+            if let Method::NearGrid = args.method {
                 println!("Sorting the density.");
                 index.par_sort_unstable_by(|a, b| {
-                         reference.data[b.clone()].partial_cmp(&reference.data
-                                                                   [a.clone()])
-                                                  .unwrap()
-                     });
+                         reference.data[*b].partial_cmp(&reference.data[*a])
+                                           .unwrap()
+                     })
             }
-            _ => (),
-        },
+        }
     }
     let (bader_charge, bader_volume, surface_distance) = {
         voxel_map.charge_sum(&densities,

@@ -19,7 +19,6 @@ fn xyz_to_atoms(xyz: String) -> Atoms {
         lines.next()
              .unwrap()
              .to_string()
-             .clone()
              .split_whitespace()
              .map(|x| x.parse::<f64>().unwrap())
              .collect::<Vec<f64>>()
@@ -29,7 +28,6 @@ fn xyz_to_atoms(xyz: String) -> Atoms {
         lines.next()
              .unwrap()
              .to_string()
-             .clone()
              .split_whitespace()
              .map(|x| x.parse::<f64>().unwrap())
              .collect::<Vec<f64>>()
@@ -38,7 +36,6 @@ fn xyz_to_atoms(xyz: String) -> Atoms {
         lines.next()
              .unwrap()
              .to_string()
-             .clone()
              .split_whitespace()
              .map(|x| x.parse::<f64>().unwrap())
              .collect::<Vec<f64>>()
@@ -53,7 +50,7 @@ fn xyz_to_atoms(xyz: String) -> Atoms {
                                 [c[1], c[2], c[3]]]);
     let mut positions: Vec<[f64; 3]> = vec![];
     // make the positions fractional and swap c and a
-    while let Some(line) = lines.next() {
+    for line in lines {
         let pos = line.split_whitespace()
                       .map(|x| x.parse::<f64>().unwrap() * LENGTH_UNITS)
                       .collect::<Vec<f64>>();
@@ -67,7 +64,7 @@ fn xyz_to_atoms(xyz: String) -> Atoms {
         };
         positions.push(pos_cart);
     }
-    return Atoms::new(lattice, positions, xyz);
+    Atoms::new(lattice, positions, xyz)
 }
 
 /// Read a cube formatted density into an Atoms structure and an array of densities
@@ -102,10 +99,8 @@ pub fn read(filename: String)
                 pos += size;
                 let split = text.trim().split_whitespace().map(|x| x.parse::<f64>())
                     .collect::<Vec<Result<f64, std::num::ParseFloatError>>>();
-                if split.len() == 5 {
-                    if split[4] != Ok(1.) {
-                        panic!("Error(Unsuppoerted): Multiple values per voxel.");
-                    }
+                if split.len() == 5 && split[4] != Ok(1.) {
+                    panic!("Error(Unsuppoerted): Multiple values per voxel.");
                 }
                 let natoms = match split[0] {
                     Ok(x) => x as isize,
@@ -128,8 +123,8 @@ pub fn read(filename: String)
             panic!("Error(Unsuppoerted): Multiple values per voxel.");
         }
         let mut grid_pts = [0usize; 3];
-        for i in 0..3 {
-            grid_pts[i] = match reader.read_line(&mut buffer) {
+        for gp in &mut grid_pts {
+            *gp = match reader.read_line(&mut buffer) {
                 Some(line) => {
                     let (text, size) = line?;
                     pos += size;
@@ -184,5 +179,5 @@ pub fn read(filename: String)
                                               })
                                               .collect::<Vec<f64>>();
     println!("File read successfully.");
-    return Ok((voxel_origin, grid_pts, atoms, vec![density]));
+    Ok((voxel_origin, grid_pts, atoms, vec![density]))
 }

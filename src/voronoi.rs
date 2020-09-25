@@ -29,24 +29,16 @@ impl Voronoi {
         // calculate the reduced lattice
         'vector: for vec_i in 0..26 {
             let c_shift = lll.cartesian_shift_matrix[vec_i];
-            for i in 0..3 {
-                vector_basis[0][i] = c_shift[i];
-            }
-            vector_mag[0] = vdot(c_shift.clone(), c_shift.clone()) * 0.5;
+            vector_basis[0][..3].clone_from_slice(&c_shift[..3]);
+            vector_mag[0] = vdot(c_shift, c_shift) * 0.5;
             for neigh_a in 0..26 {
                 let c_neigh_a = lll.cartesian_shift_matrix[neigh_a];
-                for i in 0..3 {
-                    vector_basis[1][i] = c_neigh_a[i];
-                }
-                vector_mag[1] =
-                    vdot(c_neigh_a.clone(), c_neigh_a.clone()) * 0.5;
+                vector_basis[1][..3].clone_from_slice(&c_neigh_a[..3]);
+                vector_mag[1] = vdot(c_neigh_a, c_neigh_a) * 0.5;
                 'neigh_b: for neigh_b in (neigh_a + 1)..26 {
                     let c_neigh_b = lll.cartesian_shift_matrix[neigh_b];
-                    for i in 0..3 {
-                        vector_basis[2][i] = c_neigh_b[i];
-                    }
-                    vector_mag[2] =
-                        vdot(c_neigh_b.clone(), c_neigh_b.clone()) * 0.5;
+                    vector_basis[2][..3].clone_from_slice(&c_neigh_b[..3]);
+                    vector_mag[2] = vdot(c_neigh_b, c_neigh_b) * 0.5;
                     match invert_lattice(&vector_basis) {
                         Ok(vector_inv) => {
                             let mut vertex = [0f64; 3];
@@ -75,24 +67,22 @@ impl Voronoi {
                     }
                 }
             }
-            if vertices.len() == 0 {
+            if vertices.is_empty() {
                 continue 'vector;
             }
-            for i in 0..3 {
-                rx[i] = vertices[0][i]
-            }
+            rx[..3].clone_from_slice(&vertices[0][..3]);
             let r_coeff = vdot(rx, c_shift) / vdot(c_shift, c_shift);
-            for i in 0..3 {
-                rx[i] -= c_shift[i] * r_coeff;
+            for (i, c_shift) in c_shift.iter().enumerate() {
+                rx[i] -= c_shift * r_coeff;
             }
             let r_coeff = vdot(rx, rx).powf(-0.5);
-            for i in 0..3 {
-                rx[i] *= r_coeff;
+            for rx in &mut rx {
+                *rx *= r_coeff;
             }
             let mut ry = cross(c_shift, rx);
             let r_coeff = vdot(ry, ry).powf(-0.5);
-            for i in 0..3 {
-                ry[i] *= r_coeff;
+            for ry in &mut ry {
+                *ry *= r_coeff;
             }
             vertices.sort_unstable_by({
                         |a, b| {

@@ -26,17 +26,17 @@ impl Atoms {
                      .map(|v| {
                          let mut frac =
                              utils::dot(*v, reduced_lattice.to_fractional);
-                         for i in 0..3 {
-                             frac[i] = frac[i].rem_euclid(1.);
+                         for f in &mut frac {
+                             *f = f.rem_euclid(1.);
                          }
                          utils::dot(frac, reduced_lattice.to_cartesian)
                      })
                      .collect::<Vec<[f64; 3]>>();
-        return Self { lattice,
-                      positions,
-                      reduced_lattice,
-                      reduced_positions,
-                      text };
+        Self { lattice,
+               positions,
+               reduced_lattice,
+               reduced_positions,
+               text }
     }
 
     /// assigns bader volumes to their nearest atom
@@ -68,9 +68,8 @@ impl Atoms {
             let mut maxima_lll_fractional = utils::dot(maxima_cartesian,
                                                        self.reduced_lattice
                                                            .to_fractional);
-            for i in 0..3 {
-                maxima_lll_fractional[i] =
-                    maxima_lll_fractional[i].rem_euclid(1.);
+            for f in &mut maxima_lll_fractional {
+                *f = f.rem_euclid(1.);
             }
             let maxima_lll_cartesian = utils::dot(maxima_lll_fractional,
                                                   self.reduced_lattice
@@ -95,7 +94,7 @@ impl Atoms {
             assigned_atom.push(atom_num);
             assigned_distance.push(min_distance.powf(0.5));
         }
-        return (assigned_atom, assigned_distance);
+        (assigned_atom, assigned_distance)
     }
 }
 
@@ -206,15 +205,15 @@ impl Lattice {
                                                    .abs()
         };
         let gradient_transform = utils::transpose_square(to_fractional);
-        return Self { a,
-                      b,
-                      c,
-                      distance_matrix,
-                      shift_matrix,
-                      gradient_transform,
-                      to_fractional,
-                      to_cartesian,
-                      volume };
+        Self { a,
+               b,
+               c,
+               distance_matrix,
+               shift_matrix,
+               gradient_transform,
+               to_fractional,
+               to_cartesian,
+               volume }
     }
 }
 
@@ -235,12 +234,11 @@ impl ReducedLattice {
         let distance_matrix = reduced_lattice.distance_matrix;
         let cartesian_shift_matrix = reduced_lattice.shift_matrix;
         let mut shift_matrix = Vec::with_capacity(26);
-        for i in 0..26 {
+        for c_shift in cartesian_shift_matrix.iter().take(26) {
             shift_matrix.push({
                             let mut shift_vec = Vec::<usize>::new();
                             let mut shift =
-                    utils::dot(cartesian_shift_matrix[i],
-                               lattice.to_fractional).iter()
+                    utils::dot(*c_shift, lattice.to_fractional).iter()
                                                      .map(|x| {
                                                          ((x * 1E14).round()
                                                           / 1E14)

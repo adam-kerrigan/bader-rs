@@ -14,7 +14,7 @@ fn poscar_to_atoms(poscar: String) -> Atoms {
     // the last match is the one we want so we don't match carbon or the comment line
     let matches = coord_regex.find_iter(&poscar).last().unwrap();
     let coord_text = &poscar[matches.start()..matches.end()].trim_start();
-    let coord = if coord_text.starts_with("d") | coord_text.starts_with("D") {
+    let coord = if coord_text.starts_with('d') | coord_text.starts_with('D') {
         Coord::Fractional
     } else {
         Coord::Cartesian
@@ -23,13 +23,11 @@ fn poscar_to_atoms(poscar: String) -> Atoms {
     // push the floats to the pos vector so we don't get caught out by selective dynamics
     let _ = {
         &poscar[matches.end()..].to_string()
-                                .clone()
                                 .split_whitespace()
-                                .map(|x| match x.parse::<f64>() {
-                                    Ok(x) => {
+                                .map(|x| {
+                                    if let Ok(x) = x.parse::<f64>() {
                                         pos.push(x);
                                     }
-                                    Err(_) => {}
                                 })
                                 .collect::<Vec<_>>()
     };
@@ -40,7 +38,6 @@ fn poscar_to_atoms(poscar: String) -> Atoms {
         lines.next()
              .unwrap()
              .to_string()
-             .clone()
              .split_whitespace()
              .map(|x| x.parse::<f64>().unwrap())
              .collect::<Vec<f64>>()
@@ -50,7 +47,6 @@ fn poscar_to_atoms(poscar: String) -> Atoms {
         lines.next()
              .unwrap()
              .to_string()
-             .clone()
              .split_whitespace()
              .map(|x| x.parse::<f64>().unwrap())
              .collect::<Vec<f64>>()
@@ -59,7 +55,6 @@ fn poscar_to_atoms(poscar: String) -> Atoms {
         lines.next()
              .unwrap()
              .to_string()
-             .clone()
              .split_whitespace()
              .map(|x| x.parse::<f64>().unwrap())
              .collect::<Vec<f64>>()
@@ -68,7 +63,6 @@ fn poscar_to_atoms(poscar: String) -> Atoms {
         lines.next()
              .unwrap()
              .to_string()
-             .clone()
              .split_whitespace()
              .map(|x| x.parse::<f64>().unwrap())
              .collect::<Vec<f64>>()
@@ -118,7 +112,7 @@ fn poscar_to_atoms(poscar: String) -> Atoms {
             }
         }
     }
-    return Atoms::new(lattice, positions, poscar);
+    Atoms::new(lattice, positions, poscar)
 }
 
 /// Read a VASP formatted density into an Atoms structure and an array of densities
@@ -183,7 +177,7 @@ pub fn read(filename: String)
     let mut stop = Vec::with_capacity(4);
     for (i, start_stop) in grid.iter().enumerate() {
         start.push(start_stop[1]);
-        let s = if aug.len() > 0 {
+        let s = if !aug.is_empty() {
             aug[i * aug.len() / grid.len()]
         } else if grid.len() > (i + 1) {
             grid[i + 1][0]
@@ -246,5 +240,5 @@ pub fn read(filename: String)
     // flip the grid points as VASP outputs density[z, y, x]
     let grid_pts: [usize; 3] = [grid_vec[2], grid_vec[1], grid_vec[0]];
     println!("File read successfully.");
-    return Ok((voxel_origin, grid_pts, atoms, density));
+    Ok((voxel_origin, grid_pts, atoms, density))
 }
