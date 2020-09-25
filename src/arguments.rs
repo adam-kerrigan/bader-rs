@@ -49,7 +49,8 @@ impl ClapApp {
                 .long_about(
 "Use the \"near-grid\" or \"on-grid\" methods based on the algorithms presented
 in W. Tang et al. A grid-based Bader analysis algorithm without lattice bias,
-J. Phys.: Condens. Matter 21, 084204 (2009)"))
+J. Phys.: Condens. Matter 21, 084204 (2009). Or the weight method (Default)
+presented in Min Yu and Dallas R. Trinkle. Accurate and efficient algorithm for Bader charge integration, J. Chem. Phys. 134, 064111 (2011)"))
             .arg(Arg::new("weight")
                 .short('w')
                 .long("weight")
@@ -61,7 +62,7 @@ J. Phys.: Condens. Matter 21, 084204 (2009)"))
                 .case_insensitive(false)
                 .about("How to calculate the weight of the boundary voxels")
                 .long_about(
-"Determins the condition for a voxel to be considered at boundary. When multiple
+"Determines the condition for a voxel to be considered at boundary. When multiple
 Bader volumes are assigned to the same atom it can be faster to only consider
 voxels that neighbour a different atom to be at a boundary. Selecting none
 disregards the weighting of voxels and their full charge is assigned to their
