@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [linux, macos, windows]
+        version: [stable, beta, nightly]
+        include:
+        - os: linux
+          runs-on: ubuntu-latest
+        - os: macos
+          runs-on: macos-latest
+        - os: windows
+          runs-on: windows-latest
+    name: test (${{ matrix.os }}, ${{ matrix.version }})
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.version }}
+        profile: minimal
+    - name: Test
+      uses: actions-rs/cargo@v1
+      with:
+        command: test
+        args: --verbose
+  format:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        profile: minimal
+        components: rustfmt
+    - name: Check formatting
+      uses: actions-rs/cargo@v1
+      with:
+        command: fmt
+        args: -- --check
