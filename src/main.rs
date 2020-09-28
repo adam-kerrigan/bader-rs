@@ -10,9 +10,6 @@ use std::sync::atomic::AtomicIsize;
 use std::sync::Arc;
 
 fn main() {
-    // print splash
-    println!("Multi-threaded Bader Charge Analysis ({})",
-             env!("CARGO_PKG_VERSION"));
     // argument parsing
     let app = ClapApp::App.get();
     let args = Args::new(app.get_matches());
@@ -20,6 +17,9 @@ fn main() {
     rayon::ThreadPoolBuilder::new().num_threads(args.threads)
                                    .build_global()
                                    .unwrap();
+    // print splash
+    println!("Multi-threaded Bader Charge Analysis ({})",
+             env!("CARGO_PKG_VERSION"));
     // read the input files into a densities vector and a Density struct
     let read_function: ReadFunction = args.read;
     let (voxel_origin, grid, atoms, densities) = match read_function(args.file)
