@@ -40,7 +40,7 @@ jobs:
         - i686-unknown-linux-gnu
         - x86_64-unknown-linux-gnu
     name: build (${{ matrix.target }})
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     needs: [create-release]
     steps:
     - uses: actions/checkout@v2
@@ -48,6 +48,8 @@ jobs:
       with:
         toolchain: stable
         profile: minimal
+        target: ${{ matrix.target }}
+        override: true
     - name: Build
       uses: actions-rs/cargo@v1
       with:
@@ -78,6 +80,8 @@ jobs:
       with:
         toolchain: stable
         profile: minimal
+        target: ${{ matrix.target }}
+        override: true
     - name: Build
       uses: actions-rs/cargo@v1
       with:
@@ -99,7 +103,7 @@ jobs:
         target:
         - x86_64-apple-darwin
     name: build (${{ matrix.target }})
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     needs: [create-release]
     steps:
     - uses: actions/checkout@v2
@@ -107,6 +111,8 @@ jobs:
       with:
         toolchain: stable
         profile: minimal
+        target: ${{ matrix.target }}
+        override: true
     - name: Build
       uses: actions-rs/cargo@v1
       with:
