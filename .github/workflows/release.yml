@@ -40,7 +40,7 @@ jobs:
         - i686-unknown-linux-gnu
         - x86_64-unknown-linux-gnu
     name: build (${{ matrix.target }})
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     needs: [create-release]
     steps:
     - uses: actions/checkout@v2
@@ -72,7 +72,7 @@ jobs:
         - i686-pc-windows-gnu
         - x86_64-pc-windows-gnu
     name: build (${{ matrix.target }})
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     needs: [create-release]
     steps:
     - uses: actions/checkout@v2
