@@ -36,7 +36,8 @@ impl ClapApp {
             .version("0.1.0")
             .arg(Arg::new("file")
                 .required(true)
-                .index(1))
+                .index(1)
+                .about("The file to analyse."))
             .arg(Arg::new("method")
                 .short('m')
                 .long("method")
@@ -49,8 +50,9 @@ impl ClapApp {
                 .long_about(
 "Use the \"near-grid\" or \"on-grid\" methods based on the algorithms presented
 in W. Tang et al. A grid-based Bader analysis algorithm without lattice bias,
-J. Phys.: Condens. Matter 21, 084204 (2009). Or the weight method (Default)
-presented in Min Yu and Dallas R. Trinkle. Accurate and efficient algorithm for Bader charge integration, J. Chem. Phys. 134, 064111 (2011)"))
+J. Phys.: Condens. Matter 21, 084204 (2009). Or the \"weight\" method (Default)
+presented in Min Yu and Dallas R. Trinkle. Accurate and efficient algorithm for
+Bader charge integration, J. Chem. Phys. 134, 064111 (2011)."))
             .arg(Arg::new("weight")
                 .short('w')
                 .long("weight")
@@ -74,17 +76,17 @@ Bader volume."))
                 .possible_value("cube")
                 .possible_value("vasp")
                 .case_insensitive(false)
-                .about("the file type of the charge density")
+                .about("The file type of the charge density.")
                 .long_about(
 "The file type of the input file. If this is not supplied the type will attempt
-to be infered from the filename"))
+to be infered from the filename."))
             .arg(Arg::new("reference")
                 .short('r')
                 .long("ref")
                 .multiple(true)
                 .max_values(2)
                 .number_of_values(1)
-                .about("file(s) containing reference charge")
+                .about("File(s) containing reference charge.")
                 .long_about(
 "A reference charge to do the partitioning upon. Two files can be passed
 by using multiple flags (bader CHGCAR -r AECCAR0 -r AECCAR2). If two files are
@@ -92,7 +94,7 @@ passed they are summed together."))
             .arg(Arg::new("all electron")
                 .short('a')
                 .long("aec")
-                .about("convience flag for reading both aeccars")
+                .about("Convience flag for reading both aeccars.")
                 .takes_value(false)
                 .multiple(false)
                 .conflicts_with("reference"))
@@ -100,10 +102,10 @@ passed they are summed together."))
                 .short('v')
                 .long("vac")
                 .takes_value(true)
-                .about("cut-off at which charge is considered vacuum")
+                .about("Cut-off at which charge is considered vacuum.")
                 .long_about(
 "Values of density below the supplied value are considered vacuum and are not
-included in the calculation. A value of \"auto\" can be passed to use 1E-3 C*m^-3"))
+included in the calculation. A value of \"auto\" can be passed to use 1E-3 C*m^-3."))
             .arg(Arg::new("threads")
                 .short('J')
                 .long("threads")
