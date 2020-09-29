@@ -78,13 +78,13 @@ impl Results {
         }
 
         fn add_row_no_spin(t: &mut Table,
+                           i: String,
                            x: String,
                            y: String,
                            z: String,
                            charge: Vec<f64>,
                            volume: f64,
                            distance: f64) {
-            let i = format!("{}", t.len() + 1);
             let c = format!("{:.6}", charge[0]);
             let v = format!("{:.6}", volume);
             let d = format!("{:.6}", distance);
@@ -92,13 +92,13 @@ impl Results {
         }
 
         fn add_row_spin(t: &mut Table,
+                        i: String,
                         x: String,
                         y: String,
                         z: String,
                         charge: Vec<f64>,
                         volume: f64,
                         distance: f64) {
-            let i = format!("{}", t.len() + 1);
             let c = format!("{:.6}", charge[0]);
             let s = format!("{:.6}", charge[1]);
             let v = format!("{:.6}", volume);
@@ -107,13 +107,13 @@ impl Results {
         }
 
         fn add_row_ncl(t: &mut Table,
+                       i: String,
                        x: String,
                        y: String,
                        z: String,
                        charge: Vec<f64>,
                        volume: f64,
                        distance: f64) {
-            let i = format!("{}", t.len() + 1);
             let c = format!("{:.6}", charge[0]);
             let sx = format!("{:.6}", charge[1]);
             let sy = format!("{:.6}", charge[2]);
@@ -124,7 +124,7 @@ impl Results {
         }
 
         type AddRowType =
-            fn(&mut Table, String, String, String, Vec<f64>, f64, f64);
+            fn(&mut Table, String, String, String, String, Vec<f64>, f64, f64);
 
         let add_row: AddRowType = match bader_charge.len() {
             1 => add_row_no_spin,
@@ -153,6 +153,7 @@ impl Results {
             standard_format
         };
 
+        let mut count = 1;
         let mut charge_t = vec![0f64; bader_charge.len()];
         for (i, s_dist) in surface_distance.iter()
                                            .enumerate()
@@ -162,6 +163,7 @@ impl Results {
             let mut volume_a = 0f64;
             for (ii, atom_num) in assigned_atom.iter().enumerate() {
                 if *atom_num == i {
+                    let index = format!("{}: {}", atom_num + 1, count);
                     let bx = density.voxel_origin[0]
                              + (bader_maxima[ii]
                                 / (density.size.y * density.size.z))
@@ -187,7 +189,9 @@ impl Results {
                         charge_t[j] += charge[j];
                     }
                     if charge[0] >= 1E-3 {
+                        count += 1;
                         add_row(&mut bader_table,
+                                index,
                                 x,
                                 y,
                                 z,
@@ -197,8 +201,10 @@ impl Results {
                     }
                 }
             }
+            count = 1;
             let (x, y, z) = position_format(atoms.positions[i]);
-            add_row(&mut atoms_table, x, y, z, charge_a, volume_a, *s_dist);
+            let index = format!("{}", i + 1);
+            add_row(&mut atoms_table, index, x, y, z, charge_a, volume_a, *s_dist);
         }
         let footer = match bader_charge.len() {
             1 => format!(
@@ -293,12 +299,13 @@ mod tests {
         };
         let bcf = match results.bader_charge_file.split('\n').nth(2) {
             Some(s) => s.split(" | ")
+                        .skip(1)
                         .map(|x| x.trim().parse::<f64>().unwrap())
                         .collect::<Vec<f64>>(),
             //Some(s) => s.split(" | ").collect::<Vec<_>>(),
             None => panic!("No bcf table content"),
         };
-        assert_eq!(bcf, [1., 0.1, 0., 0., 27., 27., 0.1]);
+        assert_eq!(bcf, [0.1, 0., 0., 27., 27., 0.1]);
         assert_eq!(acf, [1., 0., 0., 0., 27., 27., min_len - 0.1]);
     }
 
@@ -351,11 +358,12 @@ mod tests {
         };
         let bcf = match results.bader_charge_file.split('\n').nth(2) {
             Some(s) => s.split(" | ")
+                        .skip(1)
                         .map(|x| x.trim().parse::<f64>().unwrap())
                         .collect::<Vec<f64>>(),
             None => panic!("No bcf table content"),
         };
-        assert_eq!(bcf, [1., 0., 0., 0.1, 27., 27. * 2., 27., 0.1]);
+        assert_eq!(bcf, [0., 0., 0.1, 27., 27. * 2., 27., 0.1]);
         assert_eq!(acf, [1., 0., 0., 0., 27., 27. * 2., 27., min_len - 0.1]);
     }
 
@@ -410,13 +418,13 @@ mod tests {
         };
         let bcf = match results.bader_charge_file.split('\n').nth(2) {
             Some(s) => s.split(" | ")
+                        .skip(1)
                         .map(|x| x.trim().parse::<f64>().unwrap())
                         .collect::<Vec<f64>>(),
             None => panic!("No bcf table content"),
         };
         assert_eq!(bcf,
-                   [1.,
-                    0.,
+                   [0.,
                     0.,
                     0.,
                     27.,
