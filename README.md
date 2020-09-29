@@ -23,7 +23,7 @@ From here you can either move or link the binary to folder in your path.
 ```sh
 $ mv ./target/release/bader ~/bin
 ```
-## Minimum Supported Rust Version (MSRV)
+### Minimum Supported Rust Version (MSRV)
 This crate is guaranteed to compile on stable Rust 1.40.0 and up. It *might* compile with older versions but that may change in any new patch release.
 To test this crate requires Rust 1.42.0 and above.
 ## Usage
@@ -31,6 +31,8 @@ For a detailed list of usage options run
 ```sh
 $ bader --help
 ```
+## Output
+The program outputs two files, ACF.dat & BCF.dat. The Atomic Charge File (ACF.dat) contians the charge (and spin) information for each atom and the Bader Charge File (BCF.dat) contains the information about each Bader volume.
 ## License
 MIT
 
