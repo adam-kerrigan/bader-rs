@@ -1,5 +1,6 @@
 use bader::arguments::{Args, ClapApp, Method, Reference, Weight};
-use bader::density::{Density, VoxelMap};
+use bader::density::Density;
+use bader::voxel_map::VoxelMap;
 use bader::io::{self, ReadFunction};
 use bader::methods::{self, StepMethod};
 use bader::progress::Bar;
