@@ -1,4 +1,4 @@
-# bader-rs (0.1.0) ![ci](https://github.com/kerrigoon/bader-rs/workflows/ci/badge.svg?branch=master) [![Latest Version]][crates.io] [![MSRV: rustc 1.40+]][Rust 1.40]
+# bader-rs (0.1.0) ![build](https://github.com/kerrigoon/bader-rs/workflows/build/badge.svg?branch=master) [![Latest Version]][crates.io] [![MSRV: rustc 1.40+]][Rust 1.40]
 [Latest Version]: https://img.shields.io/crates/v/bader.svg
 [crates.io]: https://crates.io/crates/bader
 [MSRV: rustc 1.40+]: https://img.shields.io/badge/MSRV-rustc_1.40+-lightgray.svg
