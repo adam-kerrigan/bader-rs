@@ -1,5 +1,4 @@
-## v0.2.0
-## v0.1.1
+## Bader-rs v0.1.1
 ### Bug Fixes
 - Volume weighting logic error ([issue: #5](https://github.com/kerrigoon/bader-rs/issues/5))
 ### Cosmetic Changes

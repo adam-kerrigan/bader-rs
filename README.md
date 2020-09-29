@@ -1,4 +1,4 @@
-# bader-rs (0.1.0) ![build](https://github.com/kerrigoon/bader-rs/workflows/build/badge.svg?branch=master) [![Latest Version]][crates.io] [![MSRV: rustc 1.40+]][Rust 1.40]
+# bader-rs (0.1.1) ![build](https://github.com/kerrigoon/bader-rs/workflows/build/badge.svg?branch=master) [![Latest Version]][crates.io] [![MSRV: rustc 1.40+]][Rust 1.40]
 [Latest Version]: https://img.shields.io/crates/v/bader.svg
 [crates.io]: https://crates.io/crates/bader
 [MSRV: rustc 1.40+]: https://img.shields.io/badge/MSRV-rustc_1.40+-lightgray.svg
@@ -15,7 +15,7 @@ $ cargo install bader
 ### From Source
 To compile from source run the following which will create the ./target/release/bader executable.
 ```sh
-$ git clone -b v0.1.0 https://github.com/kerrigoon/bader-rs
+$ git clone -b v0.1.1-release https://github.com/kerrigoon/bader-rs
 $ cd bader-rs
 $ cargo build --verbose --release
 ```
@@ -38,7 +38,7 @@ MIT
 
 [//]: # (These are reference links used in the body of this note and get stripped out when the markdown processor does its job. There is no need to format nicely because it shouldn't be seen. Thanks SO - http://stackoverflow.com/questions/4823468/store-comments-in-markdown-syntax)
 
-[release]: <https://github.com/kerrigoon/bader-rs/releases/tag/v0.1.0>
+[release]: <https://github.com/kerrigoon/bader-rs/releases/tag/v0.1.1>
 [Yu Min  and Trinkle Dallas R. 2011  J. Che.m Phys. 134 064111]: <https://doi.org/10.1063/1.3553716>
 [W Tang et al 2009 J. Phys.: Condens. Matter 21 084204]: <https://doi.org/10.1088/0953-8984/21/8/084204>
 [cargo]: <https://doc.rust-lang.org/cargo/getting-started/installation.html>
