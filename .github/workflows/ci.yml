@@ -3,33 +3,49 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [master]
 
 env:
   RUST_BACKTRACE: 1
 
 jobs:
-  test:
+  test-stable:
     strategy:
       matrix:
         os: [linux, macos, windows]
         include:
         - os: linux
           runs-on: ubuntu-latest
-          version: [stable, beta, nightly, 1.40.0]
-        - os: macos
-          runs-on: macos-latest
-          version: stable
         - os: windows
           runs-on: windows-latest
-          version: stable
-    name: test (${{ matrix.os }}, ${{ matrix.version }})
+        - os: macos
+          runs-on: macos-latest
+    name: Test (${{ matrix.os }}, stable)
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+    - name: Test
+      uses: actions-rs/cargo@v1
+      with:
+        command: test
+        args: --verbose
+  test-non-stable:
+    strategy:
+      matrix:
+        os: linux
+        version: [beta, nightly, 1.40.0]
+        runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }}, ${{ matrix.version }})
     runs-on: ${{ matrix.runs-on }}
     steps:
     - uses: actions/checkout@v2
     - uses: actions-rs/toolchain@v1
       with:
         toolchain: ${{ matrix.version }}
+        override: true
         profile: minimal
     - name: Test
       uses: actions-rs/cargo@v1
