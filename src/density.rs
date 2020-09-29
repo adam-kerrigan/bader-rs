@@ -1,9 +1,9 @@
 use crate::atoms::Lattice;
-use crate::voxel_map::VoxelMap;
 use crate::utils;
 use crate::voronoi::Voronoi;
-use std::ops::Index;
+use crate::voxel_map::VoxelMap;
 use std::collections::HashMap;
+use std::ops::Index;
 
 /// Structure for managing the reference density and movement within it
 /// > data: [f64; Size.total()] - charge density in a flattened array

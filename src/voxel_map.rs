@@ -1,10 +1,10 @@
 use crate::arguments::Weight;
+use crate::atoms::Atoms;
 use crate::density::Density;
 use crate::progress::Bar;
-use crate::atoms::Atoms;
-use std::ops::Index;
-use indicatif::ProgressBar;
 use crate::utils;
+use indicatif::ProgressBar;
+use std::ops::Index;
 
 enum Boundary {
     Weight((Vec<(isize, f64)>, usize, bool)),
