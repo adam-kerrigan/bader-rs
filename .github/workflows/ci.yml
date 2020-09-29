@@ -13,14 +13,16 @@ jobs:
     strategy:
       matrix:
         os: [linux, macos, windows]
-        version: [stable, beta, nightly]
         include:
         - os: linux
           runs-on: ubuntu-latest
+          version: [stable, beta, nightly, 1.40.0]
         - os: macos
           runs-on: macos-latest
+          version: stable
         - os: windows
           runs-on: windows-latest
+          version: stable
     name: test (${{ matrix.os }}, ${{ matrix.version }})
     runs-on: ${{ matrix.runs-on }}
     steps:
