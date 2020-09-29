@@ -204,7 +204,14 @@ impl Results {
             count = 1;
             let (x, y, z) = position_format(atoms.positions[i]);
             let index = format!("{}", i + 1);
-            add_row(&mut atoms_table, index, x, y, z, charge_a, volume_a, *s_dist);
+            add_row(&mut atoms_table,
+                    index,
+                    x,
+                    y,
+                    z,
+                    charge_a,
+                    volume_a,
+                    *s_dist);
         }
         let footer = match bader_charge.len() {
             1 => format!(
@@ -424,15 +431,7 @@ mod tests {
             None => panic!("No bcf table content"),
         };
         assert_eq!(bcf,
-                   [0.,
-                    0.,
-                    0.,
-                    27.,
-                    27. * 2.,
-                    27. * 3.,
-                    27. * 4.,
-                    27.,
-                    0.]);
+                   [0., 0., 0., 27., 27. * 2., 27. * 3., 27. * 4., 27., 0.]);
         assert_eq!(acf,
                    [1.,
                     0.,
