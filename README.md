@@ -1,7 +1,7 @@
 # bader-rs (0.1.0) ![ci](https://github.com/kerrigoon/bader-rs/workflows/ci/badge.svg?branch=master) [![Latest Version]][crates.io] [![MSRV: rustc 1.40+]][Rust 1.40]
 [Latest Version]: https://img.shields.io/crates/v/bader.svg
 [crates.io]: https://crates.io/crates/bader
-[MSRV: rustc 1.40+]: https://img.shields.io/badge/bader-rustc_1.40+-lightgray.svg
+[MSRV: rustc 1.40+]: https://img.shields.io/badge/MSRV-rustc_1.40+-lightgray.svg
 [Rust 1.40]: https://blog.rust-lang.org/2019/12/19/Rust-1.40.0.html
 Multi-Threaded Bader Charge Partitioning. Based on methods presented in [Yu Min  and Trinkle Dallas R. 2011  J. Che.m Phys. 134 064111] and [W Tang et al 2009 J. Phys.: Condens. Matter 21 084204] with adaptions for multi-threading.
 ## Installation
