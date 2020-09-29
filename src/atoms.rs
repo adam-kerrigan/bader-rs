@@ -1,5 +1,6 @@
-use crate::density::{Density, VoxelMap};
+use crate::density::Density;
 use crate::utils;
+use crate::voxel_map::VoxelMap;
 
 /// struct for containing the information about the atoms
 ///

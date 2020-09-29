@@ -6,3 +6,4 @@ pub mod methods;
 pub mod progress;
 pub mod utils;
 pub mod voronoi;
+pub mod voxel_map;

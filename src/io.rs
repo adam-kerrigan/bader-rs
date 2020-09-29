@@ -1,6 +1,7 @@
 use crate::atoms::Atoms;
-use crate::density::{Density, VoxelMap};
+use crate::density::Density;
 use crate::utils;
+use crate::voxel_map::VoxelMap;
 use prettytable::{cell, format, row, Table};
 use std::fs::File;
 use std::io::{self, Write};
