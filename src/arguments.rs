@@ -91,6 +91,16 @@ to be infered from the filename."))
 "A reference charge to do the partitioning upon. Two files can be passed
 by using multiple flags (bader CHGCAR -r AECCAR0 -r AECCAR2). If two files are
 passed they are summed together."))
+            .arg(Arg::new("spin")
+                .short('s')
+                .long("spin")
+                .number_of_values(1)
+                .about("File containing spin density.")
+                .long_about(
+"A path to the spin density associated with the original file. This is primarily
+for cube files as if spin density exists in a CHGCAR it will be read automatically.
+If using with VASP outputs then the files for charge and spin density must only
+contain a single density (ie. the original file has been split)."))
             .arg(Arg::new("all electron")
                 .short('a')
                 .long("aec")
@@ -125,6 +135,7 @@ pub struct Args {
     pub method: Method,
     pub weight: Weight,
     pub reference: Reference,
+    pub spin: Option<String>,
     pub threads: usize,
     pub vacuum_tolerance: Option<f64>,
     pub zyx_format: bool,
@@ -217,12 +228,17 @@ impl Args {
             1 => Reference::One(String::from(references[0])),
             _ => Reference::None,
         };
+        let spin = match arguments.value_of("spin") {
+            Some(x) => Some(String::from(x)),
+            None => None,
+        };
         Self { file,
                read,
                method,
                weight,
                reference,
                threads,
+               spin,
                vacuum_tolerance,
                zyx_format }
     }
@@ -365,6 +381,17 @@ mod tests {
         let app = ClapApp::App.get();
         let _ = app.try_get_matches_from(vec!["bader", "CHGCAR", "-t", "basp"])
                    .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+    }
+
+    #[test]
+    fn argument_spin() {
+        let app = ClapApp::App.get();
+        let matches = app.get_matches_from(vec!["bader",
+                                                "density.cube",
+                                                "-s",
+                                                "spin.cube"]);
+        let args = Args::new(matches);
+        assert_eq!(args.spin, Some(String::from("spin.cube")))
     }
 
     #[test]
