@@ -23,11 +23,11 @@ fn main() {
              env!("CARGO_PKG_VERSION"));
     // read the input files into a densities vector and a Density struct
     let read_function: ReadFunction = args.read;
-    let (voxel_origin, grid, atoms, mut densities) = match read_function(args.file.clone())
-    {
-        Ok(r) => r,
-        Err(e) => panic!("{}", e),
-    };
+    let (voxel_origin, grid, atoms, mut densities) =
+        match read_function(args.file.clone()) {
+            Ok(r) => r,
+            Err(e) => panic!("{}", e),
+        };
     if let Some(x) = args.spin {
         match densities.len() {
             1 => {
@@ -51,7 +51,8 @@ fn main() {
                 Ok(r) => r,
                 Err(e) => panic!("{}", e),
             };
-            assert_eq!(g, grid, "Error: Reference density has different grid size.");
+            assert_eq!(g, grid,
+                       "Error: Reference density has different grid size.");
             densities
         }
         Reference::Two(f1, f2) => {
@@ -59,13 +60,15 @@ fn main() {
                 Ok(r) => r,
                 Err(e) => panic!("{}", e),
             };
-            assert_eq!(g, grid, "Error: Reference density has different grid size.");
+            assert_eq!(g, grid,
+                       "Error: Reference density has different grid size.");
             let (_, g2, _, densities2) = match read_function(f2) {
                 Ok(r) => r,
                 Err(e) => panic!("{}", e),
             };
 
-            assert_eq!(g2, grid, "Error: Reference density has different grid size.");
+            assert_eq!(g2, grid,
+                       "Error: Reference density has different grid size.");
             let d = densities[0].par_iter()
                                 .zip(&densities2[0])
                                 .map(|(a, b)| a + b)

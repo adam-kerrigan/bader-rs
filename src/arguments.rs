@@ -386,8 +386,10 @@ mod tests {
     #[test]
     fn argument_spin() {
         let app = ClapApp::App.get();
-        let matches =
-            app.get_matches_from(vec!["bader", "density.cube", "-s", "spin.cube"]);
+        let matches = app.get_matches_from(vec!["bader",
+                                                "density.cube",
+                                                "-s",
+                                                "spin.cube"]);
         let args = Args::new(matches);
         assert_eq!(args.spin, Some(String::from("spin.cube")))
     }
