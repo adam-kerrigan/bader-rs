@@ -27,6 +27,14 @@ $ mv ./target/release/bader ~/bin
 This crate is guaranteed to compile on stable Rust 1.40.0 and up. It *might* compile with older versions but that may change in any new patch release.
 To test this crate requires Rust 1.42.0 and above.
 ## Usage
+The program takes a charge density file as input and performs Bader analysis of the data. Currently it supports density in [VASP] or [cube] formats. It is recommended to run VASP calculations with [LAECHG] = .TRUE. to print the core density and self-consistent valence density. These can then be passed as reference files to the program using the -r, --reference flag where they will be summed. 
+```sh
+$ bader CHGCAR -r AECCAR0 -r AECCAR2
+```
+VASP charge density files containing spin densities will output the the partitioned spin also. To achieve this for cube files requires a seperate calculation passing the charge density as a reference.
+```sh
+$ bader spin-density.cube -r charge-density.cube
+```
 For a detailed list of usage options run
 ```sh
 $ bader --help
@@ -39,6 +47,9 @@ MIT
 [//]: # (These are reference links used in the body of this note and get stripped out when the markdown processor does its job. There is no need to format nicely because it shouldn't be seen. Thanks SO - http://stackoverflow.com/questions/4823468/store-comments-in-markdown-syntax)
 
 [release]: <https://github.com/kerrigoon/bader-rs/releases/tag/v0.1.1>
+[VASP]: <https://www.vasp.at/>
+[cube]: <https://gaussian.com/>
+[LAECHG]: <https://www.vasp.at/wiki/index.php/LAECHG>
 [Yu Min  and Trinkle Dallas R. 2011  J. Che.m Phys. 134 064111]: <https://doi.org/10.1063/1.3553716>
 [W Tang et al 2009 J. Phys.: Condens. Matter 21 084204]: <https://doi.org/10.1088/0953-8984/21/8/084204>
 [cargo]: <https://doc.rust-lang.org/cargo/getting-started/installation.html>
