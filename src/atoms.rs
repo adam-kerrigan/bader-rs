@@ -3,23 +3,22 @@ use crate::progress::Bar;
 use crate::utils;
 use indicatif::ProgressBar;
 
-/// struct for containing the information about the atoms
-///
-/// <pre class="rust">
-/// lattice: The lattice of the structure
-/// positions: The positions of the atoms in cartesian coordinates
-/// text: Text representation from the input file
-/// </pre>
+/// struct for containing the information about the atoms.
 pub struct Atoms {
+    /// The lattice of the structure.
     pub lattice: Lattice,
+    /// The positions of the atoms in cartesian coordinates.
     pub positions: Vec<[f64; 3]>,
+    /// Text representation from the input file.
     pub text: String,
+    /// The LLL-reduced lattice for the structure.
     pub reduced_lattice: ReducedLattice,
+    /// The positions of the atoms in the LLL-reduced basis.
     pub reduced_positions: Vec<[f64; 3]>,
 }
 
 impl Atoms {
-    /// initialises the structure
+    /// Initialises the structure.
     pub fn new(lattice: Lattice,
                positions: Vec<[f64; 3]>,
                text: String)
@@ -43,7 +42,9 @@ impl Atoms {
                text }
     }
 
-    /// assigns bader volumes to their nearest atom
+    /// Assigns bader volumes to their nearest atom.
+    ///
+    /// This is called from [VoxelMap.assign_atoms()](crate::voxel_map::VoxelMap::assign_atoms)
     pub fn assign_maxima(&self,
                          maximas: &[isize],
                          density: &Density)
@@ -106,18 +107,6 @@ impl Atoms {
 /// Lattice - structure for containing information on the cell
 ///
 /// <pre class="rust">
-/// a: length of the a-vector
-/// b: length of the b-vector
-/// c: length of the c-vector
-/// distance_matrix: distance to move in each direction, follows the
-///                  ordering listed below
-/// gradient_transform: transformation matrix for converting central
-///                     difference gradients to the lattice basis
-/// to_fractional: transformation matrix for converting to fractional
-///                coordinates
-/// to_cartesian: transformation matrix for converting to cartesian
-///               coordinates
-///
 /// distance_matrix ordering:
 ///     0 -> (-1,-1,-1)   7 -> (-1, 1, 0)  14 -> (0, 1,-1)  21 -> (1, 0, 0)
 ///     1 -> (-1,-1, 0)   8 -> (-1, 1, 1)  15 -> (0, 1, 0)  22 -> (1, 0, 1)
@@ -128,14 +117,25 @@ impl Atoms {
 ///     6 -> (-1, 1,-1)  13 -> (0, 0, 1)   20 -> (1, 0,-1)
 /// </pre>
 pub struct Lattice {
+    /// length of the a-vector
     pub a: f64,
+    /// length of the b-vector
     pub b: f64,
+    /// length of the c-vector
     pub c: f64,
+    /// Distance to move in each direction, follows the ordering listed in [`Lattice`].
     pub distance_matrix: [f64; 26],
+    /// The cartesian vectors for each shift in the [`Lattice.distance_matrix`] with the
+    /// vector [0., 0., 0.] inserted at shift_matrix\[13\].
     pub shift_matrix: [[f64; 3]; 27],
+    /// Transformation matrix for converting central difference gradients to the
+    /// lattice basis.
     pub gradient_transform: [[f64; 3]; 3],
+    /// Transformation matrix for converting to fractional coordinates.
     pub to_fractional: [[f64; 3]; 3],
+    /// Transformation matrix for converting to cartesian coordinates.
     pub to_cartesian: [[f64; 3]; 3],
+    /// The volume of the lattice.
     pub volume: f64,
 }
 
@@ -143,11 +143,13 @@ impl Lattice {
     /// Initialises the structure. Builds all the fields of the lattice structure
     /// from a 2d vector in the form:
     ///
-    /// > [
-    /// >     [ax, ay, az],
-    /// >     [bx, by, bz],
-    /// >     [cx, cy, cz],
-    /// >  ]
+    /// <pre class="rust">
+    /// [
+    ///     [ax, ay, az],
+    ///     [bx, by, bz],
+    ///     [cx, cy, cz],
+    /// ]
+    /// </pre>
     pub fn new(lattice: [[f64; 3]; 3]) -> Self {
         let a_vector = utils::norm(lattice[0]);
         let b_vector = utils::norm(lattice[1]);
@@ -226,10 +228,15 @@ impl Lattice {
 
 /// Stores the lll-reduced lattice.
 pub struct ReducedLattice {
+    /// The shifts required to move around the reduced basis.
     pub shift_matrix: Vec<Vec<usize>>,
+    /// The cartesian representation of the shifts.
     pub cartesian_shift_matrix: [[f64; 3]; 27],
+    /// The length of these shifts.
     pub distance_matrix: [f64; 26],
+    /// Transformation matrix for converting to cartesian coordinates.
     pub to_cartesian: [[f64; 3]; 3],
+    /// Transformation matrix for converting to fractional coordinates.
     pub to_fractional: [[f64; 3]; 3],
 }
 

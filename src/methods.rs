@@ -6,10 +6,49 @@ use std::sync::Arc;
 
 /// A type for the maxima search function
 pub type WeightMap = Arc<VoxelMap>;
+/// A type for monkey patching the method to available in the main.rs file.
 pub type StepMethod =
     fn(usize, &Density, WeightMap) -> (isize, Vec<(usize, f64)>);
 
-/// Steps in the density grid, from point p, following the gradient
+/// Indicates which method to use.
+pub enum Method {
+    /// The ongrid method.
+    OnGrid,
+    /// The neargrid method.
+    NearGrid,
+    /// The weighted method.
+    Weight,
+}
+
+/// Steps in the density grid, from point p, following the gradient.
+///
+/// This should be called from [`ongrid()`] or [`neargrid()`].
+///
+/// * `p`: The point from which to step.
+/// * `density`: The reference [`Density`].
+///
+/// ### Returns:
+/// `isize`: The point with highest gradient.
+///
+/// # Examples
+/// ```
+/// use bader::density::Density;
+/// use bader::atoms::Lattice;
+/// use bader::methods::ongrid_step;
+///
+/// // Intialise the reference density.
+/// let data = (0..64).map(|rho| rho as f64).collect::<Vec<f64>>();
+/// let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
+/// let density = Density::new(&data,
+///                            [4, 4, 4],
+///                            lattice.to_cartesian,
+///                            1E-8,
+///                            None,
+///                            [0., 0., 0.]);
+/// // The highest gradient between point, p = 33, and it's neighbours, with
+/// // periodic boundary conditions, is with point p = 61.
+/// assert_eq!(ongrid_step(33, &density), 61)
+/// ```
 pub fn ongrid_step(p: isize, density: &Density) -> isize {
     let mut pn = p;
     let mut pt = p;
@@ -32,6 +71,43 @@ pub fn ongrid_step(p: isize, density: &Density) -> isize {
 }
 
 /// Finds the maxima associated with the current point, p.
+///
+/// * `p`: The point from which to step.
+/// * `density`: The reference [`Density`].
+/// * `weight_map`: An [`Arc`] wrapped [`VoxelMap`] for tracking the maxima.
+///
+/// ### Returns:
+/// `(isize, Vec::with_capacity(0))`: The point current point's maxima and it's
+/// weights. As this is not the weight method there are no weights.
+///
+/// # Examples
+/// ```
+/// use bader::density::Density;
+/// use bader::atoms::Lattice;
+/// use bader::voxel_map::VoxelMap;
+/// use bader::methods::ongrid;
+/// use std::sync::Arc;
+///
+/// // Intialise the reference density.
+/// let data = (0..64).map(|rho| rho as f64).collect::<Vec<f64>>();
+/// let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
+/// let density = Density::new(&data,
+///                            [4, 4, 4],
+///                            lattice.to_cartesian,
+///                            1E-8,
+///                            None,
+///                            [0., 0., 0.]);
+/// let voxel_map = VoxelMap::new(64);
+/// let voxel_map = Arc::new(voxel_map);
+/// // The highest gradient between point, p = 33, and it's neighbours, with
+/// // periodic boundary conditions, is with point p = 61 however as this hasn't
+/// // been stored this will return -1.
+/// assert_eq!(ongrid(33, &density, Arc::clone(&voxel_map)).0, -1);
+/// // after stroing the maxima for the point, p = 61, ongrid will now return
+/// // this value.
+/// voxel_map.maxima_store(61, 63);
+/// assert_eq!(ongrid(33, &density, Arc::clone(&voxel_map)).0, 63)
+/// ```
 pub fn ongrid(p: usize,
               density: &Density,
               weight_map: WeightMap)
@@ -52,6 +128,44 @@ pub fn ongrid(p: usize,
 ///
 /// Use the current point, p, and step along density and use the residual
 /// gradient, dr, to account for grid bias.
+///
+/// This should be called from [`neargrid()`].
+///
+/// * `p`: The point from which to step.
+/// * `dr`: A vector for storing the remainder of the unused step.
+/// * `density`: The reference [`Density`].
+///
+/// ### Returns:
+/// `isize`: The point with highest gradient.
+///
+/// # Examples
+/// ```
+/// use bader::density::Density;
+/// use bader::atoms::Lattice;
+/// use bader::methods::neargrid_step;
+///
+/// // Intialise the reference density.
+/// let data = (0..64).map(|rho| rho as f64).collect::<Vec<f64>>();
+/// let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
+/// let density = Density::new(&data,
+///                            [4, 4, 4],
+///                            lattice.to_cartesian,
+///                            1E-8,
+///                            None,
+///                            [0., 0., 0.]);
+/// let mut dr = [0.; 3];
+/// // The highest gradient between point, p = 33, and it's neighbours, with
+/// // periodic boundary conditions, is with point p = 49.
+/// assert_eq!(neargrid_step(33, &mut dr, &density), 49);
+/// // with a dr showing the true gradient lies between p = 49, p = 61 and p = 62.
+/// assert_eq!(dr, [0., -0.25, 0.0625]);
+/// // performing this step another time, carrying forward dr, would result in a
+/// // correction to the step from the rounding of the -0.5 from p = 49 to p = 61.
+/// assert_eq!(neargrid_step(33, &mut dr, &density), 61);
+/// // the new dr has the difference between the full step taken to correct
+/// // and the value of dr when the correction was made.
+/// assert_eq!(dr, [0., 0.5, 0.125]);
+/// ```
 pub fn neargrid_step(p: isize, dr: &mut [f64; 3], density: &Density) -> isize {
     let mut den_t = [0f64; 2];
     let mut grad = [0f64; 3];
@@ -91,6 +205,39 @@ pub fn neargrid_step(p: isize, dr: &mut [f64; 3], density: &Density) -> isize {
 }
 
 /// Find the maxima assiociated with the current point using the neargrid method
+///
+/// * `p`: The point from which to step.
+/// * `density`: The reference [`Density`].
+/// * `_weight_map`: An unused [`Arc`] wrapped [`VoxelMap`] for tracking the maxima.
+///
+/// ### Returns:
+/// `(isize, Vec::with_capacity(0))`: The point current point's maxima and it's
+/// weights. As this is not the weight method there are no weights.
+///
+/// # Examples
+/// ```
+/// use bader::density::Density;
+/// use bader::atoms::Lattice;
+/// use bader::voxel_map::VoxelMap;
+/// use bader::methods::neargrid;
+/// use std::sync::Arc;
+///
+/// // Intialise the reference density.
+/// let data = (0..64).map(|rho| rho as f64).collect::<Vec<f64>>();
+/// let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
+/// let density = Density::new(&data,
+///                            [4, 4, 4],
+///                            lattice.to_cartesian,
+///                            1E-8,
+///                            None,
+///                            [0., 0., 0.]);
+/// let voxel_map = VoxelMap::new(64);
+/// let voxel_map = Arc::new(voxel_map);
+/// // Unlike the other methods this follows the density gradient all the way to
+/// // a maxima as the correction to the steps means that landing at a point
+/// // doesn't mean the the original point's maxima will be the same.
+/// assert_eq!(neargrid(22, &density, Arc::clone(&voxel_map)).0, 63)
+/// ```
 pub fn neargrid(p: usize,
                 density: &Density,
                 _weight_map: WeightMap)
@@ -120,6 +267,54 @@ pub fn neargrid(p: usize,
     (maxima, Vec::with_capacity(0))
 }
 
+/// Steps in the density grid, from point p, following the gradient.
+///
+/// This should be called from [`weight()`].
+///
+/// Note: This function will deadlock if the points above it have no associated
+/// maxima in [`VoxelMap.voxel_map`].
+///
+/// * `p`: The point from which to step.
+/// * `density`: The reference [`Density`].
+/// * `weight_map`: An [`Arc`] wrapped [`VoxelMap`] for tracking the maxima.
+///
+/// ### Returns:
+/// `(isize, Vec::<f64>::with_capacity(14))`: The highest density gradient from
+/// point, p, and it's associated weights.
+///
+/// # Examples
+/// ```
+/// use bader::density::Density;
+/// use bader::atoms::Lattice;
+/// use bader::voxel_map::VoxelMap;
+/// use bader::methods::weight_step;
+/// use std::sync::Arc;
+///
+/// // Intialise the reference density.
+/// let data = (0..64).map(|rho| rho as f64).collect::<Vec<f64>>();
+/// let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
+/// let density = Density::new(&data,
+///                            [4, 4, 4],
+///                            lattice.to_cartesian,
+///                            1E-8,
+///                            None,
+///                            [0., 0., 0.]);
+/// let voxel_map = VoxelMap::new(64);
+/// let voxel_map = Arc::new(voxel_map);
+/// // The highest gradient between point, p = 33, and it's neighbours, with
+/// // periodic boundary conditions, is with point p = 61.
+///
+/// // to avoid deadlock let's store maxima for all the values above us and
+/// // store as either 61 or 62 to make the current point a boundary.
+/// for i in [34, 37, 45, 49].iter() {
+///     voxel_map.maxima_store(*i, 62 - i % 2);
+/// }
+/// let (pn, weights) = weight_step(33, &density, Arc::clone(&voxel_map));
+/// let mut maxima = weights.into_iter().map(|(m, w)| m).collect::<Vec<usize>>();
+/// maxima.sort_unstable();
+/// assert_eq!(pn, 49);
+/// assert_eq!(maxima, vec![61, 62]);
+/// ```
 pub fn weight_step(p: isize,
                    density: &Density,
                    weight_map: WeightMap)
@@ -177,6 +372,51 @@ pub fn weight_step(p: isize,
 }
 
 /// Finds the maxima associated with the current point, p.
+///
+/// Note: This function will deadlock if the points above it have no associated
+/// maxima in [`VoxelMap.voxel_map`].
+///
+/// * `p`: The point from which to step.
+/// * `density`: The reference [`Density`].
+/// * `weight_map`: An [`Arc`] wrapped [`VoxelMap`] for tracking the maxima.
+///
+/// ### Returns:
+/// `(isize, Vec::<f64>::with_capacity(14))`: The maxima associated with the
+/// point, p, and it's associated weights.
+///
+/// # Examples
+/// ```
+/// use bader::density::Density;
+/// use bader::atoms::Lattice;
+/// use bader::voxel_map::VoxelMap;
+/// use bader::methods::weight;
+/// use std::sync::Arc;
+///
+/// // Intialise the reference density.
+/// let data = (0..64).map(|rho| rho as f64).collect::<Vec<f64>>();
+/// let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
+/// let density = Density::new(&data,
+///                            [4, 4, 4],
+///                            lattice.to_cartesian,
+///                            1E-8,
+///                            None,
+///                            [0., 0., 0.]);
+/// let voxel_map = VoxelMap::new(64);
+/// let voxel_map = Arc::new(voxel_map);
+/// // The highest gradient between point, p = 33, and it's neighbours, with
+/// // periodic boundary conditions, is with point p = 61.
+///
+/// // to avoid deadlock let's store maxima for all the values above us and
+/// // store as either 61 or 62 to make the current point a boundary.
+/// for i in [34, 37, 45, 49].iter() {
+///     voxel_map.maxima_store(*i, 62 - i % 2);
+/// }
+/// let (p_maxima, weights) = weight(33, &density, Arc::clone(&voxel_map));
+/// let mut maxima = weights.into_iter().map(|(m, w)| m).collect::<Vec<usize>>();
+/// maxima.sort_unstable();
+/// assert_eq!(p_maxima, 61);
+/// assert_eq!(maxima, vec![61, 62]);
+/// ```
 pub fn weight(p: usize,
               density: &Density,
               weight_map: WeightMap)
@@ -187,37 +427,5 @@ pub fn weight(p: usize,
         (pt, weights)
     } else {
         (weight_map.maxima_get(pt), weights)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::atoms::Lattice;
-
-    #[test]
-    fn methods_ongrid_step() {
-        let data = (0..64).map(|x| x as f64).collect::<Vec<f64>>();
-        let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
-        let density = Density::new(&data,
-                                   [4, 4, 4],
-                                   lattice.to_cartesian,
-                                   1E-8,
-                                   Some(1E-3),
-                                   [0., 0., 0.0]);
-        assert_eq!(ongrid_step(61, &density), 62)
-    }
-
-    #[test]
-    fn methods_neargrid_step() {
-        let data = (0..64).map(|x| x as f64).collect::<Vec<f64>>();
-        let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
-        let density = Density::new(&data,
-                                   [4, 4, 4],
-                                   lattice.to_cartesian,
-                                   1E-8,
-                                   Some(1E-3),
-                                   [0., 0., 0.0]);
-        assert_eq!(neargrid_step(61, &mut [0., 0., -1.], &density), 61)
     }
 }

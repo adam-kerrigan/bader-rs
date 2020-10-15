@@ -1,7 +1,7 @@
-use bader::arguments::{Args, ClapApp, FileType, Method};
+use bader::arguments::{Args, ClapApp};
 use bader::density::Density;
-use bader::io::{self, FileFormat};
-use bader::methods;
+use bader::io::{self, FileFormat, FileType};
+use bader::methods::{self, Method};
 use bader::progress::Bar;
 use bader::utils::vacuum_tolerance;
 use bader::voxel_map::VoxelMap;
@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 fn main() {
     // argument parsing
-    let app = ClapApp::App.get();
+    let app = ClapApp::get();
     let args = Args::new(app.get_matches());
     // set up the threads
     rayon::ThreadPoolBuilder::new().num_threads(args.threads)

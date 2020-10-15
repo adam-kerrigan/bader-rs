@@ -4,10 +4,11 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-/// Contains the indicatif progress bar and an atomic_counter RelaxedCounter
+/// Contains the indicatif progress bar and an atomic_counter RelaxedCounter.
 /// The counter is used to update the bar for use with a rayon iterator
 pub struct Bar {
     counter: Arc<RelaxedCounter>,
+    /// An Arc wrapped ProgressBar from indicatif.
     pub pbar: Arc<ProgressBar>,
 }
 

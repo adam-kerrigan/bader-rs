@@ -1,13 +1,19 @@
 use crate::atoms::{Lattice, ReducedLattice};
 use crate::utils::{cross, invert_lattice, vdot};
 
+/// Holds information on the Voronoi vectors.
 pub struct Voronoi {
+    /// Voronoi vectors as indices in a shift matrix.
     pub vectors: Vec<Vec<usize>>,
+    /// The alphas associated with each Voronoi vector.
+    /// alphas are used to multiply the charge difference by to calculate flux.
     pub alphas: Vec<f64>,
+    /// The LLL-reduced lattice for the voxel basis.
     pub lll_lattice: ReducedLattice,
 }
 
 impl Voronoi {
+    /// Generates a Voronoi struct from a [`Lattice`].
     pub fn new(lattice: &Lattice) -> Self {
         let lll_lattice = ReducedLattice::from_lattice(lattice);
         let (vectors, alphas) = Voronoi::voronoi_vectors(&lll_lattice);
@@ -16,6 +22,7 @@ impl Voronoi {
                lll_lattice }
     }
 
+    /// Calculates the Voronoi vectors and their alphas from a reduced basis.
     fn voronoi_vectors(lll: &ReducedLattice) -> (Vec<Vec<usize>>, Vec<f64>) {
         // allocate the storage for voronoi vectors and flux coefficients
         let mut vectors = Vec::<Vec<usize>>::with_capacity(14);
@@ -117,15 +124,23 @@ impl Voronoi {
         (vectors, alphas)
     }
 }
-/*
+
 #[cfg(test)]
 mod test {
     use super::*;
     #[test]
     fn test_voronoi_vectors() {
-        let lattice = Lattice::new([[8.39866536000000 * 2. / 240., 0., 0.], [0., 8.39866536000000 * 2. / 240., 0.], [0., 0., 8.39866536000000 * 3.286996 / 384.]]);
-        let vecs = Vec::<Vec<usize>>::with_capacity(14);
-        assert_eq!(vecs, voronoi_vectors(&lattice))
+        let lattice =
+            Lattice::new([[1.0, 0., 0.], [0.707, 0.707, 0.], [0., 0., 1.]]);
+        let voronoi = Voronoi::new(&lattice);
+        let vecs = vec![vec![19],
+                        vec![22],
+                        vec![10],
+                        vec![12],
+                        vec![14],
+                        vec![16],
+                        vec![4],
+                        vec![7]];
+        assert_eq!(vecs, voronoi.vectors)
     }
 }
-*/
