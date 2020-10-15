@@ -30,7 +30,7 @@
 //!
 //! ## Using the library
 //! add the following to your Cargo.toml:
-//! `bader = "0.2.0"`
+//! `bader = "0.2.1"`
 //!
 //! ### Minimum Supported Rust Version (MSRV)
 //! This crate is guaranteed to compile on stable Rust 1.40.0 and up. It *might*
@@ -67,7 +67,6 @@
 //!
 //! [//]: # (These are reference links used in the body of this note and get stripped out when the markdown processor does its job. There is no need to format nicely because it shouldn't be seen. Thanks SO - http://stackoverflow.com/questions/4823468/store-comments-in-markdown-syntax)
 //!
-//! [release]: <https://github.com/kerrigoon/bader-rs/releases/tag/v0.2.0>
 //! [VASP]: <https://www.vasp.at/>
 //! [cube]: <https://gaussian.com/>
 //! [LAECHG]: <https://www.vasp.at/wiki/index.php/LAECHG>
