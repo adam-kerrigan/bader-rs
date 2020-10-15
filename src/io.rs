@@ -8,9 +8,20 @@ use rayon::prelude::*;
 use std::fs::File;
 use std::io::{self, Write};
 
+/// File I/O for the gaussian cube format.
 pub mod cube;
+/// Custom BufReader.
 pub mod reader;
+/// File I/O for the VASP file format.
 pub mod vasp;
+
+/// Indicates the available file types of the density file.
+pub enum FileType {
+    /// CHGCAR, CHG and PARCHG.
+    Vasp,
+    /// Guassian, CP2K etc.
+    Cube,
+}
 
 /// Return type of the read function in FileFormat.
 pub type ReadFunction =
@@ -23,7 +34,9 @@ type InitReturn = (Vec<Vec<f64>>, Vec<f64>, Atoms, [usize; 3], [f64; 3]);
 
 /// FileFormat trait. Used for handling input from a file.
 pub trait FileFormat {
-    /// Returns the parts required to build `Density` and `Atoms` structures.
+    /// Returns the parts required to build [`Density`] and [`Atoms`] structures.
+    ///
+    /// * `args`: [`Args`] parsed from the command line.
     fn init(&self, args: &Args) -> InitReturn {
         let (voxel_origin, grid, atoms, mut densities) =
             match self.read(args.file.clone()) {
@@ -91,7 +104,13 @@ Ambiguous how to handle new spin when {} already has {} spin densities.",
         (densities, rho, atoms, grid, voxel_origin)
     }
 
-    /// Returns the atoms charge file and bader charge file as Strings.
+    /// Returns the contents of the atoms charge file and bader charge file as
+    /// Strings.
+    ///
+    /// * `voxel_map`: [`VoxelMap`] post [`VoxelMap::assign_atoms()`] and
+    /// [`VoxelMap::charge_sum()`].
+    /// * `atoms`: The associated [`Atoms`] struct for the density.
+    /// * `density`: The reference &[`Density`].
     fn results(&self,
                voxel_map: VoxelMap,
                atoms: Atoms,
@@ -169,12 +188,27 @@ Ambiguous how to handle new spin when {} already has {} spin densities.",
         (atoms_charge_file, bader_charge_file)
     }
 
+    /// Reads the file into a [`ReadFunction`] containing the information
+    /// needed from the file to build a [`Density`].
+    ///
+    /// * `filename`: The name of the file to read.
     fn read(&self, filename: String) -> ReadFunction;
 
+    /// Reads the non-density section of the file into an [`Atoms`] object.
+    ///
+    /// * `atom_text`: The full string of non-density information from the
+    /// density file.
     fn to_atoms(&self, atom_text: String) -> Atoms;
 
+    /// Writes a specific density, data, to tile in the correct format.
+    ///
+    /// * `atoms`: The associated &[`Atoms`] object for the density file.
+    /// * `data`: The density to write to file.
     fn write(&self, atoms: &Atoms, data: Vec<Vec<f64>>);
 
+    /// How the format the positions of maxima and atoms
+    ///
+    /// * `coords`: The 3d representation of the position.
     fn coordinate_format(&self, coords: [f64; 3]) -> (String, String, String);
 }
 
@@ -214,6 +248,12 @@ pub fn atom_ncl_spin() -> Row {
 }
 
 /// Part of the collection of functions for adding a row to the tables.
+///
+/// * `i_str`: The number to display in the '#' column of the table as a String.
+/// * `pos_str`: The 3d position of the element as a String.
+/// * `charge`: The densities of the current element.
+/// * `volume`: The volume of the current element.
+/// * `distance`: The minimum_distance or surface_distance of the current element.
 pub fn add_row_no_spin(t: &mut Table,
                        i_str: String,
                        pos_str: (String, String, String),
@@ -228,6 +268,12 @@ pub fn add_row_no_spin(t: &mut Table,
 }
 
 /// Part of the collection of functions for adding a row to the tables.
+///
+/// * `i_str`: The number to display in the '#' column of the table as a String.
+/// * `pos_str`: The 3d position of the element as a String.
+/// * `charge`: The densities of the current element.
+/// * `volume`: The volume of the current element.
+/// * `distance`: The minimum_distance or surface_distance of the current element.
 pub fn add_row_spin(t: &mut Table,
                     i_str: String,
                     pos_str: (String, String, String),
@@ -245,6 +291,12 @@ pub fn add_row_spin(t: &mut Table,
 }
 
 /// Part of the collection of functions for adding a row to the tables.
+///
+/// * `i_str`: The number to display in the '#' column of the table as a String.
+/// * `pos_str`: The 3d position of the element as a String.
+/// * `charge`: The densities of the current element.
+/// * `volume`: The volume of the current element.
+/// * `distance`: The minimum_distance or surface_distance of the current element.
 pub fn add_row_ncl(t: &mut Table,
                    i_str: String,
                    pos_str: (String, String, String),
@@ -262,6 +314,9 @@ pub fn add_row_ncl(t: &mut Table,
 }
 
 /// Produces the footer for the atoms charge file.
+///
+/// * `voxel_map`: [`VoxelMap`] post [`VoxelMap::charge_sum()`].
+/// * `charge_total`: The sum of all the partitioned densities.
 pub fn footer(voxel_map: VoxelMap, charge_total: Vec<f64>) -> String {
     let mut vacuum_charge = Vec::<f64>::with_capacity(4);
     for i in 0..voxel_map.bader_charge.len() {
@@ -303,6 +358,9 @@ pub fn footer(voxel_map: VoxelMap, charge_total: Vec<f64>) -> String {
 }
 
 /// Write the files
+///
+/// * `atoms_charge_file`: The contents, as a String, of the ACF.dat file.
+/// * `bader_charge_file`: The contents, as a String, of the BCF.dat file.
 pub fn write(atoms_charge_file: String,
              bader_charge_file: String)
              -> io::Result<()> {

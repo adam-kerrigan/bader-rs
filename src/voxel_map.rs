@@ -9,12 +9,13 @@ use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
 /// Describes the state of the voxel.
-/// Maxima contians the position of the voxel's maxima.
-/// Weight contians a vector of the maxima the current voxel contributes to and their weights.
-/// Vacuum is a voxel beneath the vacuum tolerance and not contributing to any maxima.
 pub enum Voxel<'a> {
+    /// Contians the position of the voxel's maxima.
     Maxima(usize),
+    /// Contians a vector of the maxima the current voxel contributes to and
+    /// their weights.
     Weight(&'a Vec<(usize, f64)>),
+    /// A voxel beneath the vacuum tolerance and not contributing to any maxima.
     Vacuum,
 }
 
@@ -25,8 +26,7 @@ pub struct Lock<'a> {
 
 unsafe impl<'a> Sync for Lock<'a> {}
 
-/// Deref only exposes the weight_map field of a [`VoxelMap`][VoxelMap].
-/// [VoxelMap]
+/// Deref only exposes the weight_map field of a [`VoxelMap`].
 impl<'a> Deref for Lock<'a> {
     type Target = Vec<Vec<(usize, f64)>>;
     fn deref(&self) -> &Vec<Vec<(usize, f64)>> {
@@ -34,8 +34,7 @@ impl<'a> Deref for Lock<'a> {
     }
 }
 
-/// DerefMut only exposes the weight_map field of a [`VoxelMap`][VoxelMap].
-/// [VoxelMap]
+/// DerefMut only exposes the weight_map field of a [`VoxelMap`].
 impl<'a> DerefMut for Lock<'a> {
     fn deref_mut(&mut self) -> &mut Vec<Vec<(usize, f64)>> {
         unsafe { &mut *self.data.weight_map.get() }
@@ -116,7 +115,7 @@ impl VoxelMap {
     /// Retrieves the state of the voxel, p. This will lock until p has been stored
     /// in the VoxelMap and then return either a `Voxel::Maxima` or `Voxel::Weight`.
     /// Calling this on a voxel, p, that is below the vacuum_tolerance will deadlock
-    /// as a voxel is considered stored once voxel_map[p] > -1.
+    /// as a voxel is considered stored once voxel_map\[p\] > -1.
     pub fn weight_get(&self, p: isize) -> Voxel {
         let volume_number = loop {
             match self.voxel_map[p as usize].load(Ordering::Relaxed) {

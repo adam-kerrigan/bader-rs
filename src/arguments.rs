@@ -1,35 +1,24 @@
+use crate::io::FileType;
+use crate::methods::Method;
 use clap::{crate_authors, App, Arg, ArgMatches};
 
 /// Indicates how many reference files are passed
 #[derive(Clone)]
 pub enum Reference {
+    /// One file as a reference, usually either a CHGCAR_sum or spin.cube.
     One(String),
+    /// Two files as a reference, these files will be summed together.
     Two(String, String),
+    /// No reference, just use the density file.
     None,
 }
 
-// Indicates which method to use.
-#[derive(Clone)]
-pub enum Method {
-    OnGrid,
-    NearGrid,
-    Weight,
-}
-
 /// Create a container for dealing with clap and being able to test arg parsing.
-pub enum ClapApp {
-    App,
-}
+pub enum ClapApp {}
 
-/// Indicates the file type of the density file.
-pub enum FileType {
-    Vasp,
-    Cube,
-}
-
-impl ClapApp {
+impl<'a> ClapApp {
     /// Create and return the clap::App
-    pub fn get(&self) -> App {
+    pub fn get() -> App<'a> {
         App::new("Multi-threaded Bader Charge Analysis")
             .author(crate_authors!())
             .version("0.2.0")
@@ -123,13 +112,21 @@ to allow the program to best decide how to use the available hardware."))
 
 /// Holds the arguments passed to the program from the command-line
 pub struct Args {
+    /// The filename.
     pub file: String,
+    /// The file format.
     pub file_type: FileType,
+    /// Which method to use.
     pub method: Method,
+    /// What value of weight to include in partitions.
     pub weight_tolerance: f64,
+    /// Is there a reference file.
     pub reference: Reference,
+    /// Is there a spin density to include as well.
     pub spin: Option<String>,
+    /// How many threads to use in the calculation.
     pub threads: usize,
+    /// Is there a tolerance to consider a density vacuum.
     pub vacuum_tolerance: Option<f64>,
 }
 
@@ -250,13 +247,13 @@ mod tests {
 
     #[test]
     fn clapapp_get() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         assert_eq!(app.get_name(), "Multi-threaded Bader Charge Analysis")
     }
 
     #[test]
     fn argument_file() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let matches = app.get_matches_from(vec!["bader", "CHGCAR"]);
         let args = Args::new(matches);
         assert_eq!(args.file, String::from("CHGCAR"));
@@ -265,14 +262,14 @@ mod tests {
     #[test]
     #[should_panic]
     fn argument_no_file() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let _ = app.try_get_matches_from(vec!["bader"])
                    .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
     fn argument_method_ongrid() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let matches =
             app.get_matches_from(vec!["bader", "CHGCAR", "-m", "ongrid"]);
         let args = Args::new(matches);
@@ -284,7 +281,7 @@ mod tests {
 
     #[test]
     fn argument_method_neargrid() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let matches = app.get_matches_from(vec!["bader", "CHGCAR",
                                                 "--method", "neargrid"]);
         let args = Args::new(matches);
@@ -296,7 +293,7 @@ mod tests {
 
     #[test]
     fn argument_method_weight() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let matches =
             app.get_matches_from(vec!["bader", "CHGCAR", "-m", "weight"]);
         let args = Args::new(matches);
@@ -308,7 +305,7 @@ mod tests {
 
     #[test]
     fn argument_method_default() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let matches = app.get_matches_from(vec!["bader", "CHGCAR"]);
         let args = Args::new(matches);
         match args.method {
@@ -320,7 +317,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn argument_method_not_method() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let _ = app.try_get_matches_from(vec!["bader", "CHGCAR", "-m",
                                               "ngrid"])
                    .unwrap_or_else(|e| panic!("An error occurs: {}", e));
@@ -328,7 +325,7 @@ mod tests {
 
     #[test]
     fn argument_file_type_default_vasp() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let matches = app.get_matches_from(vec!["bader", "CHGCAR"]);
         let args = Args::new(matches);
         let flag = matches!(args.file_type, FileType::Vasp);
@@ -337,7 +334,7 @@ mod tests {
 
     #[test]
     fn argument_file_type_default_unknown() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let matches = app.get_matches_from(vec!["bader", "CHG"]);
         let args = Args::new(matches);
         let flag = matches!(args.file_type, FileType::Vasp);
@@ -346,7 +343,7 @@ mod tests {
 
     #[test]
     fn argument_file_type_vasp() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let matches =
             app.get_matches_from(vec!["bader", "CHGCAR", "-t", "vasp"]);
         let args = Args::new(matches);
@@ -356,7 +353,7 @@ mod tests {
 
     #[test]
     fn argument_file_type_default_cube() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let matches = app.get_matches_from(vec!["bader", "charge.cube"]);
         let args = Args::new(matches);
         let flag = matches!(args.file_type, FileType::Cube);
@@ -365,7 +362,7 @@ mod tests {
 
     #[test]
     fn argument_file_type_cube() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let matches = app.get_matches_from(vec!["bader",
                                                 "charge.cube",
                                                 "--type",
@@ -378,14 +375,14 @@ mod tests {
     #[test]
     #[should_panic]
     fn argument_file_type_not_type() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let _ = app.try_get_matches_from(vec!["bader", "CHGCAR", "-t", "basp"])
                    .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
     fn argument_spin() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let matches = app.get_matches_from(vec!["bader",
                                                 "density.cube",
                                                 "-s",
@@ -396,7 +393,7 @@ mod tests {
 
     #[test]
     fn argument_reference_one() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let matches =
             app.get_matches_from(vec!["bader", "CHGCAR", "-r", "CHGCAR_sum"]);
         let args = Args::new(matches);
@@ -406,7 +403,7 @@ mod tests {
 
     #[test]
     fn argument_reference_two() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let v = vec!["bader", "CHGCAR", "-r", "AECCAR0", "--ref", "AECCAR2"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
@@ -416,7 +413,7 @@ mod tests {
 
     #[test]
     fn argument_reference_none() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let v = vec!["bader", "CHGCAR"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
@@ -426,7 +423,7 @@ mod tests {
 
     #[test]
     fn argument_aeccar() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let v = vec!["bader", "CHGCAR", "-a"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
@@ -440,7 +437,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn argument_aeccar_cube() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let v = vec!["bader", "charge.cube", "-a"];
         let matches = app.get_matches_from(v);
         let _ = Args::new(matches);
@@ -448,7 +445,7 @@ mod tests {
 
     #[test]
     fn argument_vacuum_tolerance_auto() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let v = vec!["bader", "CHGCAR", "-v", "auto"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
@@ -457,7 +454,7 @@ mod tests {
 
     #[test]
     fn argument_vacuum_tolerance_float() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let v = vec!["bader", "CHGCAR", "--vac", "1E-4"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
@@ -467,7 +464,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn argument_vacuum_tolerance_not_float() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let v = vec!["bader", "CHGCAR", "-v", "0.00.1"];
         let matches = app.get_matches_from(v);
         let _ = Args::new(matches);
@@ -475,7 +472,7 @@ mod tests {
 
     #[test]
     fn argument_weight_tolerance_float() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let v = vec!["bader", "CHGCAR", "--weight", "1E-4"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
@@ -485,7 +482,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn argument_weight_tolerance_not_float() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let v = vec!["bader", "CHGCAR", "-w", "0.00.1"];
         let matches = app.get_matches_from(v);
         let _ = Args::new(matches);
@@ -493,7 +490,7 @@ mod tests {
 
     #[test]
     fn argument_threads_default() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let v = vec!["bader", "CHGCAR"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
@@ -502,7 +499,7 @@ mod tests {
 
     #[test]
     fn argument_threads_int() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let v = vec!["bader", "CHGCAR", "--threads", "1"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
@@ -512,7 +509,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn argument_threads_not_int() {
-        let app = ClapApp::App.get();
+        let app = ClapApp::get();
         let v = vec!["bader", "CHGCAR", "-J", "0.1"];
         let matches = app.get_matches_from(v);
         let _ = Args::new(matches);

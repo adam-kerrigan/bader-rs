@@ -3,24 +3,21 @@ use crate::voronoi::Voronoi;
 use std::ops::Index;
 
 /// Structure for managing the reference density and movement within it.
-/// <pre class="rust">
-/// data: charge density in a flattened array.
-/// shift: contains the values for moving arounf the array.
-/// size: the 3d size of the data.
-/// vacuum_tolerance: the cut-off for being considered vacuum.
-/// voronoi: the voronoi vectors and their alphas.
-/// voxel_lattice: information on the voxel basis.
-/// voxel_origin: the origin of each voxel.
-/// weight_tolerance: the cut-off for ignoring the weight contribution.
-/// </pre>
 pub struct Density<'a> {
+    /// Charge density in a flattened array.
     pub data: &'a [f64],
     shift: Shift,
+    /// The 3d size of the data.
     pub size: Size,
+    /// The cut-off for being considered vacuum.
     pub vacuum_tolerance: Option<f64>,
+    /// The voronoi vectors and their alphas.
     pub voronoi: Voronoi,
+    /// Information on the voxel basis.
     pub voxel_lattice: Lattice,
+    /// The origin of each voxel.
     pub voxel_origin: [f64; 3],
+    /// The cut-off for ignoring the weight contribution.
     pub weight_tolerance: f64,
 }
 
@@ -228,13 +225,15 @@ impl Shift {
     /// the outer index in di is unraveling the index with a periodic roll so the point
     /// is at (0, 0, 0) -> 0
     /// inside is the same as the distance array in Density
-    /// > 0 -> (-1,-1,-1)   7 -> (-1, 1, 0)  14 -> (0, 0, 1)  21 -> (1, 0,-1)
-    /// > 1 -> (-1,-1, 0)   8 -> (-1, 1, 1)  15 -> (0, 1,-1)  22 -> (1, 0, 0)
-    /// > 2 -> (-1,-1, 1)   9 -> (0,-1,-1)   16 -> (0, 1, 0)  23 -> (1, 0, 1)
-    /// > 3 -> (-1, 0,-1)  10 -> (0,-1, 0)   17 -> (0, 1, 1)  24 -> (1, 1,-1)
-    /// > 4 -> (-1, 0, 0)  11 -> (0,-1, 1)   18 -> (1,-1,-1)  25 -> (1, 1, 0)
-    /// > 5 -> (-1, 0, 1)  12 -> (0, 0,-1)   19 -> (1,-1, 0)  26 -> (1, 1, 1)
-    /// > 6 -> (-1, 1,-1)  13 -> (0, 0, 0)   20 -> (1,-1, 1)
+    /// <pre class="rust">
+    /// 0 -> (-1,-1,-1)   7 -> (-1, 1, 0)  14 -> (0, 0, 1)  21 -> (1, 0,-1)
+    /// 1 -> (-1,-1, 0)   8 -> (-1, 1, 1)  15 -> (0, 1,-1)  22 -> (1, 0, 0)
+    /// 2 -> (-1,-1, 1)   9 -> (0,-1,-1)   16 -> (0, 1, 0)  23 -> (1, 0, 1)
+    /// 3 -> (-1, 0,-1)  10 -> (0,-1, 0)   17 -> (0, 1, 1)  24 -> (1, 1,-1)
+    /// 4 -> (-1, 0, 0)  11 -> (0,-1, 1)   18 -> (1,-1,-1)  25 -> (1, 1, 0)
+    /// 5 -> (-1, 0, 1)  12 -> (0, 0,-1)   19 -> (1,-1, 0)  26 -> (1, 1, 1)
+    /// 6 -> (-1, 1,-1)  13 -> (0, 0, 0)   20 -> (1,-1, 1)
+    /// </pre>
     /// BEWARE: The code for this is god awful
     fn new(size: &Size) -> Self {
         let mut di = [[0isize; 27]; 27];
@@ -1019,9 +1018,13 @@ impl Shift {
 
 /// Size of the density data in 3d
 pub struct Size {
+    /// Number of voxels in the x-direction.
     pub x: isize,
+    /// Number of voxels in the y-direction.
     pub y: isize,
+    /// Number of voxels in the z-direction.
     pub z: isize,
+    /// Total number of voxels.
     pub total: usize,
 }
 

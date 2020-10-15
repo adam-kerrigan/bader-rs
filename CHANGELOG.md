@@ -1,4 +1,7 @@
 ## v0.3.0
+## Documentation Changes
+- More of the crate documented
+- Documentation tests added for all partitioning methods and for using weight_store in VoxelMap 
 ## v0.2.0
 ### New Features
 - Added spin flag for allowing cubes have spin and density output
