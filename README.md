@@ -31,9 +31,9 @@ The program takes a charge density file as input and performs Bader analysis of 
 ```sh
 $ bader CHGCAR -r AECCAR0 -r AECCAR2
 ```
-VASP charge density files containing spin densities will output the the partitioned spin also. To achieve this for cube files requires a seperate calculation passing the charge density as a reference.
+VASP charge density files containing spin densities will output the the partitioned spin also. To achieve this for cube files requires using the --spin flag to pass a second file to treat as the spin density.
 ```sh
-$ bader spin-density.cube -r charge-density.cube
+$ bader charge-density.cube -s spin-density.cube
 ```
 For a detailed list of usage options run
 ```sh
