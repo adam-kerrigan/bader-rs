@@ -1,11 +1,13 @@
 #[cfg(test)]
 mod tests {
-    use bader::io::vasp::read;
+    use bader::io::vasp::Vasp;
+    use bader::io::FileFormat;
 
     #[test]
     fn vasp_read_no_spin() {
         let filename = String::from("tests/vasp/CHGCAR_no_spin");
-        let (voxel_origin, grid, atoms, densities) = match read(filename) {
+        let vasp = Vasp {};
+        let (voxel_origin, grid, atoms, densities) = match vasp.read(filename) {
             Ok(r) => r,
             Err(e) => panic!("{}", e),
         };
@@ -20,7 +22,8 @@ mod tests {
     #[test]
     fn vasp_read_no_spin_chg() {
         let filename = String::from("tests/vasp/CHG_no_spin");
-        let (voxel_origin, grid, atoms, densities) = match read(filename) {
+        let vasp = Vasp {};
+        let (voxel_origin, grid, atoms, densities) = match vasp.read(filename) {
             Ok(r) => r,
             Err(e) => panic!("{}", e),
         };
@@ -34,7 +37,8 @@ mod tests {
     #[test]
     fn vasp_read_spin() {
         let filename = String::from("tests/vasp/CHGCAR_spin");
-        let (voxel_origin, grid, atoms, densities) = match read(filename) {
+        let vasp = Vasp {};
+        let (voxel_origin, grid, atoms, densities) = match vasp.read(filename) {
             Ok(r) => r,
             Err(e) => panic!("{}", e),
         };
@@ -52,7 +56,8 @@ mod tests {
     #[test]
     fn vasp_read_spin_chg() {
         let filename = String::from("tests/vasp/CHG_spin");
-        let (voxel_origin, grid, atoms, densities) = match read(filename) {
+        let vasp = Vasp {};
+        let (voxel_origin, grid, atoms, densities) = match vasp.read(filename) {
             Ok(r) => r,
             Err(e) => panic!("{}", e),
         };
@@ -68,7 +73,8 @@ mod tests {
     #[test]
     fn vasp_read_ncl() {
         let filename = String::from("tests/vasp/CHGCAR_ncl");
-        let (voxel_origin, grid, atoms, densities) = match read(filename) {
+        let vasp = Vasp {};
+        let (voxel_origin, grid, atoms, densities) = match vasp.read(filename) {
             Ok(r) => r,
             Err(e) => panic!("{}", e),
         };
@@ -92,7 +98,8 @@ mod tests {
     #[test]
     fn vasp_read_ncl_chg() {
         let filename = String::from("tests/vasp/CHG_ncl");
-        let (voxel_origin, grid, atoms, densities) = match read(filename) {
+        let vasp = Vasp {};
+        let (voxel_origin, grid, atoms, densities) = match vasp.read(filename) {
             Ok(r) => r,
             Err(e) => panic!("{}", e),
         };

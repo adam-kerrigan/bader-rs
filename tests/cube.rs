@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use bader::io::cube::read;
+    use bader::io::cube::Cube;
+    use bader::io::FileFormat;
 
     const LENGTH_UNITS: f64 = 0.52917721067;
     const VOLUME_UNITS: f64 = LENGTH_UNITS * LENGTH_UNITS * LENGTH_UNITS;
@@ -8,7 +9,8 @@ mod tests {
     #[test]
     fn cube_read() {
         let filename = String::from("tests/cube/anatase.cube");
-        let (voxel_origin, grid, atoms, densities) = match read(filename) {
+        let cube = Cube {};
+        let (voxel_origin, grid, atoms, densities) = match cube.read(filename) {
             Ok(r) => r,
             Err(e) => panic!("{}", e),
         };
