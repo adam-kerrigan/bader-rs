@@ -234,7 +234,6 @@ pub struct ReducedLattice {
 }
 
 impl ReducedLattice {
-
     /// Creates a lll-reduced lattice from the cell lattice.
     pub fn from_lattice(lattice: &Lattice) -> Self {
         let reduced_lattice =

@@ -23,7 +23,6 @@ type InitReturn = (Vec<Vec<f64>>, Vec<f64>, Atoms, [usize; 3], [f64; 3]);
 
 /// FileFormat trait. Used for handling input from a file.
 pub trait FileFormat {
-
     /// Returns the parts required to build `Density` and `Atoms` structures.
     fn init(&self, args: &Args) -> InitReturn {
         let (voxel_origin, grid, atoms, mut densities) =

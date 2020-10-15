@@ -297,7 +297,8 @@ mod tests {
     #[test]
     fn argument_method_weight() {
         let app = ClapApp::App.get();
-        let matches = app.get_matches_from(vec!["bader", "CHGCAR", "-m", "weight"]);
+        let matches =
+            app.get_matches_from(vec!["bader", "CHGCAR", "-m", "weight"]);
         let args = Args::new(matches);
         match args.method {
             Method::Weight => (),

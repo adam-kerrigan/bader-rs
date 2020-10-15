@@ -290,9 +290,8 @@ impl VoxelMap {
             let atom_num = self.atom_get(p as isize).unwrap();
             if self.is_boundary(p as isize, atom_num, density) {
                 let p_cartesian = density.to_cartesian(p as isize);
-                let p_cartesian = utils::dot(p_cartesian,
-                                             density.voxel_lattice
-                                                    .to_cartesian);
+                let p_cartesian =
+                    utils::dot(p_cartesian, density.voxel_lattice.to_cartesian);
                 let mut p_lll_fractional = utils::dot(p_cartesian,
                                                       atoms.reduced_lattice
                                                            .to_fractional);
@@ -339,8 +338,8 @@ impl VoxelMap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use rayon::prelude::*;
+    use std::sync::Arc;
 
     #[test]
     fn voxel_map_maxima_store() {
@@ -356,16 +355,17 @@ mod tests {
     fn voxel_map_weight_store() {
         let voxel_map = VoxelMap::new(10);
         let voxel_map = Arc::new(voxel_map);
-        (0..10isize).into_par_iter()
-                    .for_each(|p| {
-                        let i = {
-                            let mut weight = voxel_map.lock();
-                            (*weight).push(vec![(p as usize, p as f64 - 1.)]);
-                            weight.len() - 1
-                        };
-                        voxel_map.weight_store(p, i);
-                        voxel_map.maxima_store(p, p - 1);
-                    });
+        (0..10isize).into_par_iter().for_each(|p| {
+                                        let i = {
+                                            let mut weight = voxel_map.lock();
+                                            (*weight).push(vec![(p as usize,
+                                                                 p as f64
+                                                                 - 1.)]);
+                                            weight.len() - 1
+                                        };
+                                        voxel_map.weight_store(p, i);
+                                        voxel_map.maxima_store(p, p - 1);
+                                    });
         match voxel_map.weight_get(9) {
             Voxel::Weight(vec) => assert_eq!(vec[0], (9, 8.)),
             _ => panic!("not found weight in map"),
