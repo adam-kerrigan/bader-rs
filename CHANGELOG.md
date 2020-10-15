@@ -1,3 +1,4 @@
+## v0.3.0
 ## v0.2.0
 ### New Features
 - Added spin flag for allowing cubes have spin and density output
