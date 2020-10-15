@@ -1,10 +1,13 @@
 use crate::density::Density;
 use crate::utils;
-use std::sync::atomic::{AtomicIsize, Ordering};
+use crate::voxel_map::{Voxel, VoxelMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A type for the maxima search function
-pub type StepMethod = fn(usize, &Density, Arc<Vec<AtomicIsize>>) -> isize;
+pub type WeightMap = Arc<VoxelMap>;
+pub type StepMethod =
+    fn(usize, &Density, WeightMap) -> (isize, Vec<(usize, f64)>);
 
 /// Steps in the density grid, from point p, following the gradient
 pub fn ongrid_step(p: isize, density: &Density) -> isize {
@@ -31,32 +34,18 @@ pub fn ongrid_step(p: isize, density: &Density) -> isize {
 /// Finds the maxima associated with the current point, p.
 pub fn ongrid(p: usize,
               density: &Density,
-              voxel_map: Arc<Vec<AtomicIsize>>)
-              -> isize {
+              weight_map: WeightMap)
+              -> (isize, Vec<(usize, f64)>) {
     let mut pt = p as isize;
-    if let Some(x) = density.vacuum_tolerance {
-        if density[pt] <= x {
-            return -1;
-        }
-    }
-    let mut pn = pt;
-    let maxima = 'pathloop: loop {
-        pt = ongrid_step(pn, density);
-        match voxel_map[pt as usize].load(Ordering::Relaxed) {
-            -1 => (),
-            x => {
-                voxel_map[p].store(x, Ordering::Relaxed);
-                return x;
-            }
-        }
-        if pt == pn {
-            break 'pathloop pn;
+    let maxima = {
+        pt = ongrid_step(pt, density);
+        if pt == p as isize {
+            pt
         } else {
-            pn = pt;
-        };
+            weight_map.maxima_get(pt)
+        }
     };
-    voxel_map[p].store(maxima, Ordering::Relaxed);
-    maxima
+    (maxima, Vec::with_capacity(0))
 }
 
 /// Step in the density grid following the gradient.
@@ -104,12 +93,12 @@ pub fn neargrid_step(p: isize, dr: &mut [f64; 3], density: &Density) -> isize {
 /// Find the maxima assiociated with the current point using the neargrid method
 pub fn neargrid(p: usize,
                 density: &Density,
-                voxel_map: Arc<Vec<AtomicIsize>>)
-                -> isize {
+                _weight_map: WeightMap)
+                -> (isize, Vec<(usize, f64)>) {
     let mut pt = p as isize;
     if let Some(x) = density.vacuum_tolerance {
         if density[pt] <= x {
-            return -1;
+            return (-1, Vec::with_capacity(0));
         }
     }
     let mut pn = pt;
@@ -128,58 +117,77 @@ pub fn neargrid(p: usize,
             pn = pt;
         };
     };
-    voxel_map[p].store(maxima, Ordering::Relaxed);
-    maxima
+    (maxima, Vec::with_capacity(0))
 }
 
-pub fn weight_step(p: isize, density: &Density) -> isize {
-    let mut pn = p;
-    let control = density[pn];
-    let mut max_val = 0.;
+pub fn weight_step(p: isize,
+                   density: &Density,
+                   weight_map: WeightMap)
+                   -> (isize, Vec<(usize, f64)>) {
+    let control = density[p];
+    let mut t_sum = 0.;
+    let mut max_rho = 0.;
+    let mut pn = p as isize;
+    let mut weights = HashMap::<usize, f64>::new();
     // colllect the shift and distances and iterate over them
     for (shift, alpha) in
         density.voronoi.vectors.iter().zip(&density.voronoi.alphas)
     {
         let pt = density.voronoi_shift(p, shift);
-        // calculate the gradient and if it is greater that the current max
-        let rho = (density[pt] - control) * alpha;
-        if rho > max_val {
-            max_val = rho;
-            pn = pt;
+        let charge_diff = density[pt] - control;
+        if charge_diff > 0. {
+            // calculate the gradient and if it is greater that the current max
+            let rho = charge_diff * alpha;
+            if rho > max_rho {
+                pn = pt;
+                max_rho = rho;
+            }
+            match weight_map.weight_get(pt) {
+                Voxel::Weight(point_weights) => {
+                    for (volume_number, w) in point_weights.iter() {
+                        let weight =
+                            weights.entry(*volume_number).or_insert(0.);
+                        *weight += w * rho;
+                    }
+                }
+                Voxel::Maxima(volume_number) => {
+                    let weight = weights.entry(volume_number).or_insert(0.);
+                    *weight += rho;
+                }
+                Voxel::Vacuum => (),
+            }
+            t_sum += rho;
         }
     }
-    pn
+    let weights = if weights.len() > 1 {
+        weights.into_iter()
+               .filter_map(|(volume_number, weight)| {
+                   let weight = weight / t_sum;
+                   if (weight * control).abs() > density.weight_tolerance {
+                       Some((volume_number, weight))
+                   } else {
+                       None
+                   }
+               })
+               .collect::<Vec<(usize, f64)>>()
+    } else {
+        Vec::with_capacity(0)
+    };
+    (pn, weights)
 }
 
 /// Finds the maxima associated with the current point, p.
 pub fn weight(p: usize,
               density: &Density,
-              voxel_map: Arc<Vec<AtomicIsize>>)
-              -> isize {
-    let mut pt = p as isize;
-    if let Some(x) = density.vacuum_tolerance {
-        if density[pt] <= x {
-            return -1;
-        }
+              weight_map: WeightMap)
+              -> (isize, Vec<(usize, f64)>) {
+    let pt = p as isize;
+    let (pt, weights) = weight_step(pt, density, Arc::clone(&weight_map));
+    if pt == p as isize {
+        (pt, weights)
+    } else {
+        (weight_map.maxima_get(pt), weights)
     }
-    let mut pn = pt;
-    let maxima = 'pathloop: loop {
-        pt = weight_step(pn, density);
-        match voxel_map[pt as usize].load(Ordering::Relaxed) {
-            -1 => (),
-            x => {
-                voxel_map[p].store(x, Ordering::Relaxed);
-                return x;
-            }
-        }
-        if pt == pn {
-            break 'pathloop pn;
-        } else {
-            pn = pt;
-        };
-    };
-    voxel_map[p].store(maxima, Ordering::Relaxed);
-    maxima
 }
 
 #[cfg(test)]
@@ -194,24 +202,10 @@ mod tests {
         let density = Density::new(&data,
                                    [4, 4, 4],
                                    lattice.to_cartesian,
+                                   1E-8,
                                    Some(1E-3),
                                    [0., 0., 0.0]);
         assert_eq!(ongrid_step(61, &density), 62)
-    }
-
-    #[test]
-    fn methods_ongrid() {
-        let data = (0..64).map(|x| x as f64).collect::<Vec<f64>>();
-        let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
-        let mut map = Vec::new();
-        map.resize_with(64, || AtomicIsize::new(-1));
-        let map = Arc::new(map);
-        let density = Density::new(&data,
-                                   [4, 4, 4],
-                                   lattice.to_cartesian,
-                                   Some(1E-3),
-                                   [0., 0., 0.0]);
-        assert_eq!(ongrid(61, &density, map), 63)
     }
 
     #[test]
@@ -221,23 +215,9 @@ mod tests {
         let density = Density::new(&data,
                                    [4, 4, 4],
                                    lattice.to_cartesian,
+                                   1E-8,
                                    Some(1E-3),
                                    [0., 0., 0.0]);
         assert_eq!(neargrid_step(61, &mut [0., 0., -1.], &density), 61)
-    }
-
-    #[test]
-    fn methods_neargrid() {
-        let data = (0..64).map(|x| x as f64).collect::<Vec<f64>>();
-        let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
-        let mut map = Vec::new();
-        map.resize_with(64, || AtomicIsize::new(-1));
-        let map = Arc::new(map);
-        let density = Density::new(&data,
-                                   [4, 4, 4],
-                                   lattice.to_cartesian,
-                                   Some(1E-3),
-                                   [0., 0., 0.0]);
-        assert_eq!(neargrid(61, &density, map), 63)
     }
 }

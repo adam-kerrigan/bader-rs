@@ -1,8 +1,10 @@
+use crate::arguments::{Args, Reference};
 use crate::atoms::Atoms;
 use crate::density::Density;
 use crate::utils;
 use crate::voxel_map::VoxelMap;
-use prettytable::{cell, format, row, Table};
+use prettytable::{cell, format, row, Row, Table};
+use rayon::prelude::*;
 use std::fs::File;
 use std::io::{self, Write};
 
@@ -10,181 +12,132 @@ pub mod cube;
 pub mod reader;
 pub mod vasp;
 
-/// What is the coordinated system of the file
-enum Coord {
-    Fractional,
-    Cartesian,
-}
-
+/// Return type of the read function in FileFormat.
 pub type ReadFunction =
-    fn(String) -> io::Result<([f64; 3], [usize; 3], Atoms, Vec<Vec<f64>>)>;
+    io::Result<([f64; 3], [usize; 3], Atoms, Vec<Vec<f64>>)>;
+/// Function type for the different add_row functions.
+type AddRow =
+    fn(&mut Table, String, (String, String, String), Vec<f64>, f64, f64);
+/// Return type of the init function in FileFormat.
+type InitReturn = (Vec<Vec<f64>>, Vec<f64>, Atoms, [usize; 3], [f64; 3]);
 
-/// Write the results to file
-pub struct Results {
-    atoms_charge_file: String,
-    bader_charge_file: String,
-}
+/// FileFormat trait. Used for handling input from a file.
+pub trait FileFormat {
+    /// Returns the parts required to build `Density` and `Atoms` structures.
+    fn init(&self, args: &Args) -> InitReturn {
+        let (voxel_origin, grid, atoms, mut densities) =
+            match self.read(args.file.clone()) {
+                Ok(x) => x,
+                Err(e) => panic!("Error: Problem reading file.\n{}", e),
+            };
+        if let Some(x) = args.spin.clone() {
+            match densities.len() {
+                1 => {
+                    let (_, g, _, d) = match self.read(x.clone()) {
+                        Ok(r) => r,
+                        Err(e) => panic!("{}", e),
+                    };
+                    if 1 != d.len() {
+                        panic!(
+                               "Number of densities in original file is not 1.
+Ambiguous how to handle spin density when {} contains {} densities.",
+                               x,
+                               d.len()
+                        );
+                    }
+                    assert_eq!(g, grid,
+                               "Error: Spin density has different grid size.");
+                    densities.push(d[0].clone());
+                }
+                x => panic!(
+                            "Number of densities in original file is not 1.
+Ambiguous how to handle new spin when {} already has {} spin densities.",
+                            args.file,
+                            x - 1
+                ),
+            }
+        }
+        let rho = match args.reference.clone() {
+            Reference::None => Vec::with_capacity(0),
+            Reference::One(f) => {
+                let (_, g, _, densities) = match self.read(f) {
+                    Ok(r) => r,
+                    Err(e) => panic!("{}", e),
+                };
+                assert_eq!(g, grid,
+                           "Error: Reference density has different grid size.");
+                densities[0].clone()
+            }
+            Reference::Two(f1, f2) => {
+                let (_, g, _, densities) = match self.read(f1) {
+                    Ok(r) => r,
+                    Err(e) => panic!("{}", e),
+                };
+                assert_eq!(g, grid,
+                           "Error: Reference density has different grid size.");
+                let (_, g2, _, densities2) = match self.read(f2) {
+                    Ok(r) => r,
+                    Err(e) => panic!("{}", e),
+                };
 
-impl Results {
-    pub fn new(voxel_map: VoxelMap,
-               bader_charge: Vec<Vec<f64>>,
-               bader_volume: Vec<f64>,
-               assigned_atom: Vec<usize>,
-               assigned_distance: Vec<f64>,
-               surface_distance: Vec<f64>,
-               density: Density,
-               atoms: Atoms,
-               vasp_flag: bool)
-               -> Self {
-        let mut vacuum_charge = 0.;
-        let mut vacuum_volume = 0.;
-        let bader_maxima = if voxel_map.bader_maxima[0] == -1 {
-            vacuum_charge = bader_charge[0][bader_charge[0].len() - 1];
-            vacuum_volume = bader_volume[bader_volume.len() - 1];
-            &voxel_map.bader_maxima[1..]
-        } else {
-            &voxel_map.bader_maxima[..]
+                assert_eq!(g2, grid,
+                           "Error: Reference density has different grid size.");
+                densities[0].par_iter()
+                            .zip(&densities2[0])
+                            .map(|(a, b)| a + b)
+                            .collect::<Vec<f64>>()
+            }
         };
+        (densities, rho, atoms, grid, voxel_origin)
+    }
+
+    /// Returns the atoms charge file and bader charge file as Strings.
+    fn results(&self,
+               voxel_map: VoxelMap,
+               atoms: Atoms,
+               density: &Density)
+               -> (String, String) {
         let mut bader_table = Table::new();
         let mut atoms_table = Table::new();
-        let format =
-            format::FormatBuilder::new().column_separator('|')
-                                        .separators(&[format::LinePosition::Title,
-                                                      format::LinePosition::Bottom],
-                                                    format::LineSeparator::new('-',
-                                                                               '+',
-                                                                               '+',
-                                                                               '+'))
-                                        .padding(1, 1)
-                                        .build();
-        bader_table.set_format(format);
-        atoms_table.set_format(format);
-        match bader_charge.len() {
+        bader_table.set_format(table_format());
+        atoms_table.set_format(table_format());
+        let add_row: AddRow = match voxel_map.bader_charge.len() {
             1 => {
-                bader_table.set_titles(row![c =>"#", "X", "Y", "Z", "Charge", "Volume", "Distance"]);
-                atoms_table.set_titles(row![c =>"#", "X", "Y", "Z", "Charge", "Volume", "Min. Dist."]);
+                bader_table.set_titles(bader_no_spin());
+                atoms_table.set_titles(atom_no_spin());
+                add_row_no_spin
             }
             2 => {
-                bader_table
-                    .set_titles(row![c =>"#", "X", "Y", "Z", "Charge", "Spin", "Volume", "Distance"]);
-                atoms_table
-                    .set_titles(row![c =>"#", "X", "Y", "Z", "Charge", "Spin", "Volume", "Min. Dist."]);
+                bader_table.set_titles(bader_spin());
+                atoms_table.set_titles(atom_spin());
+                add_row_spin
             }
             4 => {
-                bader_table.set_titles(row![c =>"#", "X", "Y", "Z", "Charge", "X Spin", "Y Spin", "Z Spin", "Volume", "Distance"]);
-                atoms_table.set_titles(row![c =>"#", "X", "Y", "Z", "Charge", "X Spin", "Y Spin", "Z Spin", "Volume", "Min. Dist."]);
+                bader_table.set_titles(bader_ncl_spin());
+                atoms_table.set_titles(atom_ncl_spin());
+                add_row_ncl
             }
-            _ => {}
-        }
-
-        fn add_row_no_spin(t: &mut Table,
-                           i: String,
-                           x: String,
-                           y: String,
-                           z: String,
-                           charge: Vec<f64>,
-                           volume: f64,
-                           distance: f64) {
-            let c = format!("{:.6}", charge[0]);
-            let v = format!("{:.6}", volume);
-            let d = format!("{:.6}", distance);
-            t.add_row(row![r => i, x, y, z, c, v, d]);
-        }
-
-        fn add_row_spin(t: &mut Table,
-                        i: String,
-                        x: String,
-                        y: String,
-                        z: String,
-                        charge: Vec<f64>,
-                        volume: f64,
-                        distance: f64) {
-            let c = format!("{:.6}", charge[0]);
-            let s = format!("{:.6}", charge[1]);
-            let v = format!("{:.6}", volume);
-            let d = format!("{:.6}", distance);
-            t.add_row(row![r => i, x, y, z, c, s, v, d]);
-        }
-
-        fn add_row_ncl(t: &mut Table,
-                       i: String,
-                       x: String,
-                       y: String,
-                       z: String,
-                       charge: Vec<f64>,
-                       volume: f64,
-                       distance: f64) {
-            let c = format!("{:.6}", charge[0]);
-            let sx = format!("{:.6}", charge[1]);
-            let sy = format!("{:.6}", charge[2]);
-            let sz = format!("{:.6}", charge[3]);
-            let v = format!("{:.6}", volume);
-            let d = format!("{:.6}", distance);
-            t.add_row(row![r => i, x, y, z, c, sx, sy, sz, v, d]);
-        }
-
-        type AddRowType =
-            fn(&mut Table, String, String, String, String, Vec<f64>, f64, f64);
-
-        let add_row: AddRowType = match bader_charge.len() {
-            1 => add_row_no_spin,
-            2 => add_row_spin,
-            _ => add_row_ncl,
+            _ => panic!(),
         };
-
-        fn vasp_format(coords: [f64; 3]) -> (String, String, String) {
-            let x = format!("{:.6}", coords[2]);
-            let y = format!("{:.6}", coords[1]);
-            let z = format!("{:.6}", coords[0]);
-            (x, y, z)
-        }
-        fn standard_format(coords: [f64; 3]) -> (String, String, String) {
-            let x = format!("{:.6}", coords[0]);
-            let y = format!("{:.6}", coords[1]);
-            let z = format!("{:.6}", coords[2]);
-            (x, y, z)
-        }
-
-        type PositionFormat = fn([f64; 3]) -> (String, String, String);
-
-        let position_format: PositionFormat = if vasp_flag {
-            vasp_format
-        } else {
-            standard_format
-        };
-
         let mut count = 1;
-        let mut charge_t = vec![0f64; bader_charge.len()];
-        for (i, s_dist) in surface_distance.iter()
-                                           .enumerate()
-                                           .take(atoms.positions.len())
-        {
+        let mut charge_t = vec![0f64; voxel_map.bader_charge.len()];
+        for (i, s_dist) in voxel_map.surface_distance.iter().enumerate() {
             let mut charge_a = vec![0f64; 4];
             let mut volume_a = 0f64;
-            for (ii, atom_num) in assigned_atom.iter().enumerate() {
+            for (ii, atom_num) in voxel_map.assigned_atom.iter().enumerate() {
                 if *atom_num == i {
                     let index = format!("{}: {}", atom_num + 1, count);
-                    let bx = density.voxel_origin[0]
-                             + (bader_maxima[ii]
-                                / (density.size.y * density.size.z))
-                               as f64;
-                    let by = density.voxel_origin[1]
-                             + (bader_maxima[ii] / density.size.z).rem_euclid(density.size.y)
-                               as f64;
-                    let bz = density.voxel_origin[2]
-                             + bader_maxima[ii].rem_euclid(density.size.z)
-                               as f64;
-                    let maxima_cartesian = utils::dot([bx, by, bz],
+                    let maxima_cartesian =
+                        { density.to_cartesian(voxel_map.bader_maxima[ii]) };
+                    let maxima_cartesian = utils::dot(maxima_cartesian,
                                                       density.voxel_lattice
                                                              .to_cartesian);
-                    let (x, y, z) = position_format(maxima_cartesian);
-                    let volume =
-                        bader_volume[ii] * density.voxel_lattice.volume;
+                    let (x, y, z) = self.coordinate_format(maxima_cartesian);
+                    let volume = voxel_map.bader_volume[ii];
                     volume_a += volume;
-                    let mut charge = vec![0f64; bader_charge.len()];
-                    for j in 0..bader_charge.len() {
-                        charge[j] =
-                            bader_charge[j][ii] * density.voxel_lattice.volume;
+                    let mut charge = vec![0f64; voxel_map.bader_charge.len()];
+                    for j in 0..voxel_map.bader_charge.len() {
+                        charge[j] = voxel_map.bader_charge[j][ii];
                         charge_a[j] += charge[j];
                         charge_t[j] += charge[j];
                     }
@@ -192,256 +145,170 @@ impl Results {
                         count += 1;
                         add_row(&mut bader_table,
                                 index,
-                                x,
-                                y,
-                                z,
+                                (x, y, z),
                                 charge,
                                 volume,
-                                assigned_distance[ii]);
+                                voxel_map.minimum_distance[ii]);
                     }
                 }
             }
             count = 1;
-            let (x, y, z) = position_format(atoms.positions[i]);
+            let (x, y, z) = self.coordinate_format(atoms.positions[i]);
             let index = format!("{}", i + 1);
             add_row(&mut atoms_table,
                     index,
-                    x,
-                    y,
-                    z,
+                    (x, y, z),
                     charge_a,
                     volume_a,
                     *s_dist);
         }
-        let footer = match bader_charge.len() {
-            1 => format!(
-                "  Vacuum Charge: {:>14.4}\n  Vacuum Volume: {:>14.4}\n  Total Charge: {:>15.4}",
-                vacuum_charge * density.voxel_lattice.volume,
-                vacuum_volume * density.voxel_lattice.volume,
-                charge_t[0],
-            ),
-            2 =>  format!(
-                "  Vacuum Charge: {:>14.4}\n  Vacuum Volume: {:>14.4}\n  Total Charge: {:>15.4}\n  Total Spin: {:>17.4}",
-                vacuum_charge * density.voxel_lattice.volume,
-                vacuum_volume * density.voxel_lattice.volume,
-                charge_t[0], charge_t[1]
-            ),
-            _ =>  format!(
-                "  Vacuum Charge: {:>14.4}\n  Vacuum Volume: {:>14.4}\n  Total Charge: {:>15.4}\n  Total Spin X: {:>15.4}\n  Total Spin Y: {:>15.4}\n  Total Spin Z: {:>15.4}",
-                vacuum_charge * density.voxel_lattice.volume,
-                vacuum_volume * density.voxel_lattice.volume,
-                charge_t[0], charge_t[1], charge_t[2], charge_t[3]
-            ),
-        };
-
+        let footer = footer(voxel_map, charge_t);
         let mut atoms_charge_file = atoms_table.to_string();
         atoms_charge_file.push_str(&footer);
         let bader_charge_file = bader_table.to_string();
-        Self { atoms_charge_file,
-               bader_charge_file }
+        (atoms_charge_file, bader_charge_file)
     }
 
-    /// Write the files
-    pub fn write(self) -> io::Result<()> {
-        let mut bader_file = File::create("BCF.dat")?;
-        bader_file.write_all(self.bader_charge_file.as_bytes())?;
-        let mut atoms_file = File::create("ACF.dat")?;
-        atoms_file.write_all(self.atoms_charge_file.as_bytes())?;
-        Ok(())
-    }
+    fn read(&self, filename: String) -> ReadFunction;
+
+    fn to_atoms(&self, atom_text: String) -> Atoms;
+
+    fn write(&self, atoms: &Atoms, data: Vec<Vec<f64>>);
+
+    fn coordinate_format(&self, coords: [f64; 3]) -> (String, String, String);
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::arguments::Weight;
-    use crate::atoms::Lattice;
+/// Creates a format for the output tables.
+pub fn table_format() -> format::TableFormat {
+    let line_position =
+        &[format::LinePosition::Title, format::LinePosition::Bottom];
+    let line_separator = format::LineSeparator::new('-', '+', '+', '+');
+    format::FormatBuilder::new().column_separator('|')
+                                .separators(line_position, line_separator)
+                                .padding(1, 1)
+                                .build()
+}
+/// Part of the collection of headers for the tables.
+pub fn bader_no_spin() -> Row {
+    row![c =>"#", "X", "Y", "Z", "Charge", "Volume", "Distance"]
+}
+/// Part of the collection of headers for the tables.
+pub fn atom_no_spin() -> Row {
+    row![c =>"#", "X", "Y", "Z", "Charge", "Volume", "Min. Dist."]
+}
+/// Part of the collection of headers for the tables.
+pub fn bader_spin() -> Row {
+    row![c =>"#", "X", "Y", "Z", "Charge", "Spin", "Volume", "Distance"]
+}
+/// Part of the collection of headers for the tables.
+pub fn atom_spin() -> Row {
+    row![c =>"#", "X", "Y", "Z", "Charge", "Spin", "Volume", "Min. Dist."]
+}
+/// Part of the collection of headers for the tables.
+pub fn bader_ncl_spin() -> Row {
+    row![c =>"#", "X", "Y", "Z", "Charge", "X Spin", "Y Spin", "Z Spin", "Volume", "Distance"]
+}
+/// Part of the collection of headers for the tables.
+pub fn atom_ncl_spin() -> Row {
+    row![c =>"#", "X", "Y", "Z", "Charge", "X Spin", "Y Spin", "Z Spin", "Volume", "Min. Dist."]
+}
 
-    #[test]
-    fn io_results_new_no_spin() {
-        let mut map: Vec<isize> = vec![-1; 4usize.pow(3)];
-        let mut densities: Vec<Vec<f64>> = vec![vec![0.; 4usize.pow(3)]];
-        for i in [0usize, 1, 3, 4, 5, 7, 12, 13, 15, 16, 17, 19, 20, 21, 23,
-                  28, 29, 31, 48, 49, 51, 52, 53, 55, 60, 61, 63].iter()
-        {
-            map[*i] = 0;
-            densities[0][*i] = 1.;
-        }
-        let bader_maxima = vec![-1, 0];
-        let voxel_map = VoxelMap::new(map, bader_maxima);
-        let lattice = Lattice::new([[4., 0., 0.], [0., 4., 0.], [0., 0., 4.]]);
-        let atoms = Atoms::new(lattice, vec![[0., 0., 0.]], String::new());
-        let lattice = Lattice::new([[4., 0., 0.], [0., 4., 0.], [0., 0., 4.]]);
-        let reference = Density::new(&densities[0],
-                                     [4, 4, 4],
-                                     lattice.to_cartesian,
-                                     Some(1E-3),
-                                     [0., 0., 0.1]);
-        let (assigned_atom, assigned_distance) =
-            atoms.assign_maxima(&voxel_map, &reference);
-        let (bader_charge, bader_volume, surface_distance) = {
-            voxel_map.charge_sum(&densities,
-                                 &assigned_atom,
-                                 &atoms,
-                                 &reference,
-                                 (0..64).collect(),
-                                 Weight::None)
-        };
-        let min_len = reference.voxel_lattice.distance_matrix[4];
-        let results = Results::new(voxel_map,
-                                   bader_charge,
-                                   bader_volume,
-                                   assigned_atom,
-                                   assigned_distance,
-                                   surface_distance,
-                                   reference,
-                                   atoms,
-                                   true);
-        let acf = match results.atoms_charge_file.split('\n').nth(2) {
-            Some(s) => s.split(" | ")
-                        .map(|x| x.trim().parse::<f64>().unwrap())
-                        .collect::<Vec<f64>>(),
-            //Some(s) => s.split(" | ").collect::<Vec<_>>(),
-            None => panic!("No acf table content"),
-        };
-        let bcf = match results.bader_charge_file.split('\n').nth(2) {
-            Some(s) => s.split(" | ")
-                        .skip(1)
-                        .map(|x| x.trim().parse::<f64>().unwrap())
-                        .collect::<Vec<f64>>(),
-            //Some(s) => s.split(" | ").collect::<Vec<_>>(),
-            None => panic!("No bcf table content"),
-        };
-        assert_eq!(bcf, [0.1, 0., 0., 27., 27., 0.1]);
-        assert_eq!(acf, [1., 0., 0., 0., 27., 27., min_len - 0.1]);
-    }
+/// Part of the collection of functions for adding a row to the tables.
+pub fn add_row_no_spin(t: &mut Table,
+                       i_str: String,
+                       pos_str: (String, String, String),
+                       charge: Vec<f64>,
+                       volume: f64,
+                       distance: f64) {
+    let (x_str, y_str, z_str) = pos_str;
+    let c_str = format!("{:.6}", charge[0]);
+    let v_str = format!("{:.6}", volume);
+    let d_str = format!("{:.6}", distance);
+    t.add_row(row![r => i_str, x_str, y_str, z_str, c_str, v_str, d_str]);
+}
 
-    #[test]
-    fn io_results_new_spin() {
-        let mut map: Vec<isize> = vec![-1; 4usize.pow(3)];
-        let mut densities: Vec<Vec<f64>> = vec![vec![0.; 4usize.pow(3)]; 2];
-        for i in [0usize, 1, 3, 4, 5, 7, 12, 13, 15, 16, 17, 19, 20, 21, 23,
-                  28, 29, 31, 48, 49, 51, 52, 53, 55, 60, 61, 63].iter()
-        {
-            map[*i] = 0;
-            densities[0][*i] = 1.;
-            densities[1][*i] = 2.;
-        }
-        let bader_maxima = vec![-1, 0];
-        let voxel_map = VoxelMap::new(map, bader_maxima);
-        let lattice = Lattice::new([[4., 0., 0.], [0., 4., 0.], [0., 0., 4.]]);
-        let atoms = Atoms::new(lattice, vec![[0., 0., 0.]], String::new());
-        let lattice = Lattice::new([[4., 0., 0.], [0., 4., 0.], [0., 0., 4.]]);
-        let reference = Density::new(&densities[0],
-                                     [4, 4, 4],
-                                     lattice.to_cartesian,
-                                     Some(1E-3),
-                                     [0., 0., 0.1]);
-        let (assigned_atom, assigned_distance) =
-            atoms.assign_maxima(&voxel_map, &reference);
-        let (bader_charge, bader_volume, surface_distance) = {
-            voxel_map.charge_sum(&densities,
-                                 &assigned_atom,
-                                 &atoms,
-                                 &reference,
-                                 (0..64).collect(),
-                                 Weight::None)
-        };
-        let min_len = reference.voxel_lattice.distance_matrix[4];
-        let results = Results::new(voxel_map,
-                                   bader_charge,
-                                   bader_volume,
-                                   assigned_atom,
-                                   assigned_distance,
-                                   surface_distance,
-                                   reference,
-                                   atoms,
-                                   false);
-        let acf = match results.atoms_charge_file.split('\n').nth(2) {
-            Some(s) => s.split(" | ")
-                        .map(|x| x.trim().parse::<f64>().unwrap())
-                        .collect::<Vec<f64>>(),
-            None => panic!("No acf table content"),
-        };
-        let bcf = match results.bader_charge_file.split('\n').nth(2) {
-            Some(s) => s.split(" | ")
-                        .skip(1)
-                        .map(|x| x.trim().parse::<f64>().unwrap())
-                        .collect::<Vec<f64>>(),
-            None => panic!("No bcf table content"),
-        };
-        assert_eq!(bcf, [0., 0., 0.1, 27., 27. * 2., 27., 0.1]);
-        assert_eq!(acf, [1., 0., 0., 0., 27., 27. * 2., 27., min_len - 0.1]);
-    }
+/// Part of the collection of functions for adding a row to the tables.
+pub fn add_row_spin(t: &mut Table,
+                    i_str: String,
+                    pos_str: (String, String, String),
+                    charge: Vec<f64>,
+                    volume: f64,
+                    distance: f64) {
+    let (x_str, y_str, z_str) = pos_str;
+    let c_str = format!("{:.6}", charge[0]);
+    let s_str = format!("{:.6}", charge[1]);
+    let v_str = format!("{:.6}", volume);
+    let d_str = format!("{:.6}", distance);
+    t.add_row(
+        row![r => i_str, x_str, y_str, z_str, c_str, s_str, v_str, d_str],
+    );
+}
 
-    #[test]
-    fn io_results_new_ncl_spin() {
-        let mut map: Vec<isize> = vec![-1; 4usize.pow(3)];
-        let mut densities: Vec<Vec<f64>> = vec![vec![0.; 4usize.pow(3)]; 4];
-        for i in [0usize, 1, 3, 4, 5, 7, 12, 13, 15, 16, 17, 19, 20, 21, 23,
-                  28, 29, 31, 48, 49, 51, 52, 53, 55, 60, 61, 63].iter()
-        {
-            map[*i] = 0;
-            densities[0][*i] = 1.;
-            densities[1][*i] = 2.;
-            densities[2][*i] = 3.;
-            densities[3][*i] = 4.;
+/// Part of the collection of functions for adding a row to the tables.
+pub fn add_row_ncl(t: &mut Table,
+                   i_str: String,
+                   pos_str: (String, String, String),
+                   charge: Vec<f64>,
+                   volume: f64,
+                   distance: f64) {
+    let (x_str, y_str, z_str) = pos_str;
+    let c_str = format!("{:.6}", charge[0]);
+    let sx_str = format!("{:.6}", charge[1]);
+    let sy_str = format!("{:.6}", charge[2]);
+    let sz_str = format!("{:.6}", charge[3]);
+    let v_str = format!("{:.6}", volume);
+    let d_str = format!("{:.6}", distance);
+    t.add_row(row![r => i_str, x_str, y_str, z_str, c_str, sx_str, sy_str, sz_str, v_str, d_str]);
+}
+
+/// Produces the footer for the atoms charge file.
+pub fn footer(voxel_map: VoxelMap, charge_total: Vec<f64>) -> String {
+    let mut vacuum_charge = Vec::<f64>::with_capacity(4);
+    for i in 0..voxel_map.bader_charge.len() {
+        if voxel_map.bader_maxima[0] < 0 {
+            vacuum_charge.push(*voxel_map.bader_charge[i].last().unwrap());
+        } else {
+            vacuum_charge.push(0.);
         }
-        let bader_maxima = vec![-1, 0];
-        let voxel_map = VoxelMap::new(map, bader_maxima);
-        let lattice = Lattice::new([[4., 0., 0.], [0., 4., 0.], [0., 0., 4.]]);
-        let atoms = Atoms::new(lattice, vec![[0., 0., 0.]], String::new());
-        let lattice = Lattice::new([[4., 0., 0.], [0., 4., 0.], [0., 0., 4.]]);
-        let reference = Density::new(&densities[0],
-                                     [4, 4, 4],
-                                     lattice.to_cartesian,
-                                     Some(1E-3),
-                                     [0., 0., 0.]);
-        let (assigned_atom, assigned_distance) =
-            atoms.assign_maxima(&voxel_map, &reference);
-        let (bader_charge, bader_volume, surface_distance) = {
-            voxel_map.charge_sum(&densities,
-                                 &assigned_atom,
-                                 &atoms,
-                                 &reference,
-                                 (0..64).collect(),
-                                 Weight::None)
-        };
-        let min_len = reference.voxel_lattice.distance_matrix[4];
-        let results = Results::new(voxel_map,
-                                   bader_charge,
-                                   bader_volume,
-                                   assigned_atom,
-                                   assigned_distance,
-                                   surface_distance,
-                                   reference,
-                                   atoms,
-                                   true);
-        let acf = match results.atoms_charge_file.split('\n').nth(2) {
-            Some(s) => s.split(" | ")
-                        .map(|x| x.trim().parse::<f64>().unwrap())
-                        .collect::<Vec<f64>>(),
-            None => panic!("No acf table content"),
-        };
-        let bcf = match results.bader_charge_file.split('\n').nth(2) {
-            Some(s) => s.split(" | ")
-                        .skip(1)
-                        .map(|x| x.trim().parse::<f64>().unwrap())
-                        .collect::<Vec<f64>>(),
-            None => panic!("No bcf table content"),
-        };
-        assert_eq!(bcf,
-                   [0., 0., 0., 27., 27. * 2., 27. * 3., 27. * 4., 27., 0.]);
-        assert_eq!(acf,
-                   [1.,
-                    0.,
-                    0.,
-                    0.,
-                    27.,
-                    27. * 2.,
-                    27. * 3.,
-                    27. * 4.,
-                    27.,
-                    min_len]);
     }
+    let vacuum_volume = if voxel_map.bader_maxima[0] < 0 {
+        *voxel_map.bader_volume.last().unwrap()
+    } else {
+        0.
+    };
+    match voxel_map.bader_charge.len() {
+            1 => format!(
+                "  Vacuum Charge: {:>18.4}\n  Vacuum Volume: {:>18.4}\n  Partitioned Charge: {:>13.4}",
+                vacuum_charge[0],
+                vacuum_volume,
+                charge_total[0],
+            ),
+            2 =>  format!(
+                "  Vacuum Charge: {:>18.4}\n  Vacuum Spin: {:>20.4}\n  Vacuum Volume: {:>18.4}\n  Partitioned Charge: {:>13.4}\n  Partitioned Spin: {:>15.4}",
+                vacuum_charge[0],
+                vacuum_charge[1],
+                vacuum_volume,
+                charge_total[0], charge_total[1]
+            ),
+            _ =>  format!(
+                "  Vacuum Charge: {:>18.4}\n  Vacuum Spin X: {:>18.4}\n  Vacuum Spin Y: {:>18.4}\n  Vacuum Spin Z: {:>18.4}\n  Vacuum Volume: {:>18.4}\n  Partitioned Charge: {:>13.4}\n  Partitioned Spin X: {:>13.4}\n  Partitioned Spin Y: {:>13.4}\n  Partitioned Spin Z: {:>13.4}",
+                vacuum_charge[0],
+                vacuum_charge[1],
+                vacuum_charge[2],
+                vacuum_charge[3],
+                vacuum_volume,
+                charge_total[0], charge_total[1], charge_total[2], charge_total[3]
+            ),
+        }
+}
+
+/// Write the files
+pub fn write(atoms_charge_file: String,
+             bader_charge_file: String)
+             -> io::Result<()> {
+    let mut bader_file = File::create("BCF.dat")?;
+    bader_file.write_all(bader_charge_file.as_bytes())?;
+    let mut atoms_file = File::create("ACF.dat")?;
+    atoms_file.write_all(atoms_charge_file.as_bytes())?;
+    Ok(())
 }

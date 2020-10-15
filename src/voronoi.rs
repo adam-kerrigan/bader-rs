@@ -54,8 +54,9 @@ impl Voronoi {
                                 }
                             }
                             let vertex_mag = vdot(vertex, vertex);
-                            if (vertex_mag - 0.25 * vdot(c_shift, c_shift)).abs()
-                               < 1E-8
+                            if (vertex_mag - 0.25 * vdot(c_shift, c_shift))
+                                .abs()
+                                < 1E-8
                             {
                                 vertices.clear();
                                 continue 'vector;

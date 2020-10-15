@@ -1,12 +1,15 @@
 use crate::density::Density;
+use crate::progress::Bar;
 use crate::utils;
-use crate::voxel_map::VoxelMap;
+use indicatif::ProgressBar;
 
 /// struct for containing the information about the atoms
 ///
-/// > lattice: Lattice - the lattice of the structure
-/// > positions: Vec<[f64; 3]> - the positions of the atoms in cartesian coordinates
-/// > text: String - text representation from the input file
+/// <pre class="rust">
+/// lattice: The lattice of the structure
+/// positions: The positions of the atoms in cartesian coordinates
+/// text: Text representation from the input file
+/// </pre>
 pub struct Atoms {
     pub lattice: Lattice,
     pub positions: Vec<[f64; 3]>,
@@ -42,30 +45,25 @@ impl Atoms {
 
     /// assigns bader volumes to their nearest atom
     pub fn assign_maxima(&self,
-                         map: &VoxelMap,
+                         maximas: &[isize],
                          density: &Density)
                          -> (Vec<usize>, Vec<f64>) {
         let max_distance =
             (self.lattice.a + self.lattice.b + self.lattice.c).powi(2);
-        let mut assigned_atom =
-            Vec::<usize>::with_capacity(map.bader_maxima.len());
-        let mut assigned_distance =
-            Vec::<f64>::with_capacity(map.bader_maxima.len());
-        let maximas = if map.bader_maxima[0] == -1 {
-            &map.bader_maxima[1..]
+        let mut assigned_atom = Vec::<usize>::with_capacity(maximas.len());
+        let mut assigned_distance = Vec::<f64>::with_capacity(maximas.len());
+        let maximas = if maximas[0] == -1 {
+            &maximas[1..]
         } else {
-            &map.bader_maxima[..]
+            &maximas[..]
         };
+        let pbar = ProgressBar::new(density.size.total as u64);
+        let pbar = Bar::new(pbar, 100, String::from("Assigning to atoms: "));
         for maxima in maximas.iter() {
-            let bx = density.voxel_origin[0]
-                     + (maxima / (density.size.y * density.size.z)) as f64;
-            let by = density.voxel_origin[1]
-                     + (maxima / density.size.z).rem_euclid(density.size.y)
-                       as f64;
-            let bz = density.voxel_origin[2]
-                     + maxima.rem_euclid(density.size.z) as f64;
-            let maxima_cartesian =
-                utils::dot([bx, by, bz], density.voxel_lattice.to_cartesian);
+            let maxima_cartesian = density.to_cartesian(*maxima);
+            let maxima_cartesian = {
+                utils::dot(maxima_cartesian, density.voxel_lattice.to_cartesian)
+            };
             let mut maxima_lll_fractional = utils::dot(maxima_cartesian,
                                                        self.reduced_lattice
                                                            .to_fractional);
@@ -82,9 +80,14 @@ impl Atoms {
                     self.reduced_lattice.cartesian_shift_matrix.iter()
                 {
                     let distance = {
-                        (maxima_lll_cartesian[0] - (atom[0] + atom_shift[0])).powi(2)
-                        + (maxima_lll_cartesian[1] - (atom[1] + atom_shift[1])).powi(2)
-                        + (maxima_lll_cartesian[2] - (atom[2] + atom_shift[2])).powi(2)
+                        (maxima_lll_cartesian[0] - (atom[0] + atom_shift[0]))
+                            .powi(2)
+                            + (maxima_lll_cartesian[1]
+                                - (atom[1] + atom_shift[1]))
+                                .powi(2)
+                            + (maxima_lll_cartesian[2]
+                                - (atom[2] + atom_shift[2]))
+                                .powi(2)
                     };
                     if distance < min_distance {
                         min_distance = distance;
@@ -94,6 +97,7 @@ impl Atoms {
             }
             assigned_atom.push(atom_num);
             assigned_distance.push(min_distance.powf(0.5));
+            pbar.tick()
         }
         (assigned_atom, assigned_distance)
     }
@@ -101,26 +105,28 @@ impl Atoms {
 
 /// Lattice - structure for containing information on the cell
 ///
-/// > a: f64 - length of the a-vector
-/// > b: f64 - length of the b-vector
-/// > c: f64 - length of the c-vector
-/// > distance_matrix: [f64; 26] - distance to move in each direction, follows the
-/// >                              ordering listed below
-/// > gradient_transform: [[f64; 3]; 3] - transformation matrix for converting central
-/// >                                      difference gradients to the lattice basis
-/// > to_fractional: [[f64; 3]; 3] - transformation matrix for converting to fractional
-/// >                                coordinates
-/// > to_cartesian: [[f64; 3]; 3] - transformation matrix for converting to cartesian
-/// >                               coordinates
+/// <pre class="rust">
+/// a: length of the a-vector
+/// b: length of the b-vector
+/// c: length of the c-vector
+/// distance_matrix: distance to move in each direction, follows the
+///                  ordering listed below
+/// gradient_transform: transformation matrix for converting central
+///                     difference gradients to the lattice basis
+/// to_fractional: transformation matrix for converting to fractional
+///                coordinates
+/// to_cartesian: transformation matrix for converting to cartesian
+///               coordinates
 ///
-/// > distance_matrix ordering:
-/// >     0 -> (-1,-1,-1)   7 -> (-1, 1, 0)  14 -> (0, 1,-1)  21 -> (1, 0, 0)
-/// >     1 -> (-1,-1, 0)   8 -> (-1, 1, 1)  15 -> (0, 1, 0)  22 -> (1, 0, 1)
-/// >     2 -> (-1,-1, 1)   9 -> (0,-1,-1)   16 -> (0, 1, 1)  23 -> (1, 1,-1)
-/// >     3 -> (-1, 0,-1)  10 -> (0,-1, 0)   17 -> (1,-1,-1)  24 -> (1, 1, 0)
-/// >     4 -> (-1, 0, 0)  11 -> (0,-1, 1)   18 -> (1,-1, 0)  25 -> (1, 1, 1)
-/// >     5 -> (-1, 0, 1)  12 -> (0, 0,-1)   19 -> (1,-1, 1)
-/// >     6 -> (-1, 1,-1)  13 -> (0, 0, 1)   20 -> (1, 0,-1)
+/// distance_matrix ordering:
+///     0 -> (-1,-1,-1)   7 -> (-1, 1, 0)  14 -> (0, 1,-1)  21 -> (1, 0, 0)
+///     1 -> (-1,-1, 0)   8 -> (-1, 1, 1)  15 -> (0, 1, 0)  22 -> (1, 0, 1)
+///     2 -> (-1,-1, 1)   9 -> (0,-1,-1)   16 -> (0, 1, 1)  23 -> (1, 1,-1)
+///     3 -> (-1, 0,-1)  10 -> (0,-1, 0)   17 -> (1,-1,-1)  24 -> (1, 1, 0)
+///     4 -> (-1, 0, 0)  11 -> (0,-1, 1)   18 -> (1,-1, 0)  25 -> (1, 1, 1)
+///     5 -> (-1, 0, 1)  12 -> (0, 0,-1)   19 -> (1,-1, 1)
+///     6 -> (-1, 1,-1)  13 -> (0, 0, 1)   20 -> (1, 0,-1)
+/// </pre>
 pub struct Lattice {
     pub a: f64,
     pub b: f64,
@@ -143,9 +149,9 @@ impl Lattice {
     /// >     [cx, cy, cz],
     /// >  ]
     pub fn new(lattice: [[f64; 3]; 3]) -> Self {
-        let a = utils::norm(lattice[0]);
-        let b = utils::norm(lattice[1]);
-        let c = utils::norm(lattice[2]);
+        let a_vector = utils::norm(lattice[0]);
+        let b_vector = utils::norm(lattice[1]);
+        let c_vector = utils::norm(lattice[2]);
         let x = lattice[0];
         let y = lattice[1];
         let z = lattice[2];
@@ -206,9 +212,9 @@ impl Lattice {
                                                    .abs()
         };
         let gradient_transform = utils::transpose_square(to_fractional);
-        Self { a,
-               b,
-               c,
+        Self { a: a_vector,
+               b: b_vector,
+               c: c_vector,
                distance_matrix,
                shift_matrix,
                gradient_transform,
@@ -218,6 +224,7 @@ impl Lattice {
     }
 }
 
+/// Stores the lll-reduced lattice.
 pub struct ReducedLattice {
     pub shift_matrix: Vec<Vec<usize>>,
     pub cartesian_shift_matrix: [[f64; 3]; 27],
@@ -227,6 +234,7 @@ pub struct ReducedLattice {
 }
 
 impl ReducedLattice {
+    /// Creates a lll-reduced lattice from the cell lattice.
     pub fn from_lattice(lattice: &Lattice) -> Self {
         let reduced_lattice =
             Lattice::new(ReducedLattice::lll_lattice(lattice.to_cartesian));
@@ -237,35 +245,27 @@ impl ReducedLattice {
         let mut shift_matrix = Vec::with_capacity(26);
         for c_shift in cartesian_shift_matrix.iter().take(26) {
             shift_matrix.push({
-                            let mut shift_vec = Vec::<usize>::new();
-                            let mut shift =
-                    utils::dot(*c_shift, lattice.to_fractional).iter()
-                                                     .map(|x| {
-                                                         ((x * 1E14).round()
-                                                          / 1E14)
-                                                         as isize
-                                                     })
-                                                     .collect::<Vec<isize>>();
-                            let max_shift =
-                                shift.iter().map(|x| x.abs()).max().unwrap();
-                            for _ in 0..max_shift {
-                                let mut out = [0isize; 3];
-                                for k in 0..3 {
-                                    if shift[k].abs() > 1 {
-                                        out[k] = shift[k] / shift[k].abs();
-                                    } else {
-                                        out[k] = shift[k];
-                                    }
-                                    shift[k] -= out[k];
-                                }
-                                shift_vec.push((out[0] * 9
-                                                + out[1] * 3
-                                                + out[2]
-                                                + 13)
-                                               as usize);
-                            }
-                            shift_vec
-                        });
+                let mut shift_vec = Vec::<usize>::new();
+                let mut shift = utils::dot(*c_shift, lattice.to_fractional)
+                    .iter()
+                    .map(|x| ((x * 1E14).round() / 1E14) as isize)
+                    .collect::<Vec<isize>>();
+                let max_shift = shift.iter().map(|x| x.abs()).max().unwrap();
+                for _ in 0..max_shift {
+                    let mut out = [0isize; 3];
+                    for k in 0..3 {
+                        if shift[k].abs() > 1 {
+                            out[k] = shift[k] / shift[k].abs();
+                        } else {
+                            out[k] = shift[k];
+                        }
+                        shift[k] -= out[k];
+                    }
+                    shift_vec.push((out[0] * 9 + out[1] * 3 + out[2] + 13)
+                                   as usize);
+                }
+                shift_vec
+            });
         }
         Self { shift_matrix,
                cartesian_shift_matrix,
@@ -274,6 +274,7 @@ impl ReducedLattice {
                to_fractional }
     }
 
+    /// Calculates the lll reduction of a lattice.
     fn lll_lattice(lattice: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
         let delta = 0.75;
         let mut a = lattice;
@@ -314,6 +315,7 @@ impl ReducedLattice {
         a
     }
 
+    /// Calculates the Gram-Schmidt co-effecients for the lll-reduction.
     fn gram_schmidt(v: &[[f64; 3]; 3]) -> ([[f64; 3]; 3], [[f64; 3]; 3]) {
         let mut u = [[0f64; 3]; 3];
         let mut mu = [[0f64; 3]; 3];
@@ -347,48 +349,6 @@ mod tests {
         assert_eq!(atoms.lattice.to_cartesian, lattice.to_cartesian);
         assert_eq!(atoms.positions, positions);
         assert_eq!(atoms.text, text);
-    }
-
-    #[test]
-    fn atoms_assign_maxima() {
-        let positions = vec![[0.; 3]];
-        let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
-        let text = String::new();
-        let atoms = Atoms::new(lattice, positions, text);
-        let map = vec![63; 64];
-        let bader_maxima = vec![63];
-        let voxel_map = VoxelMap::new(map, bader_maxima);
-        let data = (0..64).map(|x| x as f64).collect::<Vec<f64>>();
-        let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
-        let density = Density::new(&data,
-                                   [4, 4, 4],
-                                   lattice.to_cartesian,
-                                   None,
-                                   [0., 0., 0.]);
-        let (atom, distance) = atoms.assign_maxima(&voxel_map, &density);
-        assert_eq!(atom, vec![0]);
-        assert_eq!(distance[0], density.voxel_lattice.distance_matrix[0])
-    }
-
-    #[test]
-    fn atoms_assign_maxima_vacuum() {
-        let positions = vec![[0.; 3]];
-        let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
-        let text = String::new();
-        let atoms = Atoms::new(lattice, positions, text);
-        let map = vec![63; 64];
-        let bader_maxima = vec![-1, 63];
-        let voxel_map = VoxelMap::new(map, bader_maxima);
-        let data = (0..64).map(|x| x as f64).collect::<Vec<f64>>();
-        let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
-        let density = Density::new(&data,
-                                   [4, 4, 4],
-                                   lattice.to_cartesian,
-                                   None,
-                                   [0., 0., 0.]);
-        let (atom, distance) = atoms.assign_maxima(&voxel_map, &density);
-        assert_eq!(atom, vec![0]);
-        assert_eq!(distance[0], density.voxel_lattice.distance_matrix[0])
     }
 
     #[test]

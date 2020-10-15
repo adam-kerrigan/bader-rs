@@ -1,25 +1,27 @@
 use crate::atoms::Lattice;
-use crate::utils;
 use crate::voronoi::Voronoi;
-use crate::voxel_map::VoxelMap;
-use std::collections::HashMap;
 use std::ops::Index;
 
-/// Structure for managing the reference density and movement within it
-/// > data: [f64; Size.total()] - charge density in a flattened array
-/// > lattice: Lattice - information on the cell
-/// > index: Vec<usize> - sorted list of indices for accessing the data
-/// > shift: Shift - contains the values for moving arounf the array
-/// > size: Size - the 3d size of the data
-/// > voxel_lattice: Lattice - information on the voxel basis
+/// Structure for managing the reference density and movement within it.
+/// <pre class="rust">
+/// data: charge density in a flattened array.
+/// shift: contains the values for moving arounf the array.
+/// size: the 3d size of the data.
+/// vacuum_tolerance: the cut-off for being considered vacuum.
+/// voronoi: the voronoi vectors and their alphas.
+/// voxel_lattice: information on the voxel basis.
+/// voxel_origin: the origin of each voxel.
+/// weight_tolerance: the cut-off for ignoring the weight contribution.
+/// </pre>
 pub struct Density<'a> {
-    pub data: &'a Vec<f64>,
+    pub data: &'a [f64],
     shift: Shift,
     pub size: Size,
     pub vacuum_tolerance: Option<f64>,
     pub voronoi: Voronoi,
     pub voxel_lattice: Lattice,
     pub voxel_origin: [f64; 3],
+    pub weight_tolerance: f64,
 }
 
 impl<'a> Index<isize> for Density<'a> {
@@ -33,9 +35,10 @@ impl<'a> Index<isize> for Density<'a> {
 
 impl<'a> Density<'a> {
     /// Initialises a density structure. Computes the voxel_lattice from the grid and lattice.
-    pub fn new(data: &'a Vec<f64>,
+    pub fn new(data: &'a [f64],
                grid: [usize; 3],
                lattice: [[f64; 3]; 3],
+               weight_tolerance: f64,
                vacuum_tolerance: Option<f64>,
                voxel_origin: [f64; 3])
                -> Self {
@@ -57,6 +60,7 @@ impl<'a> Density<'a> {
                size,
                vacuum_tolerance,
                voronoi,
+               weight_tolerance,
                voxel_lattice,
                voxel_origin }
     }
@@ -87,7 +91,8 @@ impl<'a> Density<'a> {
         shift[i]
     }
 
-    pub fn voronoi_shift(&self, p: isize, shift: &Vec<usize>) -> isize {
+    /// Shifts a point, p, by a single voronoi vector.
+    pub fn voronoi_shift(&self, p: isize, shift: &[usize]) -> isize {
         let mut pn = p;
         for p_shift in shift.iter() {
             pn += self.shift.get(pn)[*p_shift];
@@ -95,27 +100,14 @@ impl<'a> Density<'a> {
         pn
     }
 
-    pub fn probability(&self,
-                       probabilities: Vec<(isize, f64)>,
-                       voxel_map: &VoxelMap,
-                       weight_map: &mut utils::BTMap)
-                       -> Vec<(isize, f64)> {
-        let mut weights = HashMap::<isize, f64>::with_capacity(14);
-        for (pt, probability) in probabilities.into_iter() {
-            match weight_map.get(pt) {
-                Some(w) => {
-                    for (volume_number, w) in w.into_iter() {
-                        let weight = weights.entry(volume_number).or_insert(0.);
-                        *weight += w * probability;
-                    }
-                }
-                None => {
-                    let weight = weights.entry(voxel_map[pt]).or_insert(0.);
-                    *weight += probability;
-                }
-            };
-        }
-        weights.into_iter().collect()
+    /// Converts a point in the array to cartesian.
+    pub fn to_cartesian(&self, p: isize) -> [f64; 3] {
+        let x = (p / (self.size.y * self.size.z)) as f64;
+        let y = (p / self.size.z).rem_euclid(self.size.y) as f64;
+        let z = p.rem_euclid(self.size.z) as f64;
+        [x + self.voxel_origin[0],
+         y + self.voxel_origin[1],
+         z + self.voxel_origin[2]]
     }
 }
 
@@ -1061,6 +1053,7 @@ mod tests {
         let density = Density::new(&data,
                                    [4, 4, 4],
                                    lattice.to_cartesian,
+                                   1E-8,
                                    Some(1E-3),
                                    [0., 0., 0.0]);
         assert_eq!(density.voxel_lattice.volume, lattice.volume / 64.)
@@ -1074,6 +1067,7 @@ mod tests {
         let _ = Density::new(&data,
                              [1, 4, 4],
                              lattice.to_cartesian,
+                             1E-8,
                              Some(1E-3),
                              [0., 0., 0.0]);
     }
@@ -1085,6 +1079,7 @@ mod tests {
         let density = Density::new(&data,
                                    [3, 4, 5],
                                    lattice.to_cartesian,
+                                   1E-8,
                                    Some(1E-3),
                                    [0., 0., 0.0]);
         let shift = [-26, -25, -24, -21, -20, -19, -16, -15, -14, -6, -5, -4,
@@ -1099,6 +1094,7 @@ mod tests {
         let density = Density::new(&data,
                                    [3, 4, 5],
                                    lattice.to_cartesian,
+                                   1E-8,
                                    Some(1E-3),
                                    [0., 0., 0.0]);
         let shift = [20, -20, 5, -5, 1, -1];
@@ -1112,6 +1108,7 @@ mod tests {
         let density = Density::new(&data,
                                    [3, 4, 5],
                                    lattice.to_cartesian,
+                                   1E-8,
                                    Some(1E-3),
                                    [0., 0., 0.0]);
         assert_eq!(1, density.gradient_shift(26, [0., 0., 1.]))
@@ -1124,6 +1121,7 @@ mod tests {
         let density = Density::new(&data,
                                    [3, 4, 5],
                                    lattice.to_cartesian,
+                                   1E-8,
                                    Some(1E-3),
                                    [0., 0., 0.0]);
         assert_eq!(&data[1], density.index(1));

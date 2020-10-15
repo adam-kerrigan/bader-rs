@@ -1,13 +1,13 @@
-use bader::arguments::{Args, ClapApp, Method, Reference, Weight};
+use bader::arguments::{Args, ClapApp, FileType, Method};
 use bader::density::Density;
-use bader::io::{self, ReadFunction};
-use bader::methods::{self, StepMethod};
+use bader::io::{self, FileFormat};
+use bader::methods;
 use bader::progress::Bar;
+use bader::utils::vacuum_tolerance;
 use bader::voxel_map::VoxelMap;
 use indicatif::ProgressBar;
+use parking_lot::Mutex;
 use rayon::prelude::*;
-use std::collections::BTreeSet;
-use std::sync::atomic::AtomicIsize;
 use std::sync::Arc;
 
 fn main() {
@@ -22,150 +22,94 @@ fn main() {
     println!("Multi-threaded Bader Charge Analysis ({})",
              env!("CARGO_PKG_VERSION"));
     // read the input files into a densities vector and a Density struct
-    let read_function: ReadFunction = args.read;
-    let (voxel_origin, grid, atoms, mut densities) =
-        match read_function(args.file.clone()) {
-            Ok(r) => r,
-            Err(e) => panic!("{}", e),
-        };
-    if let Some(x) = args.spin {
-        match densities.len() {
-            1 => {
-                let (_, g, _, d) = match read_function(x.clone()) {
-                    Ok(r) => r,
-                    Err(e) => panic!("{}", e),
-                };
-                if 1 != d.len() {
-                    panic!("Number of densities in original file is not 1. Ambiguous how to handle spin density when {} contains {} densities.", x, d.len());
-                }
-                assert_eq!(g, grid, "Error: Spin density has different grid size.");
-                densities.push(d[0].clone());
-            }
-            x => panic!("Number of densities in original file is not 1. Ambiguous how to handle new spin when {} already has {} spin densities.", args.file, x -1),
-        }
-    }
-    let reference_d = match args.reference.clone() {
-        Reference::None => vec![],
-        Reference::One(f) => {
-            let (_, g, _, densities) = match read_function(f) {
-                Ok(r) => r,
-                Err(e) => panic!("{}", e),
-            };
-            assert_eq!(g, grid,
-                       "Error: Reference density has different grid size.");
-            densities
-        }
-        Reference::Two(f1, f2) => {
-            let (_, g, _, densities) = match read_function(f1) {
-                Ok(r) => r,
-                Err(e) => panic!("{}", e),
-            };
-            assert_eq!(g, grid,
-                       "Error: Reference density has different grid size.");
-            let (_, g2, _, densities2) = match read_function(f2) {
-                Ok(r) => r,
-                Err(e) => panic!("{}", e),
-            };
-
-            assert_eq!(g2, grid,
-                       "Error: Reference density has different grid size.");
-            let d = densities[0].par_iter()
-                                .zip(&densities2[0])
-                                .map(|(a, b)| a + b)
-                                .collect::<Vec<f64>>();
-            vec![d]
-        }
+    let file_type: Box<dyn FileFormat> = match args.file_type {
+        FileType::Vasp => Box::new(io::vasp::Vasp {}),
+        FileType::Cube => Box::new(io::cube::Cube {}),
     };
-    let reference = match args.reference {
-        Reference::None => Density::new(&densities[0],
-                                        grid,
-                                        atoms.lattice.to_cartesian,
-                                        args.vacuum_tolerance,
-                                        voxel_origin),
-        _ => Density::new(&reference_d[0],
-                          grid,
-                          atoms.lattice.to_cartesian,
-                          args.vacuum_tolerance,
-                          voxel_origin),
+
+    let (densities, rho, atoms, grid, voxel_origin) = file_type.init(&args);
+    let reference = if rho.is_empty() {
+        Density::new(&densities[0],
+                     grid,
+                     atoms.lattice.to_cartesian,
+                     args.weight_tolerance,
+                     args.vacuum_tolerance,
+                     voxel_origin)
+    } else {
+        Density::new(&rho,
+                     grid,
+                     atoms.lattice.to_cartesian,
+                     args.weight_tolerance,
+                     args.vacuum_tolerance,
+                     voxel_origin)
     };
     let mut index: Vec<usize> = (0..reference.size.total).collect();
-    let method: StepMethod = match args.method {
-        Method::OnGrid => methods::ongrid,
-        Method::Weight => methods::weight,
+    // Start a thread-safe progress bar and run the main calculation
+    let method: methods::StepMethod = match args.method {
+        Method::OnGrid => {
+            println!("Sorting density.");
+            index.par_sort_unstable_by(|a, b| {
+                     reference.data[*a].partial_cmp(&reference.data[*b])
+                                       .unwrap()
+                 });
+            methods::ongrid
+        }
+        Method::Weight => {
+            println!("Sorting density.");
+            index.par_sort_unstable_by(|a, b| {
+                     reference.data[*a].partial_cmp(&reference.data[*b])
+                                       .unwrap()
+                 });
+            methods::weight
+        }
         Method::NearGrid => methods::neargrid,
     };
-    match args.weight {
-        Weight::None => (),
-        _ => match args.method {
-            Method::NearGrid => (),
-            _ => {
-                println!("Sorting the density.");
-                index.par_sort_unstable_by(|a, b| {
-                         reference.data[*b].partial_cmp(&reference.data[*a])
-                                           .unwrap()
-                     });
-            }
-        },
-    }
-    // Start a thread-safe progress bar and run the main calculation
-    let pbar = ProgressBar::new(reference.size.total as u64);
-    let pbar = Bar::new(pbar, 100, String::from("Bader Calculation: "));
-    let mut map = Vec::new();
-    map.resize_with(reference.size.total, || AtomicIsize::new(-1));
-    let map = Arc::new(map);
-    let bader_maxima = index.par_iter()
-                            .map(|p| {
-                                pbar.tick();
-                                method(*p, &reference, Arc::clone(&map))
-                            })
-                            .collect::<BTreeSet<isize>>();
-    // each maxima is a unique value in the map with vacuum being -1
-    drop(pbar);
-    let map = match Arc::try_unwrap(map) {
-        Ok(map) => map.into_par_iter()
-                      .map(|bv| bv.into_inner())
-                      .collect::<Vec<isize>>(),
-        Err(_) => panic!(), // I don't know why this would panic
+    let voxel_map = VoxelMap::new(reference.size.total);
+    let voxel_map = Arc::new(voxel_map);
+    let len = match args.method {
+        Method::NearGrid => reference.size.total,
+        _ => index.len() - vacuum_tolerance(&reference, &index),
     };
-    let voxel_map = VoxelMap::new(map, bader_maxima.into_iter().collect());
+    let index = Arc::new(Mutex::new(index));
+    {
+        let pbar = ProgressBar::new(len as u64);
+        let pbar = Bar::new(pbar, 100, String::from("Bader Partitioning: "));
+        (0..len).into_par_iter().for_each(|_| {
+                                    let p = {
+                                        let index = Arc::clone(&index);
+                                        let mut index = index.lock();
+                                        index.pop().unwrap()
+                                    };
+                                    let (maxima, weights) =
+                                        method(p,
+                                               &reference,
+                                               Arc::clone(&voxel_map));
+                                    if !weights.is_empty() {
+                                        let i = {
+                                            let mut weight = voxel_map.lock();
+                                            let i = weight.len();
+                                            (*weight).push(weights);
+                                            i
+                                        };
+                                        voxel_map.weight_store(p as isize, i);
+                                    }
+                                    voxel_map.maxima_store(p as isize, maxima);
+                                    pbar.tick();
+                                });
+    }
     // find the nearest atom to each Bader maxima
-    println!("Assigning maxima to atoms.");
-    let (assigned_atom, assigned_distance) =
-        atoms.assign_maxima(&voxel_map, &reference);
-    // find the nearest point to the atom and sum the atoms charge
-    match args.weight {
-        Weight::None => (),
-        _ => {
-            if let Method::NearGrid = args.method {
-                println!("Sorting the density.");
-                index.par_sort_unstable_by(|a, b| {
-                         reference.data[*b].partial_cmp(&reference.data[*a])
-                                           .unwrap()
-                     })
-            }
-        }
-    }
-    let (bader_charge, bader_volume, surface_distance) = {
-        voxel_map.charge_sum(&densities,
-                             &assigned_atom,
-                             &atoms,
-                             &reference,
-                             index,
-                             args.weight)
+    let mut voxel_map = match Arc::try_unwrap(voxel_map) {
+        Ok(voxel_map) => voxel_map,
+        _ => panic!(),
     };
+    voxel_map.assign_atoms(&atoms, &reference);
+    voxel_map.charge_sum(&densities, &atoms, &reference);
     // build the results
     println!("Writing output files:");
-    let results = io::Results::new(voxel_map,
-                                   bader_charge,
-                                   bader_volume,
-                                   assigned_atom,
-                                   assigned_distance,
-                                   surface_distance,
-                                   reference,
-                                   atoms,
-                                   args.zyx_format);
+    let (atoms_charge_file, bader_charge_file) =
+        { file_type.results(voxel_map, atoms, &reference) };
     // check that the write was successfull
-    match results.write() {
+    match io::write(atoms_charge_file, bader_charge_file) {
         Ok(_) => {}
         Err(e) => println!("{}", e),
     }
