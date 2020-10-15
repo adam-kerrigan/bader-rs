@@ -1,3 +1,5 @@
+use crate::density::Density;
+
 /// compute the dot product between a vector and a matrix
 pub fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [a[1] * b[2] - a[2] * b[1],
@@ -40,6 +42,7 @@ pub fn transpose_square(m: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
       vdot([m[0][2], m[1][2], m[2][2]], [m[0][2], m[1][2], m[2][2]])]]
 }
 
+/// calculates the inverse of a 3x3 lattice
 pub fn invert_lattice(lattice: &[[f64; 3]; 3])
                       -> Result<[[f64; 3]; 3], String> {
     let minor00 = lattice[1][1] * lattice[2][2] - lattice[1][2] * lattice[2][1];
@@ -68,58 +71,25 @@ pub fn invert_lattice(lattice: &[[f64; 3]; 3])
     }
 }
 
-pub struct BTMap {
-    map: Vec<(Vec<(isize, f64)>, usize)>,
-}
-
-impl BTMap {
-    pub fn new(size: usize) -> Self {
-        Self { map: vec![(vec![], 0); size] }
-    }
-
-    pub fn len(&self) -> usize {
-        self.map.len()
-    }
-
-    pub fn get(&mut self, key: isize) -> Option<Vec<(isize, f64)>> {
-        let (value, count) = match self.map.get(key as usize) {
-            Some(x) => x.clone(),
-            None => (vec![], 0),
-        };
-        if count == 0 {
-            return None;
-        } else {
-            self.insert(key, value.clone(), count - 1);
+/// returns the first index that is not vacuum from a sorted index list
+pub fn vacuum_tolerance(density: &Density, index: &[usize]) -> usize {
+    match density.vacuum_tolerance {
+        Some(tol) => {
+            for (i, p) in index.iter().enumerate() {
+                if density[*p as isize] > tol {
+                    return i;
+                }
+            }
+            0
         }
-        Some(value)
-    }
-
-    pub fn get_sly(&self, key: isize) -> Option<Vec<(isize, f64)>> {
-        let (value, count) = match self.map.get(key as usize) {
-            Some(x) => x.clone(),
-            None => (vec![], 0),
-        };
-        if count == 0 {
-            return None;
-        }
-        Some(value)
-    }
-
-    pub fn insert(&mut self,
-                  key: isize,
-                  value: Vec<(isize, f64)>,
-                  count: usize) {
-        if count == 0 {
-            self.map[key as usize] = (vec![], 0);
-        } else {
-            self.map[key as usize] = (value, count);
-        }
+        None => 0,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::atoms::Lattice;
 
     #[test]
     fn utils_dot() {
@@ -143,5 +113,50 @@ mod tests {
         let matrix = [[3., 0., 0.], [2.5, 2., 0.], [0., 0., 5.]];
         let t_squared = [[15.25, 5., 0.], [5., 4., 0.], [0., 0., 25.]];
         assert_eq!(transpose_square(matrix), t_squared)
+    }
+
+    #[test]
+    fn utils_vacuum_tolerance_some_low() {
+        let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
+        let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
+        let density = Density::new(&data,
+                                   [3, 4, 5],
+                                   lattice.to_cartesian,
+                                   1E-8,
+                                   Some(-1E-3),
+                                   [0., 0., 0.0]);
+        let index = (0..60).collect::<Vec<usize>>();
+        let i = vacuum_tolerance(&density, &index);
+        assert_eq!(i, 0)
+    }
+
+    #[test]
+    fn utils_vacuum_tolerance_some() {
+        let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
+        let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
+        let density = Density::new(&data,
+                                   [3, 4, 5],
+                                   lattice.to_cartesian,
+                                   1E-8,
+                                   Some(10.),
+                                   [0., 0., 0.0]);
+        let index = (0..60).collect::<Vec<usize>>();
+        let i = vacuum_tolerance(&density, &index);
+        assert_eq!(i, 11)
+    }
+
+    #[test]
+    fn utils_vacuum_tolerance_none() {
+        let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
+        let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
+        let density = Density::new(&data,
+                                   [3, 4, 5],
+                                   lattice.to_cartesian,
+                                   1E-8,
+                                   None,
+                                   [0., 0., 0.0]);
+        let index = (0..60).collect::<Vec<usize>>();
+        let i = vacuum_tolerance(&density, &index);
+        assert_eq!(i, 0)
     }
 }

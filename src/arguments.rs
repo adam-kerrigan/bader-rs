@@ -1,4 +1,3 @@
-use crate::io::{self, ReadFunction};
 use clap::{crate_authors, App, Arg, ArgMatches};
 
 /// Indicates how many reference files are passed
@@ -9,7 +8,7 @@ pub enum Reference {
     None,
 }
 
-// Indicates which method to use
+// Indicates which method to use.
 #[derive(Clone)]
 pub enum Method {
     OnGrid,
@@ -17,15 +16,15 @@ pub enum Method {
     Weight,
 }
 
-#[derive(Clone)]
-pub enum Weight {
-    Atoms,
-    Volumes,
-    None,
-}
-/// Create a container for dealing with clap and being able to test arg parsing
+/// Create a container for dealing with clap and being able to test arg parsing.
 pub enum ClapApp {
     App,
+}
+
+/// Indicates the file type of the density file.
+pub enum FileType {
+    Vasp,
+    Cube,
 }
 
 impl ClapApp {
@@ -33,7 +32,7 @@ impl ClapApp {
     pub fn get(&self) -> App {
         App::new("Multi-threaded Bader Charge Analysis")
             .author(crate_authors!())
-            .version("0.1.0")
+            .version("0.1.1")
             .arg(Arg::new("file")
                 .required(true)
                 .index(1)
@@ -46,29 +45,13 @@ impl ClapApp {
                 .possible_value("neargrid")
                 .possible_value("weight")
                 .case_insensitive(false)
-                .about("method by which to partition the charge density")
+                .about("Method by which to partition the charge density")
                 .long_about(
 "Use the \"near-grid\" or \"on-grid\" methods based on the algorithms presented
 in W. Tang et al. A grid-based Bader analysis algorithm without lattice bias,
 J. Phys.: Condens. Matter 21, 084204 (2009). Or the \"weight\" method (Default)
 presented in Min Yu and Dallas R. Trinkle. Accurate and efficient algorithm for
 Bader charge integration, J. Chem. Phys. 134, 064111 (2011)."))
-            .arg(Arg::new("weight")
-                .short('w')
-                .long("weight")
-                .takes_value(true)
-                .possible_value("atoms")
-                .possible_value("volumes")
-                .possible_value("none")
-                .default_value("volumes")
-                .case_insensitive(false)
-                .about("How to calculate the weight of the boundary voxels")
-                .long_about(
-"Determines the condition for a voxel to be considered at boundary. When multiple
-Bader volumes are assigned to the same atom it can be faster to only consider
-voxels that neighbour a different atom to be at a boundary. Selecting none
-disregards the weighting of voxels and their full charge is assigned to their
-Bader volume."))
             .arg(Arg::new("file type")
                 .short('t')
                 .long("type")
@@ -116,6 +99,16 @@ contain a single density (ie. the original file has been split)."))
                 .long_about(
 "Values of density below the supplied value are considered vacuum and are not
 included in the calculation. A value of \"auto\" can be passed to use 1E-3 C*m^-3."))
+            .arg(Arg::new("weight tolerance")
+                .short('w')
+                .long("weight")
+                .takes_value(true)
+                .about("Cut-off at which contributions to the weighting will be ignored.")
+                .long_about(
+"Values of density below the supplied value are ignored from the weighting and
+included in the calculation. A default vaule of 1E-8 is used. By raising the
+tolerance the calculation speed can be increased but every ignored weight is
+unaccounted for in the final partitions. Be sure to test this!"))
             .arg(Arg::new("threads")
                 .short('J')
                 .long("threads")
@@ -131,71 +124,76 @@ to allow the program to best decide how to use the available hardware."))
 /// Holds the arguments passed to the program from the command-line
 pub struct Args {
     pub file: String,
-    pub read: ReadFunction,
+    pub file_type: FileType,
     pub method: Method,
-    pub weight: Weight,
+    pub weight_tolerance: f64,
     pub reference: Reference,
     pub spin: Option<String>,
     pub threads: usize,
     pub vacuum_tolerance: Option<f64>,
-    pub zyx_format: bool,
 }
 
 impl Args {
     /// Initialises the structure from the command-line arguments.
     pub fn new(arguments: ArgMatches) -> Self {
+        // Collect file
         let file = match arguments.value_of("file") {
             Some(f) => String::from(f),
             None => String::new(),
         };
+        // Collect file type
         let file_type = match arguments.value_of("file type") {
             Some(f) => Some(String::from(f)),
             None => None,
         };
-        let mut zyx_format = false;
-        let read: ReadFunction = match file_type {
+        let file_type = match file_type {
             Some(ftype) => {
                 if ftype.eq("cube") {
-                    io::cube::read
+                    FileType::Cube
                 } else {
-                    zyx_format = true;
-                    io::vasp::read
+                    FileType::Vasp
                 }
             }
             None => {
                 if file.to_lowercase().contains("cube") {
-                    io::cube::read
+                    FileType::Cube
                 } else if file.to_lowercase().contains("car") {
-                    zyx_format = true;
-                    io::vasp::read
+                    FileType::Vasp
                 } else {
                     println!("Error: File-type cannot be infered, attempting to read as VASP");
-                    zyx_format = true;
-                    io::vasp::read
+                    FileType::Vasp
                 }
             }
         };
-        let weight = match arguments.value_of("weight") {
-            Some("atoms") => Weight::Atoms,
-            Some("volumes") => Weight::Volumes,
-            Some("none") => Weight::None,
-            _ => Weight::Volumes,
+        // Collect weight tolerance
+        let weight_tolerance = match arguments.value_of("weight tolerance") {
+            Some(x) => match x.parse::<f64>() {
+                Ok(x) => x,
+                Err(e) => {
+                    panic!("Couldn't parse weight tolerance into float:\n{}", e)
+                }
+            },
+            _ => 1E-8,
         };
+        // Collect method
         let method = match arguments.value_of("method") {
             Some("neargrid") => Method::NearGrid,
             Some("weight") => Method::Weight,
             Some("ongrid") => Method::OnGrid,
             _ => match arguments.value_of("weight") {
-                Some("none") => Method::NearGrid,
+                Some("false") => Method::NearGrid,
                 _ => Method::Weight,
             },
         };
+        // Collect threads
         // safe to unwrap as threads has a default value of 0
-        let threads =
+        let threads = {
             match arguments.value_of("threads").unwrap().parse::<usize>() {
                 Ok(x) => x,
                 Err(e) => panic!("Couldn't parse threads into integer:\n{}", e),
-            };
+            }
+        };
+        // Collect vacuum tolerance
         let vacuum_tolerance = match arguments.value_of("vacuum tolerance") {
             Some(s) => {
                 if s.eq("auto") {
@@ -203,19 +201,22 @@ impl Args {
                 } else {
                     match s.parse::<f64>() {
                         Ok(x) => Some(x),
-                        Err(e) => {
-                            panic!("Couldn't parse vacuum tolerance into float:\n{}", e)
-                        }
+                        Err(e) => panic!(
+                            "Couldn't parse vacuum tolerance into float:\n{}",
+                            e
+                        ),
                     }
                 }
             }
             None => None,
         };
+        // Collect reference files
         let references: Vec<_> = if arguments.is_present("all electron") {
-            if read as usize != io::vasp::read as usize {
+            if let FileType::Vasp = file_type {
+                vec!["AECCAR0", "AECCAR2"]
+            } else {
                 panic!("Error: Cannot use AECCAR flag for non VASP file-types.")
             }
-            vec!["AECCAR0", "AECCAR2"]
         } else {
             match arguments.values_of("reference") {
                 Some(x) => x.collect(),
@@ -233,14 +234,13 @@ impl Args {
             None => None,
         };
         Self { file,
-               read,
+               file_type,
                method,
-               weight,
+               weight_tolerance,
                reference,
                threads,
                spin,
-               vacuum_tolerance,
-               zyx_format }
+               vacuum_tolerance }
     }
 }
 
@@ -295,14 +295,13 @@ mod tests {
     }
 
     #[test]
-    fn argument_method_default_no_weight() {
+    fn argument_method_weight() {
         let app = ClapApp::App.get();
-        let matches =
-            app.get_matches_from(vec!["bader", "CHGCAR", "-w", "none"]);
+        let matches = app.get_matches_from(vec!["bader", "CHGCAR", "-m", "weight"]);
         let args = Args::new(matches);
         match args.method {
-            Method::NearGrid => (),
-            _ => panic!("No argument passed, didnt get NearGrid"),
+            Method::Weight => (),
+            _ => panic!("No argument passed, didnt get Weight"),
         }
     }
 
@@ -331,8 +330,8 @@ mod tests {
         let app = ClapApp::App.get();
         let matches = app.get_matches_from(vec!["bader", "CHGCAR"]);
         let args = Args::new(matches);
-        let read: ReadFunction = io::vasp::read;
-        assert_eq!(args.read as usize, read as usize);
+        let flag = matches!(args.file_type, FileType::Vasp);
+        assert!(flag);
     }
 
     #[test]
@@ -340,8 +339,8 @@ mod tests {
         let app = ClapApp::App.get();
         let matches = app.get_matches_from(vec!["bader", "CHG"]);
         let args = Args::new(matches);
-        let read: ReadFunction = io::vasp::read;
-        assert_eq!(args.read as usize, read as usize);
+        let flag = matches!(args.file_type, FileType::Vasp);
+        assert!(flag);
     }
 
     #[test]
@@ -350,8 +349,8 @@ mod tests {
         let matches =
             app.get_matches_from(vec!["bader", "CHGCAR", "-t", "vasp"]);
         let args = Args::new(matches);
-        let read: ReadFunction = io::vasp::read;
-        assert_eq!(args.read as usize, read as usize);
+        let flag = matches!(args.file_type, FileType::Vasp);
+        assert!(flag);
     }
 
     #[test]
@@ -359,8 +358,8 @@ mod tests {
         let app = ClapApp::App.get();
         let matches = app.get_matches_from(vec!["bader", "charge.cube"]);
         let args = Args::new(matches);
-        let read: ReadFunction = io::cube::read;
-        assert_eq!(args.read as usize, read as usize);
+        let flag = matches!(args.file_type, FileType::Cube);
+        assert!(flag);
     }
 
     #[test]
@@ -369,10 +368,10 @@ mod tests {
         let matches = app.get_matches_from(vec!["bader",
                                                 "charge.cube",
                                                 "--type",
-                                                "cube"]);
+                                                "cube",]);
         let args = Args::new(matches);
-        let read: ReadFunction = io::cube::read;
-        assert_eq!(args.read as usize, read as usize);
+        let flag = matches!(args.file_type, FileType::Cube);
+        assert!(flag);
     }
 
     #[test]
@@ -389,7 +388,7 @@ mod tests {
         let matches = app.get_matches_from(vec!["bader",
                                                 "density.cube",
                                                 "-s",
-                                                "spin.cube"]);
+                                                "spin.cube",]);
         let args = Args::new(matches);
         assert_eq!(args.spin, Some(String::from("spin.cube")))
     }
@@ -469,6 +468,24 @@ mod tests {
     fn argument_vacuum_tolerance_not_float() {
         let app = ClapApp::App.get();
         let v = vec!["bader", "CHGCAR", "-v", "0.00.1"];
+        let matches = app.get_matches_from(v);
+        let _ = Args::new(matches);
+    }
+
+    #[test]
+    fn argument_weight_tolerance_float() {
+        let app = ClapApp::App.get();
+        let v = vec!["bader", "CHGCAR", "--weight", "1E-4"];
+        let matches = app.get_matches_from(v);
+        let args = Args::new(matches);
+        assert_eq!(args.weight_tolerance, 1E-4)
+    }
+
+    #[test]
+    #[should_panic]
+    fn argument_weight_tolerance_not_float() {
+        let app = ClapApp::App.get();
+        let v = vec!["bader", "CHGCAR", "-w", "0.00.1"];
         let matches = app.get_matches_from(v);
         let _ = Args::new(matches);
     }
