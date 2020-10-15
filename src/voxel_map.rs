@@ -131,8 +131,18 @@ impl VoxelMap {
         Voxel::Weight(vec)
     }
 
-    /// Atomic loading of voxel, p, from voxel_map
+    /// Atomic loading of voxel, p, from voxel_map blocks if maxima == -1
     pub fn maxima_get(&self, p: isize) -> isize {
+        loop {
+            match self.voxel_map[p as usize].load(Ordering::Relaxed) {
+                -1 => (),
+                x => break x,
+            }
+        }
+    }
+
+    /// Atomic loading of voxel, p, from voxel_map
+    pub fn maxima_non_block_get(&self, p: isize) -> isize {
         self.voxel_map[p as usize].load(Ordering::Relaxed)
     }
 
@@ -183,7 +193,7 @@ impl VoxelMap {
 
     /// Returns the index of p's maxima in the bader_maxima vector.
     fn index_get(&self, p: isize) -> Option<usize> {
-        let maxima = self.maxima_get(p);
+        let maxima = self.maxima_non_block_get(p);
         if maxima.is_negative() {
             return None;
         }
@@ -346,8 +356,8 @@ mod tests {
         for p in 0..10isize {
             voxel_map.maxima_store(p, p - 1);
         }
-        assert_eq!(voxel_map.maxima_get(0), -1);
-        assert_eq!(voxel_map.maxima_get(9), 8);
+        assert_eq!(voxel_map.maxima_non_block_get(0), -1);
+        assert_eq!(voxel_map.maxima_non_block_get(9), 8);
     }
 
     #[test]

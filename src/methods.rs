@@ -101,8 +101,8 @@ pub fn ongrid_step(p: isize, density: &Density) -> isize {
 /// let voxel_map = Arc::new(voxel_map);
 /// // The highest gradient between point, p = 33, and it's neighbours, with
 /// // periodic boundary conditions, is with point p = 61 however as this hasn't
-/// // been stored this will return -1.
-/// assert_eq!(ongrid(33, &density, Arc::clone(&voxel_map)).0, -1);
+/// // been stored so this would block.
+/// // assert_eq!(ongrid(33, &density, Arc::clone(&voxel_map)).0, -1);
 /// // after stroing the maxima for the point, p = 61, ongrid will now return
 /// // this value.
 /// voxel_map.maxima_store(61, 63);
