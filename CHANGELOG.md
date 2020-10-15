@@ -1,4 +1,5 @@
 ## v0.3.0
+## v0.2.1
 ### Bug fixes
 - Added a lock to maxima_get() in VoxelMap and made a maxima_non_blocking_get(), unsure if this would ever be a problem due to the lock on index.pop() but better safe than sorry.
 ### Documentation Changes

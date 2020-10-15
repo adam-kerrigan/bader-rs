@@ -1,5 +1,5 @@
-# bader-rs (0.2.0)
-![build](https://github.com/kerrigoon/bader-rs/workflows/build/badge.svg?branch=master) 
+# bader-rs (0.2.1)
+![build](https://github.com/kerrigoon/bader-rs/workflows/build/badge.svg?branch=master)
 [![Latest Version](https://img.shields.io/crates/v/bader.svg)](https://crates.io/crates/bader)
 [![Documentation](https://docs.rs/bader/badge.svg)](https://docs.rs/bader/)
 [![MSRV: rustc 1.40+](https://img.shields.io/badge/MSRV-rustc_1.40+-lightgray.svg)](https://blog.rust-lang.org/2019/12/19/Rust-1.40.0.html)
@@ -47,7 +47,7 @@ MIT
 
 [//]: # (These are reference links used in the body of this note and get stripped out when the markdown processor does its job. There is no need to format nicely because it shouldn't be seen. Thanks SO - http://stackoverflow.com/questions/4823468/store-comments-in-markdown-syntax)
 
-[release]: <https://github.com/kerrigoon/bader-rs/releases/tag/v0.2.0>
+[release]: <https://github.com/kerrigoon/bader-rs/releases/tag/v0.2.1>
 [VASP]: <https://www.vasp.at/>
 [cube]: <https://gaussian.com/>
 [LAECHG]: <https://www.vasp.at/wiki/index.php/LAECHG>
