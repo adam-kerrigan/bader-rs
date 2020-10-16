@@ -1,6 +1,10 @@
 ## v0.3.0
+### Bug Fixes
+- Fixed SegFault at high thread count by pre-allocating weight_map ([issue: #19](https://github.com/kerrigoon/bader-rs/issues/19))
+### Feature Changes
+- Added a cap of 12 to the amount of threads distrubuted over by default
 ## v0.2.1
-### Bug fixes
+### Bug Fixes
 - Added a lock to maxima_get() in VoxelMap and made a maxima_non_blocking_get(), unsure if this would ever be a problem due to the lock on index.pop() but better safe than sorry.
 ### Documentation Changes
 - More of the crate documented
