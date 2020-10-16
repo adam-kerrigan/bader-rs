@@ -496,7 +496,8 @@ mod tests {
         let v = vec!["bader", "CHGCAR"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
-        assert_eq!(args.threads, 0)
+        let threads = num_cpus::get().min(12);
+        assert_eq!(args.threads, threads)
     }
 
     #[test]
