@@ -29,7 +29,7 @@
 //! ```
 //!
 //! ## Using the library
-//! add the following to your Cargo.toml:
+//! Add the following to your Cargo.toml:
 //! `bader = "0.2.2"`
 //!
 //! ### Minimum Supported Rust Version (MSRV)
