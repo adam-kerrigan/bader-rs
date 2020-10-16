@@ -85,7 +85,8 @@ impl VoxelMap {
     /// Initialises a VoxelMap of dimensions, size.
     pub fn new(size: usize) -> Self {
         // For mapping the the voxels
-        let weight_map = UnsafeCell::new(Vec::<Vec<(usize, f64)>>::new());
+        let weight_map =
+            UnsafeCell::new(Vec::<Vec<(usize, f64)>>::with_capacity(size));
         let mut weight_index = Vec::with_capacity(size);
         weight_index.resize_with(size, || AtomicIsize::new(-1));
         let mut voxel_map = Vec::with_capacity(size);
