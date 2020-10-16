@@ -1,4 +1,5 @@
 ## v0.3.0
+## v0.2.2
 ### Bug Fixes
 - Fixed SegFault at high thread count by pre-allocating weight_map ([issue: #19](https://github.com/kerrigoon/bader-rs/issues/19))
 ### Feature Changes
