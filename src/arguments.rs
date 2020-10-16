@@ -106,7 +106,8 @@ unaccounted for in the final partitions. Be sure to test this!"))
                 .about("Number of threads to distribute the calculation over.")
                 .long_about(
 "The number of threads to be used by the program. A default value of 0 is used
-to allow the program to best decide how to use the available hardware."))
+to allow the program to best decide how to use the available hardware. It does
+this by using the minimum value out of the number cores available and 12."))
     }
 }
 
@@ -186,6 +187,7 @@ impl Args {
         // safe to unwrap as threads has a default value of 0
         let threads = {
             match arguments.value_of("threads").unwrap().parse::<usize>() {
+                Ok(0) => num_cpus::get().min(12),
                 Ok(x) => x,
                 Err(e) => panic!("Couldn't parse threads into integer:\n{}", e),
             }
@@ -494,7 +496,8 @@ mod tests {
         let v = vec!["bader", "CHGCAR"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
-        assert_eq!(args.threads, 0)
+        let threads = num_cpus::get().min(12);
+        assert_eq!(args.threads, threads)
     }
 
     #[test]
