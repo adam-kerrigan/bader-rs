@@ -1,4 +1,6 @@
 ## v0.3.0
+### Bug Fixes
+- Corrected the total of the Assigning to Atoms progress bar
 ## v0.2.2
 ### Bug Fixes
 - Fixed SegFault at high thread count by pre-allocating weight_map ([issue: #19](https://github.com/kerrigoon/bader-rs/issues/19))
