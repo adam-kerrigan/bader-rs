@@ -58,7 +58,7 @@ impl Atoms {
         } else {
             &maximas[..]
         };
-        let pbar = ProgressBar::new(density.size.total as u64);
+        let pbar = ProgressBar::new(maximas.len() as u64);
         let pbar = Bar::new(pbar, 100, String::from("Assigning to atoms: "));
         for maxima in maximas.iter() {
             let maxima_cartesian = density.to_cartesian(*maxima);
