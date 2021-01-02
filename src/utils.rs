@@ -77,12 +77,12 @@ pub fn vacuum_tolerance(density: &Density, index: &[usize]) -> usize {
         Some(tol) => {
             for (i, p) in index.iter().enumerate() {
                 if density[*p as isize] < tol {
-                    return i;
+                    return i - 1;
                 }
             }
-            0
+            index.len()
         }
-        None => 0,
+        None => index.len(),
     }
 }
 
@@ -125,9 +125,9 @@ mod tests {
                                    1E-8,
                                    Some(-1E-3),
                                    [0., 0., 0.0]);
-        let index = (0..60).collect::<Vec<usize>>();
+        let index = (0..60).rev().collect::<Vec<usize>>();
         let i = vacuum_tolerance(&density, &index);
-        assert_eq!(i, 0)
+        assert_eq!(i, 60)
     }
 
     #[test]
@@ -140,9 +140,9 @@ mod tests {
                                    1E-8,
                                    Some(10.),
                                    [0., 0., 0.0]);
-        let index = (0..60).collect::<Vec<usize>>();
+        let index = (0..60).rev().collect::<Vec<usize>>();
         let i = vacuum_tolerance(&density, &index);
-        assert_eq!(i, 11)
+        assert_eq!(i, 49)
     }
 
     #[test]
@@ -155,8 +155,8 @@ mod tests {
                                    1E-8,
                                    None,
                                    [0., 0., 0.0]);
-        let index = (0..60).collect::<Vec<usize>>();
+        let index = (0..60).rev().collect::<Vec<usize>>();
         let i = vacuum_tolerance(&density, &index);
-        assert_eq!(i, 0)
+        assert_eq!(i, 60)
     }
 }
