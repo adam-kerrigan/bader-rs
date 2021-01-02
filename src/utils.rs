@@ -76,7 +76,7 @@ pub fn vacuum_tolerance(density: &Density, index: &[usize]) -> usize {
     match density.vacuum_tolerance {
         Some(tol) => {
             for (i, p) in index.iter().enumerate() {
-                if density[*p as isize] > tol {
+                if density[*p as isize] < tol {
                     return i;
                 }
             }

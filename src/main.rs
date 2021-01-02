@@ -68,7 +68,7 @@ fn main() {
     let voxel_map = Arc::new(voxel_map);
     let len = match args.method {
         Method::NearGrid => reference.size.total,
-        _ => index.len() - vacuum_tolerance(&reference, &index),
+        _ => vacuum_tolerance(&reference, &index),
     };
     {
         let counter = RelaxedCounter::new(0);
