@@ -1,3 +1,4 @@
+use atomic_counter::{AtomicCounter, RelaxedCounter};
 use bader::arguments::{Args, ClapApp};
 use bader::density::Density;
 use bader::io::{self, FileFormat, FileType};
@@ -6,7 +7,6 @@ use bader::progress::Bar;
 use bader::utils::vacuum_tolerance;
 use bader::voxel_map::VoxelMap;
 use indicatif::ProgressBar;
-use parking_lot::Mutex;
 use rayon::prelude::*;
 use std::sync::Arc;
 
@@ -49,7 +49,7 @@ fn main() {
         Method::OnGrid => {
             println!("Sorting density.");
             index.par_sort_unstable_by(|a, b| {
-                     reference.data[*a].partial_cmp(&reference.data[*b])
+                     reference.data[*b].partial_cmp(&reference.data[*a])
                                        .unwrap()
                  });
             methods::ongrid
@@ -57,7 +57,7 @@ fn main() {
         Method::Weight => {
             println!("Sorting density.");
             index.par_sort_unstable_by(|a, b| {
-                     reference.data[*a].partial_cmp(&reference.data[*b])
+                     reference.data[*b].partial_cmp(&reference.data[*a])
                                        .unwrap()
                  });
             methods::weight
@@ -70,15 +70,14 @@ fn main() {
         Method::NearGrid => reference.size.total,
         _ => index.len() - vacuum_tolerance(&reference, &index),
     };
-    let index = Arc::new(Mutex::new(index));
     {
+        let counter = RelaxedCounter::new(0);
         let pbar = ProgressBar::new(len as u64);
         let pbar = Bar::new(pbar, 100, String::from("Bader Partitioning: "));
         (0..len).into_par_iter().for_each(|_| {
                                     let p = {
-                                        let index = Arc::clone(&index);
-                                        let mut index = index.lock();
-                                        index.pop().unwrap()
+                                        let i = counter.inc();
+                                        index[i]
                                     };
                                     let (maxima, weights) =
                                         method(p,
