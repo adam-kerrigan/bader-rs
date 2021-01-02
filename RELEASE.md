@@ -4,3 +4,5 @@
 - Set up Zenodo
 ### Bug Fixes
 - Corrected the total of the Assigning to Atoms progress bar
+
+Linux musl does not require GLibC
