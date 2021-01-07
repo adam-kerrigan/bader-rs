@@ -77,7 +77,7 @@ pub fn vacuum_tolerance(density: &Density, index: &[usize]) -> usize {
         Some(tol) => {
             for (i, p) in index.iter().enumerate() {
                 if density[*p as isize] < tol {
-                    return i - 1;
+                    return i.saturating_sub(1);
                 }
             }
             index.len()
@@ -113,6 +113,21 @@ mod tests {
         let matrix = [[3., 0., 0.], [2.5, 2., 0.], [0., 0., 5.]];
         let t_squared = [[15.25, 5., 0.], [5., 4., 0.], [0., 0., 25.]];
         assert_eq!(transpose_square(matrix), t_squared)
+    }
+
+    #[test]
+    fn utils_vacuum_tolerance_some_high() {
+        let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
+        let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
+        let density = Density::new(&data,
+                                   [3, 4, 5],
+                                   lattice.to_cartesian,
+                                   1E-8,
+                                   Some(1E-3),
+                                   [0., 0., 0.0]);
+        let index = (0..60).rev().collect::<Vec<usize>>();
+        let i = vacuum_tolerance(&density, &index);
+        assert_eq!(i, 0)
     }
 
     #[test]
