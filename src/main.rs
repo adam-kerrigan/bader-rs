@@ -69,7 +69,6 @@ fn main() {
         Method::NearGrid => reference.size.total,
         _ => vacuum_tolerance(&reference, &index),
     };
-    println!("{}",len);
     {
         let counter = RelaxedCounter::new(0);
         let pbar =
