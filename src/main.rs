@@ -6,7 +6,6 @@ use bader::methods::{self, Method};
 use bader::progress::Bar;
 use bader::utils::vacuum_tolerance;
 use bader::voxel_map::VoxelMap;
-use indicatif::ProgressBar;
 use rayon::prelude::*;
 use std::sync::Arc;
 
@@ -70,10 +69,12 @@ fn main() {
         Method::NearGrid => reference.size.total,
         _ => vacuum_tolerance(&reference, &index),
     };
+    println!("{}",len);
     {
         let counter = RelaxedCounter::new(0);
-        let pbar = ProgressBar::new(len as u64);
-        let pbar = Bar::new(pbar, 100, String::from("Bader Partitioning: "));
+        let pbar =
+            Bar::new(len as u64, 100, String::from("Bader Partitioning: "));
+        pbar.display();
         (0..len).into_par_iter().for_each(|_| {
                                     let p = {
                                         let i = counter.inc();
@@ -101,8 +102,17 @@ fn main() {
         Ok(voxel_map) => voxel_map,
         _ => panic!(),
     };
-    voxel_map.assign_atoms(&atoms, &reference);
-    voxel_map.charge_sum(&densities, &atoms, &reference);
+    voxel_map.collect_maxima();
+    let pbar = Bar::new(voxel_map.bader_maxima.len() as u64,
+                        100,
+                        String::from("Assigning to Atoms: "));
+    pbar.display();
+    voxel_map.assign_atoms(&atoms, &reference, pbar);
+    let pbar = Bar::new(reference.size.total as u64,
+                        100,
+                        String::from("Summing Charge: "));
+    pbar.display();
+    voxel_map.charge_sum(&atoms, &densities, &reference, pbar);
     // build the results
     println!("Writing output files:");
     let (atoms_charge_file, bader_charge_file) =

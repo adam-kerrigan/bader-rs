@@ -1,7 +1,6 @@
 use crate::density::Density;
 use crate::progress::Bar;
 use crate::utils;
-use indicatif::ProgressBar;
 
 /// struct for containing the information about the atoms.
 pub struct Atoms {
@@ -47,7 +46,8 @@ impl Atoms {
     /// This is called from [VoxelMap.assign_atoms()](crate::voxel_map::VoxelMap::assign_atoms)
     pub fn assign_maxima(&self,
                          maximas: &[isize],
-                         density: &Density)
+                         density: &Density,
+                         pbar: Bar)
                          -> (Vec<usize>, Vec<f64>) {
         let max_distance =
             (self.lattice.a + self.lattice.b + self.lattice.c).powi(2);
@@ -58,8 +58,6 @@ impl Atoms {
         } else {
             &maximas[..]
         };
-        let pbar = ProgressBar::new(maximas.len() as u64);
-        let pbar = Bar::new(pbar, 100, String::from("Assigning to atoms: "));
         for maxima in maximas.iter() {
             let maxima_cartesian = density.to_cartesian(*maxima);
             let maxima_cartesian = {
