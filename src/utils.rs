@@ -123,7 +123,7 @@ mod tests {
                                    [3, 4, 5],
                                    lattice.to_cartesian,
                                    1E-8,
-                                   Some(1E-3),
+                                   Some(1E3),
                                    [0., 0., 0.0]);
         let index = (0..60).rev().collect::<Vec<usize>>();
         let i = vacuum_tolerance(&density, &index);
