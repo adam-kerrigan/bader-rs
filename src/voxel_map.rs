@@ -2,7 +2,6 @@ use crate::atoms::Atoms;
 use crate::density::Density;
 use crate::progress::Bar;
 use crate::utils;
-use indicatif::ProgressBar;
 use std::cell::UnsafeCell;
 use std::collections::BTreeSet;
 use std::ops::{Deref, DerefMut};
@@ -229,10 +228,11 @@ impl VoxelMap {
         false
     }
 
-    /// Assigns each Bader maxima to an atom.
-    pub fn assign_atoms(&mut self, atoms: &Atoms, density: &Density) {
-        let mut index = vec![0usize; density.size.total];
+    // Creates the bader_maxima vector and its associated index
+    pub fn collect_maxima(&mut self) {
         let bader_maxima = self.maxima_list();
+        let size = bader_maxima.iter().last().unwrap_or(&1);
+        let mut index = vec![0usize; *size as usize + 1];
         if bader_maxima[0] < 0 {
             for (i, maxima) in bader_maxima[1..].iter().enumerate() {
                 index[*maxima as usize] = i;
@@ -242,19 +242,27 @@ impl VoxelMap {
                 index[*maxima as usize] = i;
             }
         }
-        let (assigned_atom, minimum_distance) =
-            atoms.assign_maxima(&bader_maxima, density);
         self.bader_maxima = bader_maxima;
         self.maxima_index = index;
+    }
+
+    /// Assigns each Bader maxima to an atom.
+    pub fn assign_atoms(&mut self,
+                        atoms: &Atoms,
+                        density: &Density,
+                        pbar: Bar) {
+        let (assigned_atom, minimum_distance) =
+            atoms.assign_maxima(&self.bader_maxima, density, pbar);
         self.assigned_atom = assigned_atom;
         self.minimum_distance = minimum_distance;
     }
 
     /// Sums the densities for each bader volume.
     pub fn charge_sum(&mut self,
-                      densities: &[Vec<f64>],
                       atoms: &Atoms,
-                      density: &Density) {
+                      densities: &[Vec<f64>],
+                      density: &Density,
+                      pbar: Bar) {
         let mut bader_volume = vec![0.; self.bader_maxima.len()];
         let mut bader_charge =
             { vec![vec![0f64; self.bader_maxima.len()]; densities.len()] };
@@ -265,8 +273,6 @@ impl VoxelMap {
                 atoms.positions.len()
             ]
         };
-        let pbar = ProgressBar::new(density.size.total as u64);
-        let pbar = Bar::new(pbar, 100, String::from("Summing Charge: "));
         'charge_sum: for p in (0..density.size.total).into_iter() {
             match self.voxel_get(p as isize) {
                 Voxel::Weight(weights) => {

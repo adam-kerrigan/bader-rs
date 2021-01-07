@@ -1,5 +1,5 @@
 use atomic_counter::{AtomicCounter, RelaxedCounter};
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -14,10 +14,9 @@ pub struct Bar {
 
 impl Bar {
     /// Creates the Bar struct with a size, refresh_rate and prefix for the bar
-    pub fn new(progress_bar: ProgressBar,
-               refresh_rate: u64,
-               prefix: String)
-               -> Self {
+    pub fn new(len: u64, refresh_rate: u64, prefix: String) -> Self {
+        let progress_bar = ProgressBar::hidden();
+        progress_bar.set_length(len);
         progress_bar.set_prefix(&prefix);
         progress_bar.set_style(
             ProgressStyle::default_bar()
@@ -37,6 +36,10 @@ impl Bar {
             }
         });
         Self { counter, pbar: pb }
+    }
+
+    pub fn display(&self) {
+        self.pbar.set_draw_target(ProgressDrawTarget::stderr())
     }
 
     /// tick the progress bar
@@ -62,15 +65,13 @@ mod tests {
 
     #[test]
     fn progress_new() {
-        let bar = ProgressBar::hidden();
-        let bar = Bar::new(bar, 1, String::new());
+        let bar = Bar::new(10, 1, String::new());
         assert_eq!(bar.counter.get(), 0);
     }
 
     #[test]
     fn progress_tick() {
-        let bar = ProgressBar::hidden();
-        let bar = Bar::new(bar, 1, String::new());
+        let bar = Bar::new(10, 1, String::new());
         bar.tick();
         assert_eq!(bar.counter.get(), 1)
     }
