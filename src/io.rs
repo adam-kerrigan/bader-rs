@@ -3,12 +3,12 @@ use crate::atoms::Atoms;
 
 /// File I/O for the gaussian cube format.
 pub mod cube;
+/// Write analysis files.
+pub mod output;
 /// Custom BufReader.
 pub mod reader;
 /// File I/O for the VASP file format.
 pub mod vasp;
-/// Write analysis files.
-pub mod output;
 
 /// Indicates the available file types of the density file.
 pub enum FileType {
