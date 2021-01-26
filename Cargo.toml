@@ -1,6 +1,6 @@
 [package]
 name = "bader"
-version = "0.2.3"
+version = "0.3.0"
 authors = ["Adam Kerrigan <ak1014@york.ac.uk>"]
 edition = "2018"
 description = "Grid based Bader charge partitioning"
