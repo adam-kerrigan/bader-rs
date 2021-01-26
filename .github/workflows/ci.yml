@@ -37,7 +37,7 @@ jobs:
     strategy:
       matrix:
         version: [beta, nightly, 1.43.0]
-    name: Build (linux, ${{ matrix.version }})
+    name: Test (linux, ${{ matrix.version }})
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
