@@ -29,12 +29,11 @@
 //!
 //! ## Using the library
 //! Add the following to your Cargo.toml:
-//! `bader = "0.2.3"`
+//! `bader = "0.3.1"`
 //!
 //! ### Minimum Supported Rust Version (MSRV)
-//! This crate is guaranteed to compile on stable Rust 1.40.0 and up. It *might*
+//! This crate is guaranteed to compile on stable Rust 1.43.0 and up. It *might*
 //! compile with older versions but that may change in any new patch release.
-//! To test this crate requires Rust 1.42.0 and above.
 //! ## Usage
 //! The program takes a charge density file as input and performs Bader analysis
 //! of the data. Currently it supports density in [VASP] or [cube] formats. It
