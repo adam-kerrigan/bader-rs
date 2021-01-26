@@ -13,7 +13,8 @@ pub struct Bar {
 }
 
 impl Bar {
-    /// Creates the Bar struct with a size, refresh_rate and prefix for the bar
+    /// Creates the Bar struct with a size, refresh_rate and prefix for the bar.
+    /// The returned Bar is hidden.
     pub fn new(len: u64, refresh_rate: u64, prefix: String) -> Self {
         let progress_bar = ProgressBar::hidden();
         progress_bar.set_length(len);
@@ -38,8 +39,16 @@ impl Bar {
         Self { counter, pbar: pb }
     }
 
+    /// Displays a hidden Bar.
     pub fn display(&self) {
         self.pbar.set_draw_target(ProgressDrawTarget::stderr())
+    }
+
+    /// Creates a Bar and sets it to be displayed.
+    pub fn visible(len: u64, refresh_rate: u64, prefix: String) -> Self {
+        let bar = Self::new(len, refresh_rate, prefix);
+        bar.display();
+        bar
     }
 
     /// tick the progress bar

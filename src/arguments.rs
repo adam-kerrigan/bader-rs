@@ -1,5 +1,4 @@
 use crate::io::FileType;
-use crate::methods::Method;
 use clap::{crate_authors, App, Arg, ArgMatches};
 
 /// Indicates how many reference files are passed
@@ -26,21 +25,6 @@ impl<'a> ClapApp {
                 .required(true)
                 .index(1)
                 .about("The file to analyse."))
-            .arg(Arg::new("method")
-                .short('m')
-                .long("method")
-                .takes_value(true)
-                .possible_value("ongrid")
-                .possible_value("neargrid")
-                .possible_value("weight")
-                .case_insensitive(false)
-                .about("Method by which to partition the charge density")
-                .long_about(
-"Use the \"near-grid\" or \"on-grid\" methods based on the algorithms presented
-in W. Tang et al. A grid-based Bader analysis algorithm without lattice bias,
-J. Phys.: Condens. Matter 21, 084204 (2009). Or the \"weight\" method (Default)
-presented in Min Yu and Dallas R. Trinkle. Accurate and efficient algorithm for
-Bader charge integration, J. Chem. Phys. 134, 064111 (2011)."))
             .arg(Arg::new("file type")
                 .short('t')
                 .long("type")
@@ -95,7 +79,7 @@ included in the calculation. A value of \"auto\" can be passed to use 1E-3 C*m^-
                 .about("Cut-off at which contributions to the weighting will be ignored.")
                 .long_about(
 "Values of density below the supplied value are ignored from the weighting and
-included in the calculation. A default vaule of 1E-8 is used. By raising the
+included in the calculation. A default vaule of 1E-6 is used. By raising the
 tolerance the calculation speed can be increased but every ignored weight is
 unaccounted for in the final partitions. Be sure to test this!"))
             .arg(Arg::new("threads")
@@ -118,8 +102,6 @@ pub struct Args {
     /// The file format.
     pub file_type: FileType,
     /// Which method to use.
-    pub method: Method,
-    /// What value of weight to include in partitions.
     pub weight_tolerance: f64,
     /// Is there a reference file.
     pub reference: Reference,
@@ -171,17 +153,7 @@ impl Args {
                     panic!("Couldn't parse weight tolerance into float:\n{}", e)
                 }
             },
-            _ => 1E-8,
-        };
-        // Collect method
-        let method = match arguments.value_of("method") {
-            Some("neargrid") => Method::NearGrid,
-            Some("weight") => Method::Weight,
-            Some("ongrid") => Method::OnGrid,
-            _ => match arguments.value_of("weight") {
-                Some("false") => Method::NearGrid,
-                _ => Method::Weight,
-            },
+            _ => 1E-6,
         };
         // Collect threads
         // safe to unwrap as threads has a default value of 0
@@ -234,7 +206,6 @@ impl Args {
         };
         Self { file,
                file_type,
-               method,
                weight_tolerance,
                reference,
                threads,
@@ -266,62 +237,6 @@ mod tests {
     fn argument_no_file() {
         let app = ClapApp::get();
         let _ = app.try_get_matches_from(vec!["bader"])
-                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
-    }
-
-    #[test]
-    fn argument_method_ongrid() {
-        let app = ClapApp::get();
-        let matches =
-            app.get_matches_from(vec!["bader", "CHGCAR", "-m", "ongrid"]);
-        let args = Args::new(matches);
-        match args.method {
-            Method::OnGrid => (),
-            _ => panic!("OnGrid passed but didnt get OnGrid"),
-        }
-    }
-
-    #[test]
-    fn argument_method_neargrid() {
-        let app = ClapApp::get();
-        let matches = app.get_matches_from(vec!["bader", "CHGCAR",
-                                                "--method", "neargrid"]);
-        let args = Args::new(matches);
-        match args.method {
-            Method::NearGrid => (),
-            _ => panic!("NearGrid passed but didnt get NearGrid"),
-        }
-    }
-
-    #[test]
-    fn argument_method_weight() {
-        let app = ClapApp::get();
-        let matches =
-            app.get_matches_from(vec!["bader", "CHGCAR", "-m", "weight"]);
-        let args = Args::new(matches);
-        match args.method {
-            Method::Weight => (),
-            _ => panic!("No argument passed, didnt get Weight"),
-        }
-    }
-
-    #[test]
-    fn argument_method_default() {
-        let app = ClapApp::get();
-        let matches = app.get_matches_from(vec!["bader", "CHGCAR"]);
-        let args = Args::new(matches);
-        match args.method {
-            Method::Weight => (),
-            _ => panic!("No argument passed, didnt get Weight"),
-        }
-    }
-
-    #[test]
-    #[should_panic]
-    fn argument_method_not_method() {
-        let app = ClapApp::get();
-        let _ = app.try_get_matches_from(vec!["bader", "CHGCAR", "-m",
-                                              "ngrid"])
                    .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 

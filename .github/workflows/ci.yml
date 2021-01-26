@@ -33,11 +33,11 @@ jobs:
       with:
         command: test
         args: --verbose
-  build-non-stable:
+  test-non-stable:
     strategy:
       matrix:
-        version: [beta, nightly, 1.40.0]
-    name: Build (linux, ${{ matrix.version }})
+        version: [beta, nightly, 1.43.0]
+    name: Test (linux, ${{ matrix.version }})
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
@@ -46,10 +46,10 @@ jobs:
         toolchain: ${{ matrix.version }}
         override: true
         profile: minimal
-    - name: Build
+    - name: Test
       uses: actions-rs/cargo@v1
       with:
-        command: build
+        command: test
         args: --verbose
   format:
     runs-on: ubuntu-latest
