@@ -1,5 +1,3 @@
-use crate::density::Density;
-use crate::progress::Bar;
 use crate::utils;
 
 /// struct for containing the information about the atoms.
@@ -39,66 +37,6 @@ impl Atoms {
                reduced_lattice,
                reduced_positions,
                text }
-    }
-
-    /// Assigns bader volumes to their nearest atom.
-    ///
-    /// This is called from [VoxelMap.assign_atoms()](crate::voxel_map::VoxelMap::assign_atoms)
-    pub fn assign_maxima(&self,
-                         maximas: &[isize],
-                         density: &Density,
-                         pbar: Bar)
-                         -> (Vec<usize>, Vec<f64>) {
-        let max_distance =
-            (self.lattice.a + self.lattice.b + self.lattice.c).powi(2);
-        let mut assigned_atom = Vec::<usize>::with_capacity(maximas.len());
-        let mut assigned_distance = Vec::<f64>::with_capacity(maximas.len());
-        let maximas = if maximas[0] == -1 {
-            &maximas[1..]
-        } else {
-            &maximas[..]
-        };
-        for maxima in maximas.iter() {
-            let maxima_cartesian = density.to_cartesian(*maxima);
-            let maxima_cartesian = {
-                utils::dot(maxima_cartesian, density.voxel_lattice.to_cartesian)
-            };
-            let mut maxima_lll_fractional = utils::dot(maxima_cartesian,
-                                                       self.reduced_lattice
-                                                           .to_fractional);
-            for f in &mut maxima_lll_fractional {
-                *f = f.rem_euclid(1.);
-            }
-            let maxima_lll_cartesian = utils::dot(maxima_lll_fractional,
-                                                  self.reduced_lattice
-                                                      .to_cartesian);
-            let mut atom_num = 0;
-            let mut min_distance = max_distance;
-            for (i, atom) in self.reduced_positions.iter().enumerate() {
-                for atom_shift in
-                    self.reduced_lattice.cartesian_shift_matrix.iter()
-                {
-                    let distance = {
-                        (maxima_lll_cartesian[0] - (atom[0] + atom_shift[0]))
-                            .powi(2)
-                            + (maxima_lll_cartesian[1]
-                                - (atom[1] + atom_shift[1]))
-                                .powi(2)
-                            + (maxima_lll_cartesian[2]
-                                - (atom[2] + atom_shift[2]))
-                                .powi(2)
-                    };
-                    if distance < min_distance {
-                        min_distance = distance;
-                        atom_num = i;
-                    }
-                }
-            }
-            assigned_atom.push(atom_num);
-            assigned_distance.push(min_distance.powf(0.5));
-            pbar.tick()
-        }
-        (assigned_atom, assigned_distance)
     }
 }
 
