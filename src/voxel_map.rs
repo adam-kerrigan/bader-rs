@@ -14,7 +14,7 @@ pub enum Voxel<'a> {
     Vacuum,
 }
 
-/// A lock guard for write access to VoxelMap.weight_map
+/// A lock guard for write access to [`VoxelMap.weight_map`]
 pub struct Lock<'a> {
     data: &'a VoxelMap,
 }

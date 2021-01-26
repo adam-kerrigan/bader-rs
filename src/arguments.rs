@@ -72,6 +72,14 @@ contain a single density (ie. the original file has been split)."))
                 .long_about(
 "Values of density below the supplied value are considered vacuum and are not
 included in the calculation. A value of \"auto\" can be passed to use 1E-3 C*m^-3."))
+            .arg(Arg::new("maxima tolerance")
+                .short('m')
+                .long("maxima")
+                .takes_value(true)
+                .about("Cut-off for charge at which a maxima is not printed.")
+                .long_about(
+"Values of charge for the Bader maxima below the supplied value are not written
+to the Bader charge file (BCF.dat). A default value of 1E-6 is used."))
             .arg(Arg::new("weight tolerance")
                 .short('w')
                 .long("weight")
@@ -101,8 +109,10 @@ pub struct Args {
     pub file: String,
     /// The file format.
     pub file_type: FileType,
-    /// Which method to use.
+    /// Tolerance to disregard weights at.
     pub weight_tolerance: f64,
+    /// Tolerance to disregard maxima at.
+    pub maxima_tolerance: f64,
     /// Is there a reference file.
     pub reference: Reference,
     /// Is there a spin density to include as well.
@@ -151,6 +161,16 @@ impl Args {
                 Ok(x) => x,
                 Err(e) => {
                     panic!("Couldn't parse weight tolerance into float:\n{}", e)
+                }
+            },
+            _ => 1E-6,
+        };
+        // Collect maxima tolerance
+        let maxima_tolerance = match arguments.value_of("maxima tolerance") {
+            Some(x) => match x.parse::<f64>() {
+                Ok(x) => x,
+                Err(e) => {
+                    panic!("Couldn't parse maxima tolerance into float:\n{}", e)
                 }
             },
             _ => 1E-6,
@@ -207,6 +227,7 @@ impl Args {
         Self { file,
                file_type,
                weight_tolerance,
+               maxima_tolerance,
                reference,
                threads,
                spin,
@@ -401,6 +422,24 @@ mod tests {
     fn argument_weight_tolerance_not_float() {
         let app = ClapApp::get();
         let v = vec!["bader", "CHGCAR", "-w", "0.00.1"];
+        let matches = app.get_matches_from(v);
+        let _ = Args::new(matches);
+    }
+
+    #[test]
+    fn argument_maxima_tolerance_float() {
+        let app = ClapApp::get();
+        let v = vec!["bader", "CHGCAR", "--maxima", "1E-4"];
+        let matches = app.get_matches_from(v);
+        let args = Args::new(matches);
+        assert_eq!(args.maxima_tolerance, 1E-4)
+    }
+
+    #[test]
+    #[should_panic]
+    fn argument_maxima_tolerance_not_float() {
+        let app = ClapApp::get();
+        let v = vec!["bader", "CHGCAR", "-m", "0.00.1"];
         let matches = app.get_matches_from(v);
         let _ = Args::new(matches);
     }

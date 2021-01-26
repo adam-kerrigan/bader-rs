@@ -17,6 +17,8 @@ pub struct Grid {
     pub voxel_origin: [f64; 3],
     /// The cut-off for ignoring the weight contribution.
     pub weight_tolerance: f64,
+    /// The cut-off for ignoring the maxima contribution.
+    pub maxima_tolerance: f64,
 }
 
 impl Grid {
@@ -24,6 +26,7 @@ impl Grid {
     pub fn new(grid: [usize; 3],
                lattice: [[f64; 3]; 3],
                weight_tolerance: f64,
+               maxima_tolerance: f64,
                vacuum_tolerance: Option<f64>,
                voxel_origin: [f64; 3])
                -> Self {
@@ -44,6 +47,7 @@ impl Grid {
                vacuum_tolerance,
                voronoi,
                weight_tolerance,
+               maxima_tolerance,
                voxel_lattice,
                voxel_origin }
     }
@@ -1045,6 +1049,7 @@ mod tests {
         let grid = Grid::new([4, 4, 4],
                              lattice.to_cartesian,
                              1E-8,
+                             1E-6,
                              Some(1E-3),
                              [0., 0., 0.0]);
         assert_eq!(grid.voxel_lattice.volume, lattice.volume / 64.)
@@ -1057,6 +1062,7 @@ mod tests {
         let _ = Grid::new([1, 4, 4],
                           lattice.to_cartesian,
                           1E-8,
+                          1E-6,
                           Some(1E-3),
                           [0., 0., 0.0]);
     }
@@ -1067,6 +1073,7 @@ mod tests {
         let grid = Grid::new([3, 4, 5],
                              lattice.to_cartesian,
                              1E-8,
+                             1E-6,
                              Some(1E-3),
                              [0., 0., 0.0]);
         let shift = [-26, -25, -24, -21, -20, -19, -16, -15, -14, -6, -5, -4,
@@ -1080,6 +1087,7 @@ mod tests {
         let grid = Grid::new([3, 4, 5],
                              lattice.to_cartesian,
                              1E-8,
+                             1E-6,
                              Some(1E-3),
                              [0., 0., 0.0]);
         let shift = [20, -20, 5, -5, 1, -1];
@@ -1092,6 +1100,7 @@ mod tests {
         let grid = Grid::new([3, 4, 5],
                              lattice.to_cartesian,
                              1E-8,
+                             1E-6,
                              Some(1E-3),
                              [0., 0., 0.0]);
         assert_eq!(1, grid.gradient_shift(26, [0., 0., 1.]))

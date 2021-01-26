@@ -37,6 +37,7 @@ pub enum WeightResult {
 /// let grid = Grid::new( [4, 4, 4],
 ///                            lattice.to_cartesian,
 ///                            1E-8,
+///                            1E-6,
 ///                            None,
 ///                            [0., 0., 0.]);
 /// let voxel_map = VoxelMap::new(64);
@@ -149,6 +150,7 @@ pub fn weight_step(p: isize,
 /// let grid = Grid::new( [4, 4, 4],
 ///                            lattice.to_cartesian,
 ///                            1E-8,
+///                            1E-6,
 ///                            None,
 ///                            [0., 0., 0.]);
 /// let voxel_map = VoxelMap::new(64);
