@@ -211,7 +211,7 @@ impl Table {
                                 row.pop();
                                 table.push_str(&row);
                             }
-                            table.push_str("\n");
+                            table.push('\n');
                         });
         table.push_str(&self.format_footer(analysis));
         table
