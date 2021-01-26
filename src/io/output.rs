@@ -6,21 +6,28 @@ use crate::utils;
 use std::fs::File;
 use std::io::Write;
 
-/// TableType
+/// Enum of available tables.
 enum TableType {
+    /// Table for the ACF file.
     AtomsCharge,
+    /// Table for the BCF file.
     BaderCharge,
 }
 
-/// Table Structure
+/// Structure that contains and builds the table.
 struct Table {
+    /// How wide each column is.
     column_width: Vec<usize>,
+    /// The number of charge and spin densities.
     density_num: usize,
+    /// The rows of the table as a vector of strings.
     rows: Vec<Vec<String>>,
+    /// What type of table the structure is.
     table_type: TableType,
 }
 
 impl Table {
+    /// Creates a new structure and sets the minimum widths of each.
     fn new(table_type: TableType, density_num: usize) -> Self {
         let rows = vec![Vec::with_capacity(0)];
         let mut column_width = Vec::with_capacity(6 + density_num);
@@ -46,6 +53,7 @@ impl Table {
                table_type }
     }
 
+    /// Adds a row the table.
     #[allow(clippy::borrowed_box)]
     fn add_row(&mut self,
                index: usize,
@@ -69,10 +77,12 @@ impl Table {
         self.rows.push(row);
     }
 
+    /// Adds a blank row to be a separator in the final string.
     fn add_separator(&mut self) {
         self.rows.push(Vec::with_capacity(0));
     }
 
+    /// Creates and formats the footer.
     fn format_footer(&self, analysis: &Analysis) -> String {
         match self.table_type {
             TableType::AtomsCharge => {
@@ -111,6 +121,7 @@ impl Table {
         }
     }
 
+    /// Creates and formats the header.
     fn format_header(&self) -> String {
         let mut header = String::new();
         let mut iter = self.column_width.iter();
@@ -161,6 +172,7 @@ impl Table {
         header
     }
 
+    /// Creates and formats a separator.
     fn format_separator(&self, i: usize) -> String {
         let mut separator = String::new();
         self.column_width.iter().for_each(|w| {
@@ -178,6 +190,7 @@ impl Table {
         separator
     }
 
+    /// Creates a String representation of the Table.
     fn to_string(&self, analysis: &Analysis) -> String {
         let mut i = 0;
         let mut table = String::new();
@@ -206,6 +219,14 @@ impl Table {
 }
 
 /// Writes the tables for outputting charge data.
+///
+/// * analysis: The [`Analysis`] structure to be tabulated.
+/// * atoms: The [`Atoms`] referenced to the structure.
+/// * grid: The [`Grid`] structure for moving around the analysed density.
+/// * file_type: [`FileFormat`] for printing the correct coordinates.
+///
+/// ### Returns:
+/// (String, String): The ACF and BCF as Strings.
 #[allow(clippy::borrowed_box)]
 pub fn charge_files(analysis: &Analysis,
                     atoms: &Atoms,
