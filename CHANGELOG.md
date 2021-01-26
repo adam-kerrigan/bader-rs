@@ -1,4 +1,4 @@
-## v0.3.0
+## v0.3.1
 ### Changes
 - Progress bars changed to not show by default, stops drawing of default bar
 - Functions that create a progress bar (assign_atom, charge_sum) now take one as an argument
@@ -14,6 +14,7 @@
 - Removed Prettytables
 ### Bug Fixes
 - Overflow error when vacuum tolerance is so high that all charge is vacuum
+## v0.3.0 - (Yanked)
 ## v0.2.3
 ### Changes
 - Set up new target for releases that doesn't require GLibC

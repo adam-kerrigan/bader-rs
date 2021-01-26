@@ -29,7 +29,7 @@
 //!
 //! ## Using the library
 //! Add the following to your Cargo.toml:
-//! `bader = "0.3.0"`
+//! `bader = "0.3.1"`
 //!
 //! ### Minimum Supported Rust Version (MSRV)
 //! This crate is guaranteed to compile on stable Rust 1.43.0 and up. It *might*

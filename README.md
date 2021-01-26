@@ -1,4 +1,4 @@
-# bader-rs (0.3.0)
+# bader-rs (0.3.1)
 ![build](https://github.com/kerrigoon/bader-rs/workflows/build/badge.svg?branch=master)
 [![Latest Version](https://img.shields.io/crates/v/bader.svg)](https://crates.io/crates/bader)
 [![Documentation](https://docs.rs/bader/badge.svg)](https://docs.rs/bader/)
