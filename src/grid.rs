@@ -1,11 +1,9 @@
 use crate::atoms::Lattice;
 use crate::voronoi::Voronoi;
-use std::ops::Index;
 
-/// Structure for managing the reference density and movement within it.
-pub struct Density<'a> {
-    /// Charge density in a flattened array.
-    pub data: &'a [f64],
+/// Structure for managing the movement within the reference density.
+pub struct Grid {
+    /// The [`Shift`] structure for movement.
     shift: Shift,
     /// The 3d size of the data.
     pub size: Size,
@@ -21,26 +19,15 @@ pub struct Density<'a> {
     pub weight_tolerance: f64,
 }
 
-impl<'a> Index<isize> for Density<'a> {
-    type Output = f64;
-
-    /// Index the reference charge inside the Density structure
-    fn index(&self, i: isize) -> &Self::Output {
-        &self.data[i as usize]
-    }
-}
-
-impl<'a> Density<'a> {
-    /// Initialises a density structure. Computes the voxel_lattice from the grid and lattice.
-    pub fn new(data: &'a [f64],
-               grid: [usize; 3],
+impl Grid {
+    /// Initialises a grid structure. Computes the voxel_lattice from the grid and lattice.
+    pub fn new(grid: [usize; 3],
                lattice: [[f64; 3]; 3],
                weight_tolerance: f64,
                vacuum_tolerance: Option<f64>,
                voxel_origin: [f64; 3])
                -> Self {
         let size = Size::new(grid[0], grid[1], grid[2]);
-        assert_eq!(size.total, data.len());
         let shift = Shift::new(&size);
         let voxel_lattice = Lattice::new([[lattice[0][0] / grid[0] as f64,
                                            lattice[0][1] / grid[0] as f64,
@@ -52,8 +39,7 @@ impl<'a> Density<'a> {
                                            lattice[2][1] / grid[2] as f64,
                                            lattice[2][2] / grid[2] as f64]]);
         let voronoi = Voronoi::new(&voxel_lattice);
-        Self { data,
-               shift,
+        Self { shift,
                size,
                vacuum_tolerance,
                voronoi,
@@ -224,7 +210,6 @@ impl Shift {
     /// Creates the shift matrix for moving in the array
     /// the outer index in di is unraveling the index with a periodic roll so the point
     /// is at (0, 0, 0) -> 0
-    /// inside is the same as the distance array in Density
     /// <pre class="rust">
     /// 0 -> (-1,-1,-1)   7 -> (-1, 1, 0)  14 -> (0, 0, 1)  21 -> (1, 0,-1)
     /// 1 -> (-1,-1, 0)   8 -> (-1, 1, 1)  15 -> (0, 1,-1)  22 -> (1, 0, 0)
@@ -1041,6 +1026,11 @@ impl Size {
             },
             None => panic!("Grid size is too large!"),
         };
+        // VoxelMap stores the maxima of weighs as -2 - maxima the largest
+        // value maxima can be is Size::total so must check
+        if total as isize + 1 == isize::MAX {
+            panic!("Grid size is too large!");
+        }
         Self { x, y, z, total }
     }
 }
@@ -1050,85 +1040,61 @@ mod tests {
     use super::*;
 
     #[test]
-    fn density_new() {
-        let data = (0..64).map(|x| x as f64).collect::<Vec<f64>>();
+    fn grid_new() {
         let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
-        let density = Density::new(&data,
-                                   [4, 4, 4],
-                                   lattice.to_cartesian,
-                                   1E-8,
-                                   Some(1E-3),
-                                   [0., 0., 0.0]);
-        assert_eq!(density.voxel_lattice.volume, lattice.volume / 64.)
-    }
-
-    #[test]
-    #[should_panic]
-    fn density_new_bad_grid() {
-        let data = (0..64).map(|x| x as f64).collect::<Vec<f64>>();
-        let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
-        let _ = Density::new(&data,
-                             [1, 4, 4],
+        let grid = Grid::new([4, 4, 4],
                              lattice.to_cartesian,
                              1E-8,
                              Some(1E-3),
                              [0., 0., 0.0]);
+        assert_eq!(grid.voxel_lattice.volume, lattice.volume / 64.)
     }
 
     #[test]
-    fn density_full_shift() {
-        let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
+    #[should_panic]
+    fn grid_new_bad_grid() {
         let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
-        let density = Density::new(&data,
-                                   [3, 4, 5],
-                                   lattice.to_cartesian,
-                                   1E-8,
-                                   Some(1E-3),
-                                   [0., 0., 0.0]);
+        let _ = Grid::new([1, 4, 4],
+                          lattice.to_cartesian,
+                          1E-8,
+                          Some(1E-3),
+                          [0., 0., 0.0]);
+    }
+
+    #[test]
+    fn grid_full_shift() {
+        let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
+        let grid = Grid::new([3, 4, 5],
+                             lattice.to_cartesian,
+                             1E-8,
+                             Some(1E-3),
+                             [0., 0., 0.0]);
         let shift = [-26, -25, -24, -21, -20, -19, -16, -15, -14, -6, -5, -4,
                      -1, 1, 4, 5, 6, 14, 15, 16, 19, 20, 21, 24, 25, 26];
-        assert_eq!(shift, density.full_shift(26))
+        assert_eq!(shift, grid.full_shift(26))
     }
 
     #[test]
-    fn density_reduced_shift() {
-        let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
+    fn grid_reduced_shift() {
         let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
-        let density = Density::new(&data,
-                                   [3, 4, 5],
-                                   lattice.to_cartesian,
-                                   1E-8,
-                                   Some(1E-3),
-                                   [0., 0., 0.0]);
+        let grid = Grid::new([3, 4, 5],
+                             lattice.to_cartesian,
+                             1E-8,
+                             Some(1E-3),
+                             [0., 0., 0.0]);
         let shift = [20, -20, 5, -5, 1, -1];
-        assert_eq!(shift, density.reduced_shift(26))
+        assert_eq!(shift, grid.reduced_shift(26))
     }
 
     #[test]
-    fn density_gradient_shift() {
-        let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
+    fn grid_gradient_shift() {
         let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
-        let density = Density::new(&data,
-                                   [3, 4, 5],
-                                   lattice.to_cartesian,
-                                   1E-8,
-                                   Some(1E-3),
-                                   [0., 0., 0.0]);
-        assert_eq!(1, density.gradient_shift(26, [0., 0., 1.]))
-    }
-
-    #[test]
-    fn density_index() {
-        let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
-        let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
-        let density = Density::new(&data,
-                                   [3, 4, 5],
-                                   lattice.to_cartesian,
-                                   1E-8,
-                                   Some(1E-3),
-                                   [0., 0., 0.0]);
-        assert_eq!(&data[1], density.index(1));
-        assert_eq!(data[1], density[1]);
+        let grid = Grid::new([3, 4, 5],
+                             lattice.to_cartesian,
+                             1E-8,
+                             Some(1E-3),
+                             [0., 0., 0.0]);
+        assert_eq!(1, grid.gradient_shift(26, [0., 0., 1.]))
     }
 
     #[test]
