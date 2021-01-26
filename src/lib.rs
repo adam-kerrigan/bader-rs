@@ -1,8 +1,7 @@
 //! An incredibly fast, multi-threaded, Bader charge partitioning binary and
 //! library. Based on methods presented in
-//! [Yu Min  and Trinkle Dallas R. 2011  J. Che.m Phys. 134 064111] and
-//! [W Tang et al 2009 J. Phys.: Condens. Matter 21 084204] with adaptions for
-//! multi-threading.
+//! [Yu Min  and Trinkle Dallas R. 2011  J. Che.m Phys. 134 064111] and with
+//! adaptions for multi-threading.
 //!
 //! ### Supported Platforms
 //! - Linux
@@ -17,15 +16,15 @@
 //! ### From Source
 //! To check out the lastest features not in the binaries yet you can compile
 //! from source. To do this run the following, which will create the
-//! ./target/release/bader executable.
+//! ./target/release/bca executable.
 //! ```sh
-//! $ git clone https://github.com/kerrigoon/bader-rs
+//! $ git clone https://github.com/adam-kerrigan/bader-rs
 //! $ cd bader-rs
 //! $ cargo build --verbose --release
 //! ```
 //! From here you can either move or link the binary to folder in your path.
 //! ```sh
-//! $ mv ./target/release/bader ~/bin
+//! $ mv ./target/release/bca ~/bin
 //! ```
 //!
 //! ## Using the library
@@ -44,17 +43,17 @@
 //! as reference files to the program using the -r, --reference flag where they
 //! will be summed.
 //! ```sh
-//! $ bader CHGCAR -r AECCAR0 -r AECCAR2
+//! $ bca CHGCAR -r AECCAR0 -r AECCAR2
 //! ```
 //! VASP charge density files containing spin densities will output the the
 //! partitioned spin also. To achieve this for cube files requires using the
 //! --spin flag to pass a second file to treat as the spin density.
 //! ```sh
-//! $ bader charge-density.cube -s spin-density.cube
+//! $ bca charge-density.cube -s spin-density.cube
 //! ```
 //! For a detailed list of usage options run
 //! ```sh
-//! $ bader --help
+//! $ bca --help
 //! ```
 //! ## Output
 //! The program outputs two files, ACF.dat & BCF.dat. The Atomic Charge File
@@ -71,9 +70,11 @@
 //! [cube]: <https://gaussian.com/>
 //! [LAECHG]: <https://www.vasp.at/wiki/index.php/LAECHG>
 //! [Yu Min  and Trinkle Dallas R. 2011  J. Che.m Phys. 134 064111]: <https://doi.org/10.1063/1.3553716>
-//! [W Tang et al 2009 J. Phys.: Condens. Matter 21 084204]: <https://doi.org/10.1088/0953-8984/21/8/084204>
 //! [cargo]: <https://doc.rust-lang.org/cargo/getting-started/installation.html>
 
+/// Performs analysis of the VoxelMap to find the partitioned charge, assigned atom and other
+/// relevant properties.
+pub mod analysis;
 /// Builds the [clap::App] and parses command-line arguments.
 pub mod arguments;
 /// Contains [Atoms](atoms::Atoms) for storing the relevant data on the atoms
@@ -81,10 +82,9 @@ pub mod arguments;
 /// [ReducedLattice](atoms::ReducedLattice) for storing information about the
 /// cell in which the density is stored.
 pub mod atoms;
-/// Contains [Density](density::Density) for managing the reference density for
-/// partioning. Also stores structures for moving around the grid on which the
-/// density is stored.
-pub mod density;
+/// Contains [Grid](grid::Grid) for managing the movement around the grid on
+/// which the density is stored.
+pub mod grid;
 /// Handles the File I/O for both the density file and result files.
 /// Provides a [FileFormat](io::FileFormat) trait to be implemented by modules designed to
 /// cover a specific file format of a density file.
