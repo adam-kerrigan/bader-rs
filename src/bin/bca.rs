@@ -27,6 +27,7 @@ fn main() {
     let grid = Grid::new(grid,
                          atoms.lattice.to_cartesian,
                          args.weight_tolerance,
+                         args.maxima_tolerance,
                          args.vacuum_tolerance,
                          voxel_origin);
     let voxel_map = VoxelMap::new(grid.size.total);
@@ -80,7 +81,7 @@ fn main() {
     // build the results
     println!("Writing output files:");
     let (atoms_charge_file, bader_charge_file) =
-        io::output::charge_files(&analysis, &atoms, &grid, file_type);
+        io::output::charge_files(&analysis, &atoms, &grid, &file_type);
     // check that the write was successfull
     match io::output::write(atoms_charge_file, bader_charge_file) {
         Ok(_) => {}

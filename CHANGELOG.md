@@ -11,6 +11,7 @@
 - Density now no longer contains the density and so has been renamed Grid
 - Crossbeam is used for threading scopes
 - Changed program name from bader to bca (Bader charge analysis)
+- Removed Prettytables
 ### Bug Fixes
 - Overflow error when vacuum tolerance is so high that all charge is vacuum
 ## v0.2.3
