@@ -162,8 +162,8 @@ impl Args {
         let output = match arguments.value_of("output") {
             Some("atoms") => {
                 let atoms = match arguments.values_of("index") {
-                    Some(vec) => vec.map(|s| {
-                                        match s.parse::<usize>() {
+                    Some(vec) => {
+                        vec.map(|s| match s.parse::<usize>() {
                             Ok(u) => match u.checked_sub(1) {
                                 Some(u) => u,
                                 None => {
@@ -174,17 +174,17 @@ impl Args {
                                 panic!("Unable to parse index, ({}) to usize.",
                                        s)
                             }
-                        }
-                                    })
-                                    .collect::<Vec<usize>>(),
+                        })
+                        .collect::<Vec<usize>>()
+                    }
                     None => Vec::with_capacity(0),
                 };
                 WriteType::Atom(atoms)
             }
             Some("volumes") => {
                 let volumes = match arguments.values_of("index") {
-                    Some(vec) => vec.map(|s| {
-                                        match s.parse::<usize>() {
+                    Some(vec) => {
+                        vec.map(|s| match s.parse::<usize>() {
                             Ok(u) => match u.checked_sub(1) {
                                 Some(u) => u,
                                 None => {
@@ -195,9 +195,9 @@ impl Args {
                                 panic!("Unable to parse index, ({}) to usize.",
                                        s)
                             }
-                        }
-                                    })
-                                    .collect::<Vec<usize>>(),
+                        })
+                        .collect::<Vec<usize>>()
+                    }
                     None => Vec::with_capacity(0),
                 };
                 WriteType::Volume(volumes)
