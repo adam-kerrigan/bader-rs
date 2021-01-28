@@ -1,3 +1,6 @@
+## v0.3.2
+### Features
+- Writing of the charge density is now suppported
 ## v0.3.1
 ### Changes
 - Progress bars changed to not show by default, stops drawing of default bar
