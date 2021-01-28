@@ -1,4 +1,4 @@
-use crate::io::FileType;
+use crate::io::{FileType, WriteType};
 use clap::{crate_authors, App, Arg, ArgMatches};
 
 /// Indicates how many reference files are passed
@@ -25,6 +25,30 @@ impl<'a> ClapApp {
                 .required(true)
                 .index(1)
                 .about("The file to analyse."))
+            .arg(Arg::new("output")
+                .short('o')
+                .long("output")
+                .takes_value(true)
+                .possible_value("atoms")
+                .possible_value("volumes")
+                .case_insensitive(false)
+                .about("Output the Bader atoms or volumes.")
+                .long_about(
+"Output the Bader atoms or the Bader volumes in the same file formtat as the
+input density. This can be used in conjunction with the index flag to specify a
+specific atoms or volumes. Without the index flag it will print all the atoms or
+volumes."))
+            .arg(Arg::new("index")
+                .short('i')
+                .long("index")
+                .multiple(true)
+                .number_of_values(1)
+                .requires("output")
+                .about("Index of Bader atoms or volumes to be written out.")
+                .long_about(
+"An index of a Bader atom or volume to be written out, starting at 1. This flag
+requires the output flag to be set. Multiple atoms or volumes can be written by
+repeating the flag ie. bca CHGCAR -o atoms -i 1 -i 2."))
             .arg(Arg::new("file type")
                 .short('t')
                 .long("type")
@@ -45,7 +69,7 @@ to be infered from the filename."))
                 .about("File(s) containing reference charge.")
                 .long_about(
 "A reference charge to do the partitioning upon. Two files can be passed
-by using multiple flags (bader CHGCAR -r AECCAR0 -r AECCAR2). If two files are
+by using multiple flags (bca CHGCAR -r AECCAR0 -r AECCAR2). If two files are
 passed they are summed together."))
             .arg(Arg::new("spin")
                 .short('s')
@@ -71,7 +95,7 @@ contain a single density (ie. the original file has been split)."))
                 .about("Cut-off at which charge is considered vacuum.")
                 .long_about(
 "Values of density below the supplied value are considered vacuum and are not
-included in the calculation. A value of \"auto\" can be passed to use 1E-3 C*m^-3."))
+included in the calculation. A value of \"auto\" can be passed to use 1E-6 C*m^-3."))
             .arg(Arg::new("maxima tolerance")
                 .short('m')
                 .long("maxima")
@@ -113,6 +137,8 @@ pub struct Args {
     pub weight_tolerance: f64,
     /// Tolerance to disregard maxima at.
     pub maxima_tolerance: f64,
+    /// Output Writing
+    pub output: WriteType,
     /// Is there a reference file.
     pub reference: Reference,
     /// Is there a spin density to include as well.
@@ -131,6 +157,54 @@ impl Args {
             Some(f) => String::from(f),
             None => String::new(),
         };
+
+        // Collect write charge info
+        let output = match arguments.value_of("output") {
+            Some("atoms") => {
+                let atoms = match arguments.values_of("index") {
+                    Some(vec) => {
+                        vec.map(|s| match s.parse::<usize>() {
+                            Ok(u) => match u.checked_sub(1) {
+                                Some(u) => u,
+                                None => {
+                                    panic!("Counting for index starts at 1.")
+                                }
+                            },
+                            Err(_) => {
+                                panic!("Unable to parse index, ({}) to usize.",
+                                       s)
+                            }
+                        })
+                        .collect::<Vec<usize>>()
+                    }
+                    None => Vec::with_capacity(0),
+                };
+                WriteType::Atom(atoms)
+            }
+            Some("volumes") => {
+                let volumes = match arguments.values_of("index") {
+                    Some(vec) => {
+                        vec.map(|s| match s.parse::<usize>() {
+                            Ok(u) => match u.checked_sub(1) {
+                                Some(u) => u,
+                                None => {
+                                    panic!("Counting for index starts at 1.")
+                                }
+                            },
+                            Err(_) => {
+                                panic!("Unable to parse index, ({}) to usize.",
+                                       s)
+                            }
+                        })
+                        .collect::<Vec<usize>>()
+                    }
+                    None => Vec::with_capacity(0),
+                };
+                WriteType::Volume(volumes)
+            }
+            _ => WriteType::None,
+        };
+
         // Collect file type
         let file_type = match arguments.value_of("file type") {
             Some(f) => Some(String::from(f)),
@@ -188,7 +262,7 @@ impl Args {
         let vacuum_tolerance = match arguments.value_of("vacuum tolerance") {
             Some(s) => {
                 if s.eq("auto") {
-                    Some(1E-3)
+                    Some(1E-6)
                 } else {
                     match s.parse::<f64>() {
                         Ok(x) => Some(x),
@@ -228,6 +302,7 @@ impl Args {
                file_type,
                weight_tolerance,
                maxima_tolerance,
+               output,
                reference,
                threads,
                spin,
@@ -248,7 +323,7 @@ mod tests {
     #[test]
     fn argument_file() {
         let app = ClapApp::get();
-        let matches = app.get_matches_from(vec!["bader", "CHGCAR"]);
+        let matches = app.get_matches_from(vec!["bca", "CHGCAR"]);
         let args = Args::new(matches);
         assert_eq!(args.file, String::from("CHGCAR"));
     }
@@ -257,14 +332,14 @@ mod tests {
     #[should_panic]
     fn argument_no_file() {
         let app = ClapApp::get();
-        let _ = app.try_get_matches_from(vec!["bader"])
+        let _ = app.try_get_matches_from(vec!["bca"])
                    .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
     fn argument_file_type_default_vasp() {
         let app = ClapApp::get();
-        let matches = app.get_matches_from(vec!["bader", "CHGCAR"]);
+        let matches = app.get_matches_from(vec!["bca", "CHGCAR"]);
         let args = Args::new(matches);
         let flag = matches!(args.file_type, FileType::Vasp);
         assert!(flag);
@@ -273,7 +348,7 @@ mod tests {
     #[test]
     fn argument_file_type_default_unknown() {
         let app = ClapApp::get();
-        let matches = app.get_matches_from(vec!["bader", "CHG"]);
+        let matches = app.get_matches_from(vec!["bca", "CHG"]);
         let args = Args::new(matches);
         let flag = matches!(args.file_type, FileType::Vasp);
         assert!(flag);
@@ -282,8 +357,7 @@ mod tests {
     #[test]
     fn argument_file_type_vasp() {
         let app = ClapApp::get();
-        let matches =
-            app.get_matches_from(vec!["bader", "CHGCAR", "-t", "vasp"]);
+        let matches = app.get_matches_from(vec!["bca", "CHGCAR", "-t", "vasp"]);
         let args = Args::new(matches);
         let flag = matches!(args.file_type, FileType::Vasp);
         assert!(flag);
@@ -292,7 +366,7 @@ mod tests {
     #[test]
     fn argument_file_type_default_cube() {
         let app = ClapApp::get();
-        let matches = app.get_matches_from(vec!["bader", "charge.cube"]);
+        let matches = app.get_matches_from(vec!["bca", "charge.cube"]);
         let args = Args::new(matches);
         let flag = matches!(args.file_type, FileType::Cube);
         assert!(flag);
@@ -301,10 +375,8 @@ mod tests {
     #[test]
     fn argument_file_type_cube() {
         let app = ClapApp::get();
-        let matches = app.get_matches_from(vec!["bader",
-                                                "charge.cube",
-                                                "--type",
-                                                "cube",]);
+        let matches =
+            app.get_matches_from(vec!["bca", "charge.cube", "--type", "cube",]);
         let args = Args::new(matches);
         let flag = matches!(args.file_type, FileType::Cube);
         assert!(flag);
@@ -314,14 +386,96 @@ mod tests {
     #[should_panic]
     fn argument_file_type_not_type() {
         let app = ClapApp::get();
-        let _ = app.try_get_matches_from(vec!["bader", "CHGCAR", "-t", "basp"])
+        let _ = app.try_get_matches_from(vec!["bca", "CHGCAR", "-t", "basp"])
+                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+    }
+
+    #[test]
+    fn argument_output_atoms() {
+        let app = ClapApp::get();
+        let matches =
+            app.get_matches_from(vec!["bca", "CHGCAR", "-o", "atoms"]);
+        let args = Args::new(matches);
+        match args.output {
+            WriteType::Atom(v) => assert!(v.is_empty()),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn argument_output_volumes() {
+        let app = ClapApp::get();
+        let matches =
+            app.get_matches_from(vec!["bca", "CHGCAR", "-o", "volumes"]);
+        let args = Args::new(matches);
+        match args.output {
+            WriteType::Volume(v) => assert!(v.is_empty()),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn argument_output_not_output() {
+        let app = ClapApp::get();
+        let _ = app.try_get_matches_from(vec!["bca", "CHGCAR", "-o", "Atoms"])
+                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+    }
+
+    #[test]
+    fn argument_output_index() {
+        let app = ClapApp::get();
+        let matches = app.get_matches_from(vec!["bca", "CHGCAR", "-o",
+                                                "volumes", "-i", "1"]);
+        let args = Args::new(matches);
+        match args.output {
+            WriteType::Volume(v) => assert_eq!(v, vec![0]),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn argument_output_mult_index() {
+        let app = ClapApp::get();
+        let matches = app.get_matches_from(vec!["bca", "CHGCAR", "-o",
+                                                "atoms", "--index", "1",
+                                                "-i", "3"]);
+        let args = Args::new(matches);
+        match args.output {
+            WriteType::Atom(v) => assert_eq!(v, vec![0, 2]),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn argument_index_zero() {
+        let app = ClapApp::get();
+        let matches = app.get_matches_from(vec!["bca", "CHGCAR", "-o",
+                                                "atoms", "-i", "0"]);
+        let _ = Args::new(matches);
+    }
+
+    #[test]
+    #[should_panic]
+    fn argument_index_no_output() {
+        let app = ClapApp::get();
+        let _ = app.try_get_matches_from(vec!["bca", "CHGCAR", "-i", "1"])
+                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+    }
+
+    #[test]
+    #[should_panic]
+    fn argument_index_not_parse() {
+        let app = ClapApp::get();
+        let _ = app.try_get_matches_from(vec!["bca", "CHGCAR", "-i", "1,6"])
                    .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
     fn argument_spin() {
         let app = ClapApp::get();
-        let matches = app.get_matches_from(vec!["bader",
+        let matches = app.get_matches_from(vec!["bca",
                                                 "density.cube",
                                                 "-s",
                                                 "spin.cube",]);
@@ -333,7 +487,7 @@ mod tests {
     fn argument_reference_one() {
         let app = ClapApp::get();
         let matches =
-            app.get_matches_from(vec!["bader", "CHGCAR", "-r", "CHGCAR_sum"]);
+            app.get_matches_from(vec!["bca", "CHGCAR", "-r", "CHGCAR_sum"]);
         let args = Args::new(matches);
         let flag = matches!(args.reference, Reference::One(_));
         assert!(flag)
@@ -342,7 +496,7 @@ mod tests {
     #[test]
     fn argument_reference_two() {
         let app = ClapApp::get();
-        let v = vec!["bader", "CHGCAR", "-r", "AECCAR0", "--ref", "AECCAR2"];
+        let v = vec!["bca", "CHGCAR", "-r", "AECCAR0", "--ref", "AECCAR2"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
         let flag = matches!(args.reference, Reference::Two(_, _));
@@ -352,7 +506,7 @@ mod tests {
     #[test]
     fn argument_reference_none() {
         let app = ClapApp::get();
-        let v = vec!["bader", "CHGCAR"];
+        let v = vec!["bca", "CHGCAR"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
         let flag = matches!(args.reference, Reference::None);
@@ -362,7 +516,7 @@ mod tests {
     #[test]
     fn argument_aeccar() {
         let app = ClapApp::get();
-        let v = vec!["bader", "CHGCAR", "-a"];
+        let v = vec!["bca", "CHGCAR", "-a"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
         let flag = match args.reference {
@@ -376,7 +530,7 @@ mod tests {
     #[should_panic]
     fn argument_aeccar_cube() {
         let app = ClapApp::get();
-        let v = vec!["bader", "charge.cube", "-a"];
+        let v = vec!["bca", "charge.cube", "-a"];
         let matches = app.get_matches_from(v);
         let _ = Args::new(matches);
     }
@@ -384,16 +538,16 @@ mod tests {
     #[test]
     fn argument_vacuum_tolerance_auto() {
         let app = ClapApp::get();
-        let v = vec!["bader", "CHGCAR", "-v", "auto"];
+        let v = vec!["bca", "CHGCAR", "-v", "auto"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
-        assert_eq!(args.vacuum_tolerance, Some(1E-3))
+        assert_eq!(args.vacuum_tolerance, Some(1E-6))
     }
 
     #[test]
     fn argument_vacuum_tolerance_float() {
         let app = ClapApp::get();
-        let v = vec!["bader", "CHGCAR", "--vac", "1E-4"];
+        let v = vec!["bca", "CHGCAR", "--vac", "1E-4"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
         assert_eq!(args.vacuum_tolerance, Some(1E-4))
@@ -403,7 +557,7 @@ mod tests {
     #[should_panic]
     fn argument_vacuum_tolerance_not_float() {
         let app = ClapApp::get();
-        let v = vec!["bader", "CHGCAR", "-v", "0.00.1"];
+        let v = vec!["bca", "CHGCAR", "-v", "0.00.1"];
         let matches = app.get_matches_from(v);
         let _ = Args::new(matches);
     }
@@ -411,7 +565,7 @@ mod tests {
     #[test]
     fn argument_weight_tolerance_float() {
         let app = ClapApp::get();
-        let v = vec!["bader", "CHGCAR", "--weight", "1E-4"];
+        let v = vec!["bca", "CHGCAR", "--weight", "1E-4"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
         assert_eq!(args.weight_tolerance, 1E-4)
@@ -421,7 +575,7 @@ mod tests {
     #[should_panic]
     fn argument_weight_tolerance_not_float() {
         let app = ClapApp::get();
-        let v = vec!["bader", "CHGCAR", "-w", "0.00.1"];
+        let v = vec!["bca", "CHGCAR", "-w", "0.00.1"];
         let matches = app.get_matches_from(v);
         let _ = Args::new(matches);
     }
@@ -429,7 +583,7 @@ mod tests {
     #[test]
     fn argument_maxima_tolerance_float() {
         let app = ClapApp::get();
-        let v = vec!["bader", "CHGCAR", "--maxima", "1E-4"];
+        let v = vec!["bca", "CHGCAR", "--maxima", "1E-4"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
         assert_eq!(args.maxima_tolerance, 1E-4)
@@ -439,7 +593,7 @@ mod tests {
     #[should_panic]
     fn argument_maxima_tolerance_not_float() {
         let app = ClapApp::get();
-        let v = vec!["bader", "CHGCAR", "-m", "0.00.1"];
+        let v = vec!["bca", "CHGCAR", "-m", "0.00.1"];
         let matches = app.get_matches_from(v);
         let _ = Args::new(matches);
     }
@@ -447,7 +601,7 @@ mod tests {
     #[test]
     fn argument_threads_default() {
         let app = ClapApp::get();
-        let v = vec!["bader", "CHGCAR"];
+        let v = vec!["bca", "CHGCAR"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
         let threads = num_cpus::get().min(12);
@@ -457,7 +611,7 @@ mod tests {
     #[test]
     fn argument_threads_int() {
         let app = ClapApp::get();
-        let v = vec!["bader", "CHGCAR", "--threads", "1"];
+        let v = vec!["bca", "CHGCAR", "--threads", "1"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
         assert_eq!(args.threads, 1)
@@ -467,7 +621,7 @@ mod tests {
     #[should_panic]
     fn argument_threads_not_int() {
         let app = ClapApp::get();
-        let v = vec!["bader", "CHGCAR", "-J", "0.1"];
+        let v = vec!["bca", "CHGCAR", "-J", "0.1"];
         let matches = app.get_matches_from(v);
         let _ = Args::new(matches);
     }

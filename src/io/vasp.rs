@@ -1,19 +1,25 @@
 use crate::atoms::{Atoms, Lattice};
 use crate::io::reader::BufReader;
-use crate::io::{FileFormat, ReadFunction};
+use crate::io::{FileFormat, FortranFormat, ReadFunction};
+use crate::progress::Bar;
 use crate::utils;
 use regex::{Regex, RegexSet};
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 
+/// The coordinate system.
 enum Coord {
+    /// Fractional coordinates.
     Fractional,
+    /// Cartesian coordinates.
     Cartesian,
 }
 
+/// The VASP file format for reading/writing CHG, PARCHG and CHGCARs.
 pub struct Vasp {}
 
 impl FileFormat for Vasp {
+    /// Read a VASP density.
     fn read(&self, filename: String) -> ReadFunction {
         // the voxel origin in VASP is (0, 0, 0)
         let voxel_origin = [0f64; 3];
@@ -90,26 +96,28 @@ impl FileFormat for Vasp {
         // there could be a maximum of 4 densities 1 total and then 1 or 3 spin
         let mut density: Vec<Vec<f64>> = Vec::with_capacity(4);
         // read the poscar information poscar_b
-        let _ = file.by_ref()
-                    .take(grid[0][0] as u64)
-                    .read_to_end(&mut poscar_b)?;
+        let _ = <File as Read>::by_ref(&mut file).take(grid[0][1] as u64)
+                                                 .read_to_end(&mut poscar_b)?;
+        file.seek(SeekFrom::Current((grid[0][0] as i64 - grid[0][1] as i64)
+                                    as i64))?;
         // read the grid line into grid_pts_b
-        let _ = file.by_ref()
-                    .take((grid[0][1] - grid[0][0]) as u64)
-                    .read_to_end(&mut grid_pts_b)?;
+        let _ =
+            <File as Read>::by_ref(&mut file).take((grid[0][1] - grid[0][0])
+                                                   as u64)
+                                             .read_to_end(&mut grid_pts_b)?;
         // read the total charge density into density_b
-        let _ = file.by_ref()
-                    .take((stop[0] - start[0]) as u64)
-                    .read_to_end(&mut density_b)?;
+        let _ = <File as Read>::by_ref(&mut file).take((stop[0] - start[0])
+                                                       as u64)
+                                                 .read_to_end(&mut density_b)?;
         // convert the bytes we have read into a String and an Atoms struct
         let poscar = String::from_utf8(poscar_b).unwrap();
-        let atoms = self.to_atoms(poscar);
         let grid_vec: Vec<usize> = {
             String::from_utf8(grid_pts_b).unwrap()
                                          .split_whitespace()
                                          .map(|x| x.parse::<usize>().unwrap())
                                          .collect()
         };
+        let atoms = self.to_atoms(poscar);
         // convert out of VASP's strange units
         density.push(String::from_utf8(density_b).unwrap()
                                                  .split_whitespace()
@@ -121,9 +129,9 @@ impl FileFormat for Vasp {
         for i in 1..start.len() {
             let mut spin_b = Vec::with_capacity(stop[i] - start[i]);
             let _ = file.seek(SeekFrom::Start(start[i] as u64));
-            let _ = file.by_ref()
-                        .take((stop[i] - start[i]) as u64)
-                        .read_to_end(&mut spin_b)?;
+            let _ = <File as Read>::by_ref(&mut file).take((stop[i] - start[i])
+                                                           as u64)
+                                                     .read_to_end(&mut spin_b)?;
             density.push(String::from_utf8(spin_b).unwrap()
                                                   .split_whitespace()
                                                   .map(|x| {
@@ -138,6 +146,7 @@ impl FileFormat for Vasp {
         Ok((voxel_origin, grid_pts, atoms, density))
     }
 
+    /// Read atom information.
     fn to_atoms(&self, atoms_text: String) -> Atoms {
         // create regex for matching the (C|K)artesian | Direct line
         let coord_regex = Regex::new(r"(?m)^\s*(c|C|k|K|d|D)\w*").unwrap();
@@ -163,6 +172,9 @@ impl FileFormat for Vasp {
                                         })
                                         .collect::<Vec<_>>()
         };
+        for _ in 0..3 {
+            pos.pop();
+        }
         let mut lines = atoms_text.lines();
         // skip the comment line  and then read the lattice information
         let _ = lines.next();
@@ -247,8 +259,31 @@ impl FileFormat for Vasp {
         Atoms::new(lattice, positions, atoms_text)
     }
 
-    fn write(&self, _atoms: &Atoms, _data: Vec<Vec<f64>>) {}
+    /// Write a CHGCAR from a vector of options where None will be written as zero.
+    fn write(&self,
+             atoms: &Atoms,
+             data: Vec<Option<f64>>,
+             filename: String,
+             pbar: Bar)
+             -> std::io::Result<()> {
+        let filename = format!("{}_CHGCAR", filename);
+        let mut buffer = BufWriter::new(File::create(filename)?);
+        pbar.set_length(data.len() / 5 + (data.len() % 5 != 0) as usize);
+        buffer.write_all(atoms.text.as_bytes())?;
+        data.chunks(5).for_each(|line| {
+            if let Err(e) = line.iter()
+                                .try_for_each(|f| write!(buffer, " {:.11}", FortranFormat{ float: *f, mult: atoms.lattice.volume })) {
+                panic!("Error occured during write: {}", e)
+            };
+            if let Err(e) = writeln!(buffer) {
+                panic!("Error occured during write: {}", e)
+            };
+            pbar.tick();
+        });
+        Ok(())
+    }
 
+    /// Deals with fortran indexing.
     fn coordinate_format(&self, coords: [f64; 3]) -> (String, String, String) {
         let z = format!("{:.6}", coords[0]);
         let y = format!("{:.6}", coords[1]);

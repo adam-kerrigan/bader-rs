@@ -1,16 +1,21 @@
 use crate::atoms::{Atoms, Lattice};
 use crate::io::reader::BufReader;
-use crate::io::{FileFormat, ReadFunction};
+use crate::io::{FileFormat, FortranFormat, ReadFunction};
+use crate::progress::Bar;
 use crate::utils;
 use std::fs::File;
-use std::io::Read;
+use std::io::{BufWriter, Read, Write};
 
+/// Convert from chemists.
 const LENGTH_UNITS: f64 = 0.52917721067;
+/// Convert from chemists.
 const VOLUME_UNITS: f64 = LENGTH_UNITS * LENGTH_UNITS * LENGTH_UNITS;
 
+/// Structure for reading/writing a cube file.
 pub struct Cube {}
 
 impl FileFormat for Cube {
+    /// reads a cube file from filename.
     fn read(&self, filename: String) -> ReadFunction {
         // the voxel origin in cube files is (0.5, 0.5, 0.5)
         let mut voxel_origin = [0.5f64; 3];
@@ -117,11 +122,11 @@ impl FileFormat for Cube {
         let mut xyz_b = Vec::with_capacity(start);
         let mut density_b = Vec::with_capacity(total as usize - start);
         // read the xyz information into xyz_b
-        let _ = file.by_ref().take(start as u64).read_to_end(&mut xyz_b)?;
+        let _ = <File as Read>::by_ref(&mut file).take(start as u64)
+                                                 .read_to_end(&mut xyz_b)?;
         // read the total charge density into density_b
-        let _ = file.by_ref()
-                    .take(total - start as u64)
-                    .read_to_end(&mut density_b)?;
+        let _ = <File as Read>::by_ref(&mut file).take(total - start as u64)
+                                                 .read_to_end(&mut density_b)?;
         // convert the bytes we have read into a String and an Atoms struct
         let xyz = String::from_utf8(xyz_b).unwrap();
         let atoms = self.to_atoms(xyz);
@@ -137,6 +142,7 @@ impl FileFormat for Cube {
         Ok((voxel_origin, grid_pts, atoms, vec![density]))
     }
 
+    /// Read atoms information from file header.
     fn to_atoms(&self, atoms_text: String) -> Atoms {
         let mut lines = atoms_text.lines();
         // skip the 2 comment lines + voxel info and then read the lattice information
@@ -196,8 +202,31 @@ impl FileFormat for Cube {
         Atoms::new(lattice, positions, atoms_text)
     }
 
-    fn write(&self, _atoms: &Atoms, _data: Vec<Vec<f64>>) {}
+    /// Write a cube file from a vector of options where None will be written as
+    /// zero.
+    fn write(&self,
+             atoms: &Atoms,
+             data: Vec<Option<f64>>,
+             filename: String,
+             pbar: Bar)
+             -> std::io::Result<()> {
+        let filename = format!("{}.cube", filename);
+        let mut buffer = BufWriter::new(File::create(filename)?);
+        pbar.set_length(data.len() / 6 + (data.len() % 6 != 0) as usize);
+        buffer.write_all(atoms.text.as_bytes())?;
+        data.chunks(6).for_each(|line| {
+            if let Err(e) = line.iter().try_for_each(|f| write!(buffer, " {:.5}", FortranFormat{ float: *f, mult: VOLUME_UNITS })) {
+                panic!("Error occured during write: {}", e)
+            };
+            if let Err(e) = writeln!(buffer) {
+                panic!("Error occured during write: {}", e)
+            };
+            pbar.tick();
+        });
+        Ok(())
+    }
 
+    /// Coordinate format for dealing with fortran indexing (doesn't affect cube).
     fn coordinate_format(&self, coords: [f64; 3]) -> (String, String, String) {
         let x = format!("{:.6}", coords[0]);
         let y = format!("{:.6}", coords[1]);

@@ -83,9 +83,18 @@ fn main() {
     let (atoms_charge_file, bader_charge_file) =
         io::output::charge_files(&analysis, &atoms, &grid, &file_type);
     // check that the write was successfull
-    match io::output::write(atoms_charge_file, bader_charge_file) {
-        Ok(_) => {}
-        Err(e) => println!("{}", e),
+    if let Err(e) = io::output::write(atoms_charge_file, bader_charge_file) {
+        panic!("Error occured: {}", e);
     }
     println!("ACF.dat and BCF.dat written successfully.");
+    if let Err(e) = io::output::write_densities(&atoms,
+                                                &analysis,
+                                                densities,
+                                                &grid,
+                                                args.output,
+                                                &voxel_map,
+                                                &file_type)
+    {
+        panic!("Error occured: {}", e);
+    }
 }
