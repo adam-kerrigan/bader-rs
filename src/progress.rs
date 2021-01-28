@@ -51,6 +51,11 @@ impl Bar {
         bar
     }
 
+    /// set the length of the progress bar.
+    pub fn set_length(&self, length: usize) {
+        self.pbar.set_length(length as u64);
+    }
+
     /// tick the progress bar
     pub fn tick(&self) {
         self.counter.inc();

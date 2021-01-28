@@ -22,6 +22,18 @@ impl std::fmt::Display for AnalysisError {
     }
 }
 
+/// Make errors unwrapable
+impl std::fmt::Debug for AnalysisError {
+    /// Match the error and write the text associated with matched error.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotMaxima => {
+                f.write_str("Error: Attempted to look up non-maxima in maxima index.")
+            },
+        }
+    }
+}
+
 /// Structure for analysing a partitioned [`VoxelMap`].
 pub struct Analysis {
     /// The atom assigned to each bader maxima.
@@ -303,6 +315,78 @@ impl Analysis {
             }
             self.atoms_volume[*atom_num] += self.bader_volume[maxima_i];
         }
+    }
+
+    /// Creates a voxel map for a specific atom.
+    pub fn output_atom_map(&self,
+                           grid: &Grid,
+                           voxel_map: &VoxelMap,
+                           atom_num: usize,
+                           pbar: Bar)
+                           -> Vec<Option<f64>> {
+        (0..grid.size.total).map(|p| {
+                                let w = match voxel_map.voxel_get(p as isize) {
+                                    Voxel::Maxima(maxima) => {
+                                        if self.atom_get(maxima).unwrap()
+                                           == atom_num
+                                        {
+                                            Some(1f64)
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    Voxel::Weight(weights) => {
+                                        let mut w = None;
+                                        for (maxima, weight) in weights {
+                                            if self.atom_get(*maxima).unwrap()
+                                               == atom_num
+                                            {
+                                                w = Some(*weight);
+                                                break;
+                                            }
+                                        }
+                                        w
+                                    }
+                                    Voxel::Vacuum => None,
+                                };
+                                pbar.tick();
+                                w
+                            })
+                            .collect()
+    }
+
+    /// Creates a voxel map for a specific volume.
+    pub fn output_volume_map(&self,
+                             grid: &Grid,
+                             voxel_map: &VoxelMap,
+                             volume_num: usize,
+                             pbar: Bar)
+                             -> Vec<Option<f64>> {
+        (0..grid.size.total).map(|p| {
+                                let w = match voxel_map.voxel_get(p as isize) {
+                                    Voxel::Maxima(maxima) => {
+                                        if maxima == volume_num {
+                                            Some(1.)
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    Voxel::Weight(weights) => {
+                                        let mut w = None;
+                                        for (maxima, weight) in weights {
+                                            if *maxima == volume_num {
+                                                w = Some(*weight);
+                                                break;
+                                            }
+                                        }
+                                        w
+                                    }
+                                    Voxel::Vacuum => None,
+                                };
+                                pbar.tick();
+                                w
+                            })
+                            .collect()
     }
 }
 

@@ -1,8 +1,10 @@
 use crate::analysis::Analysis;
 use crate::atoms::Atoms;
 use crate::grid::Grid;
-use crate::io::FileFormat;
+use crate::io::{FileFormat, WriteType};
+use crate::progress::Bar;
 use crate::utils;
+use crate::voxel_map::VoxelMap;
 use std::fs::File;
 use std::io::Write;
 
@@ -300,5 +302,96 @@ pub fn write(atoms_charge_file: String,
     bader_file.write_all(bader_charge_file.as_bytes())?;
     let mut atoms_file = File::create("ACF.dat")?;
     atoms_file.write_all(atoms_charge_file.as_bytes())?;
+    Ok(())
+}
+
+/// Write the densities of either Bader atoms or volumes.
+#[allow(clippy::borrowed_box)]
+pub fn write_densities(atoms: &Atoms,
+                       analysis: &Analysis,
+                       densities: Vec<Vec<f64>>,
+                       grid: &Grid,
+                       output: WriteType,
+                       voxel_map: &VoxelMap,
+                       file_type: &Box<dyn FileFormat>)
+                       -> std::io::Result<()> {
+    let filename = match densities.len().cmp(&2) {
+        std::cmp::Ordering::Less => vec![String::from("charge")],
+        std::cmp::Ordering::Equal => {
+            vec![String::from("charge"), String::from("spin")]
+        }
+        std::cmp::Ordering::Greater => vec![String::from("charge"),
+                                            String::from("spin_x"),
+                                            String::from("spin_y"),
+                                            String::from("spin_z")],
+    };
+    match output {
+        WriteType::Atom(a) => {
+            println!("Writing out charge densities for atoms:");
+            let atom_iter = if a.is_empty() {
+                (0..atoms.positions.len()).collect()
+            } else {
+                a
+            };
+            for atom in atom_iter {
+                println!("Atom {}:", atom + 1);
+                let pbar = Bar::visible(grid.size.total as u64,
+                                        100,
+                                        String::from("Building map:"));
+                let map = analysis.output_atom_map(grid, voxel_map, atom, pbar);
+                for (i, den) in densities.iter().enumerate() {
+                    let fname = format!("atom_{}_{}", atom + 1, filename[i]);
+                    let pbar =
+                        Bar::visible(1, 100, format!("Writing {}:", fname));
+                    let den = den.iter()
+                                 .zip(&map)
+                                 .map(|(d, weight)| {
+                                     if let Some(w) = weight {
+                                         Some(d * w)
+                                     } else {
+                                         None
+                                     }
+                                 })
+                                 .collect::<Vec<Option<f64>>>();
+                    file_type.write(atoms, den, fname, pbar)?;
+                }
+            }
+        }
+        WriteType::Volume(v) => {
+            println!("Writing out charge densities for atoms:");
+            let volume_iter = if v.is_empty() {
+                (0..analysis.bader_maxima.len()).collect()
+            } else {
+                v
+            };
+            for volume in volume_iter {
+                print!("Atom: {}.", volume + 1);
+                let pbar = Bar::visible(grid.size.total as u64,
+                                        100,
+                                        String::from("Building map:"));
+                let map =
+                    analysis.output_volume_map(grid, voxel_map, volume, pbar);
+                for (i, den) in densities.iter().enumerate() {
+                    let fname =
+                        format!("volume_{}_{}", volume + 1, filename[i]);
+                    let pbar =
+                        Bar::visible(1, 100, format!("Writing {}:", fname));
+                    let den = den.iter()
+                                 .zip(&map)
+                                 .map(|(d, weight)| {
+                                     if let Some(w) = weight {
+                                         Some(d * w)
+                                     } else {
+                                         None
+                                     }
+                                 })
+                                 .collect::<Vec<Option<f64>>>();
+                    file_type.write(atoms, den, fname, pbar)?;
+                }
+                println!(" Done.");
+            }
+        }
+        WriteType::None => (),
+    }
     Ok(())
 }

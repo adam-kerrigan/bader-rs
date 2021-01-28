@@ -1,5 +1,6 @@
 use crate::arguments::{Args, Reference};
 use crate::atoms::Atoms;
+use crate::progress::Bar;
 
 /// File I/O for the gaussian cube format.
 pub mod cube;
@@ -16,6 +17,60 @@ pub enum FileType {
     Vasp,
     /// Guassian, CP2K etc.
     Cube,
+}
+
+/// What type of density to write.
+pub enum WriteType {
+    /// Write a Bader Atom.
+    Atom(Vec<usize>),
+    /// Write a Bader Volume.
+    Volume(Vec<usize>),
+    /// Don't write anything.
+    None,
+}
+
+/// Turn a float into fortran "scientific" notation (leading digit is zero).
+pub struct FortranFormat {
+    /// The float to convert to a string. Wrapped in an option as we need to log
+    /// so `0f64` should be stored as None.
+    float: Option<f64>,
+    /// A value to multiply the float by before printing, eg. a volume.
+    mult: f64,
+}
+
+impl std::fmt::Display for FortranFormat {
+    /// Format the structure into a fortran style exponential.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let prec = if let Some(prec) = formatter.precision() {
+            prec
+        } else {
+            6
+        };
+        match self.float {
+            None => {
+                write!(formatter, " 0.{:0<width$}E{:+03}", 0, 0, width = prec)
+            }
+            Some(f) => {
+                let float = f * self.mult;
+                let exponant = float.log10() as i32 + 1;
+                let decimals = float.abs() * 10f64.powi(prec as i32 - exponant);
+                let decimals = decimals.round() as usize;
+                if float.is_sign_negative() {
+                    write!(formatter,
+                           "-0.{:0<width$}E{:+03}",
+                           decimals,
+                           exponant,
+                           width = prec)
+                } else {
+                    write!(formatter,
+                           " 0.{:0<width$}E{:+03}",
+                           decimals,
+                           exponant,
+                           width = prec)
+                }
+            }
+        }
+    }
 }
 
 /// Return type of the read function in FileFormat.
@@ -111,8 +166,16 @@ Ambiguous how to handle new spin when {} already has {} spin densities.",
     /// Writes a specific density, data, to tile in the correct format.
     ///
     /// * `atoms`: The associated &[`Atoms`] object for the density file.
-    /// * `data`: The density to write to file.
-    fn write(&self, atoms: &Atoms, data: Vec<Vec<f64>>);
+    /// * `data`: The density to write to file wrapped in options with None representing 0.
+    /// * `filename`: Where to save the file, minus any suffix as this should
+    /// be applied in the function.
+    /// * `pbar`: A progress bar for monitoring the write.
+    fn write(&self,
+             atoms: &Atoms,
+             data: Vec<Option<f64>>,
+             filename: String,
+             pbar: Bar)
+             -> std::io::Result<()>;
 
     /// How the format the positions of maxima and atoms
     ///
