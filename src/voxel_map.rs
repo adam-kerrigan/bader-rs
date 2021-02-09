@@ -132,9 +132,7 @@ impl VoxelMap {
         let maxima = self.voxel_map[p as usize].load(Ordering::Relaxed);
         match maxima.cmp(&-1) {
             std::cmp::Ordering::Equal => Voxel::Vacuum,
-            std::cmp::Ordering::Greater => {
-                Voxel::Maxima(maxima as usize)
-            }
+            std::cmp::Ordering::Greater => Voxel::Maxima(maxima as usize),
             std::cmp::Ordering::Less => {
                 let weight = self.weight_get(maxima);
                 Voxel::Weight(weight)
