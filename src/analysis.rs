@@ -3,6 +3,7 @@ use crate::grid::Grid;
 use crate::progress::Bar;
 use crate::utils;
 use crate::voxel_map::{Voxel, VoxelMap};
+use rustc_hash::FxHashMap;
 
 /// The Errors Associated with the [`Analysis`] structure.
 pub enum AnalysisError {
@@ -43,7 +44,7 @@ pub struct Analysis {
     /// The minimum distance to the surface of the bader volume.
     pub surface_distance: Vec<f64>,
     /// Stores the index of the Bader maxima in [`self.bader_maxima`].
-    maxima_index: Vec<Option<usize>>,
+    maxima_index: FxHashMap<usize, usize>,
     /// List of all the maxima within the [`VoxelMap`]
     pub bader_maxima: Vec<usize>,
     /// The charge (and spin) associated with with each maxima. Takes the form
@@ -90,15 +91,13 @@ impl Analysis {
                atom_num: usize)
                -> Self {
         let bader_maxima = voxel_map.maxima_list();
-        let size = bader_maxima.iter().last().unwrap_or(&0);
-        let mut maxima_index = vec![None; *size as usize + 1];
+        let mut maxima_index = FxHashMap::<usize, usize>::default();
         for (i, maxima) in bader_maxima.iter().enumerate() {
-            maxima_index[*maxima as usize] = Some(i);
+            maxima_index.insert(*maxima, i);
         }
-        let len = bader_maxima.len();
-        let assigned_atom = Vec::with_capacity(len);
-        let minimum_distance = Vec::with_capacity(len);
         // I would like to allocate this with error checks.
+        let assigned_atom = Vec::with_capacity(0);
+        let minimum_distance = Vec::with_capacity(0);
         let surface_distance = Vec::with_capacity(0);
         let bader_charge = vec![Vec::with_capacity(0); densities_len];
         let bader_volume = Vec::with_capacity(0);
@@ -123,8 +122,8 @@ impl Analysis {
 
     /// Returns the index of a specific maxima in [`self.bader_maxima`].
     fn index_get(&self, maxima: usize) -> Result<usize, AnalysisError> {
-        match self.maxima_index[maxima] {
-            Some(index) => Ok(index),
+        match self.maxima_index.get(&maxima) {
+            Some(index) => Ok(*index),
             None => Err(AnalysisError::NotMaxima),
         }
     }
@@ -169,6 +168,8 @@ impl Analysis {
     /// Assigns each Bader maxima to an atom recording the distance between
     /// maxima and atom position.
     pub fn assign_atoms(&mut self, atoms: &Atoms, grid: &Grid, pbar: Bar) {
+        let mut assigned_atom = Vec::with_capacity(atoms.positions.len());
+        let mut minimum_distance = Vec::with_capacity(atoms.positions.len());
         for maxima in self.bader_maxima.iter() {
             let maxima_cartesian = grid.to_cartesian(*maxima as isize);
             let maxima_cartesian = {
@@ -205,10 +206,12 @@ impl Analysis {
                     }
                 }
             }
-            self.assigned_atom.push(atom_num);
-            self.minimum_distance.push(min_distance.powf(0.5));
+            assigned_atom.push(atom_num);
+            minimum_distance.push(min_distance.powf(0.5));
             pbar.tick()
         }
+        self.assigned_atom = assigned_atom;
+        self.minimum_distance = minimum_distance;
     }
 
     /// Sums the densities for each bader volume.
@@ -221,19 +224,21 @@ impl Analysis {
                       -> Result<(), AnalysisError> {
         let mut minimum_distance = vec![f64::INFINITY; atoms.positions.len()];
         let mut bader_charge =
-            vec![vec![0.; grid.size.total]; self.bader_charge.len()];
-        let mut bader_volume = vec![0.; grid.size.total];
+            vec![vec![0.; self.bader_maxima.len()]; self.bader_charge.len()];
+        let mut bader_volume = vec![0.; self.bader_maxima.len()];
         let volume = grid.voxel_lattice.volume;
         for p in 0..grid.size.total {
             match voxel_map.voxel_get(p as isize) {
                 Voxel::Weight(weights) => {
-                    let atom_num = self.atom_get(weights[0].0)?;
+                    let atom_num = self.atom_get(weights[0] as usize)?;
                     let mut is_atom_boundary = false;
-                    for (volume_number, weight) in weights.iter() {
-                        if atom_num != self.atom_get(*volume_number)? {
+                    for maxima_weight in weights.iter() {
+                        let maxima = *maxima_weight as usize;
+                        let weight = maxima_weight - maxima as f64;
+                        if atom_num != self.atom_get(maxima)? {
                             is_atom_boundary = true
                         }
-                        let i = self.index_get(*volume_number)?;
+                        let i = self.index_get(maxima)?;
                         bader_volume[i] += weight;
                         for (j, charge) in densities.iter().enumerate() {
                             bader_charge[j][i] += weight * charge[p];
@@ -270,8 +275,8 @@ impl Analysis {
                         }
                     }
                 }
-                Voxel::Maxima(volume_number) => {
-                    let i = self.index_get(volume_number)?;
+                Voxel::Maxima(maxima) => {
+                    let i = self.index_get(maxima)?;
                     bader_volume[i] += 1.;
                     for (j, charge) in densities.iter().enumerate() {
                         bader_charge[j][i] += charge[p];
@@ -337,11 +342,15 @@ impl Analysis {
                                     }
                                     Voxel::Weight(weights) => {
                                         let mut w = None;
-                                        for (maxima, weight) in weights {
-                                            if self.atom_get(*maxima).unwrap()
+                                        for maxima_weight in weights {
+                                            let maxima =
+                                                *maxima_weight as usize;
+                                            let weight =
+                                                maxima_weight - maxima as f64;
+                                            if self.atom_get(maxima).unwrap()
                                                == atom_num
                                             {
-                                                w = Some(*weight);
+                                                w = Some(weight);
                                                 break;
                                             }
                                         }
@@ -359,13 +368,13 @@ impl Analysis {
     pub fn output_volume_map(&self,
                              grid: &Grid,
                              voxel_map: &VoxelMap,
-                             volume_num: usize,
+                             maxima_out: usize,
                              pbar: Bar)
                              -> Vec<Option<f64>> {
         (0..grid.size.total).map(|p| {
                                 let w = match voxel_map.voxel_get(p as isize) {
                                     Voxel::Maxima(maxima) => {
-                                        if maxima == volume_num {
+                                        if maxima == maxima_out {
                                             Some(1.)
                                         } else {
                                             None
@@ -373,9 +382,13 @@ impl Analysis {
                                     }
                                     Voxel::Weight(weights) => {
                                         let mut w = None;
-                                        for (maxima, weight) in weights {
-                                            if *maxima == volume_num {
-                                                w = Some(*weight);
+                                        for maxima_weight in weights {
+                                            let maxima =
+                                                *maxima_weight as usize;
+                                            let weight =
+                                                maxima_weight - maxima as f64;
+                                            if maxima == maxima_out {
+                                                w = Some(weight);
                                                 break;
                                             }
                                         }
