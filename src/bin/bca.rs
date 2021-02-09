@@ -60,6 +60,10 @@ fn main() {
             }
         }).unwrap();
     }
+    {
+        let mut weights = voxel_map.lock();
+        weights.shrink_to_fit();
+    }
     let mut analysis =
         Analysis::new(&voxel_map, densities.len(), atoms.positions.len());
     // find the nearest atom to each Bader maxima

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 pub enum WeightResult {
     Maxima,
     Interier(usize),
-    Boundary(Vec<(usize, f64)>),
+    Boundary(Vec<f64>),
 }
 
 /// Steps in the density grid, from point p, following the gradient.
@@ -53,7 +53,7 @@ pub enum WeightResult {
 ///     WeightResult::Boundary(weights) => weights,
 ///     _ => Vec::with_capacity(0),
 /// };
-/// assert_eq!(weight, vec![(62, 0.625), (61, 0.375)])
+/// assert_eq!(weight, vec![62.625, 61.375])
 /// ```
 pub fn weight_step(p: isize,
                    grid: &Grid,
@@ -75,9 +75,10 @@ pub fn weight_step(p: isize,
             match maxima.cmp(&-1) {
                 std::cmp::Ordering::Less => {
                     let point_weights = voxel_map.weight_get(maxima);
-                    for (volume_number, w) in point_weights.iter() {
-                        let weight =
-                            weights.entry(*volume_number).or_insert(0.);
+                    for maxima_weight in point_weights.iter() {
+                        let maxima = *maxima_weight as usize;
+                        let w = maxima_weight - maxima as f64;
+                        let weight = weights.entry(maxima).or_insert(0.);
                         *weight += w * rho;
                     }
                 }
@@ -95,11 +96,11 @@ pub fn weight_step(p: isize,
         std::cmp::Ordering::Greater => {
             let mut total = 0.;
             let mut weights = weights.into_iter()
-                                     .filter_map(|(volume_number, weight)| {
+                                     .filter_map(|(maxima, weight)| {
                                          let weight = weight / t_sum;
                                          if weight > grid.weight_tolerance {
                                              total += weight;
-                                             Some((volume_number, weight))
+                                             Some((maxima, weight))
                                          } else {
                                              None
                                          }
@@ -108,9 +109,11 @@ pub fn weight_step(p: isize,
             if weights.len() > 1 {
                 weights.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
                 // re-adjust the weights
-                for w in weights.iter_mut() {
-                    (*w).1 /= total;
-                }
+                let mut weights =
+                    weights.iter()
+                           .map(|(maxima, w)| *maxima as f64 + w / total)
+                           .collect::<Vec<f64>>();
+                weights.shrink_to_fit();
                 WeightResult::Boundary(weights)
             } else {
                 WeightResult::Interier(weights[0].0)
@@ -163,7 +166,7 @@ pub fn weight_step(p: isize,
 ///     voxel_map.maxima_store(*p, 62 - (i as isize) % 2);
 /// }
 /// weight(33, &grid, &density, &voxel_map);
-/// assert_eq!(voxel_map.weight_get(-2), &vec![(62, 0.625), (61, 0.375)]);
+/// assert_eq!(voxel_map.weight_get(-2), &vec![62.625, 61.375]);
 /// ```
 pub fn weight(p: usize, grid: &Grid, density: &[f64], voxel_map: &VoxelMap) {
     let pt = p as isize;
