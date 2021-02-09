@@ -9,7 +9,7 @@ pub enum Voxel<'a> {
     Maxima(usize),
     /// Contians a vector of the maxima the current voxel contributes to and
     /// their weights.
-    Weight(&'a Vec<(usize, f64)>),
+    Weight(&'a Vec<f64>),
     /// A voxel beneath the vacuum tolerance and not contributing to any maxima.
     Vacuum,
 }
@@ -23,15 +23,15 @@ unsafe impl<'a> Sync for Lock<'a> {}
 
 /// Deref only exposes the weight_map field of a [`VoxelMap`].
 impl<'a> Deref for Lock<'a> {
-    type Target = Vec<Vec<(usize, f64)>>;
-    fn deref(&self) -> &Vec<Vec<(usize, f64)>> {
+    type Target = Vec<Vec<f64>>;
+    fn deref(&self) -> &Vec<Vec<f64>> {
         unsafe { &*self.data.weight_map.get() }
     }
 }
 
 /// DerefMut only exposes the weight_map field of a [`VoxelMap`].
 impl<'a> DerefMut for Lock<'a> {
-    fn deref_mut(&mut self) -> &mut Vec<Vec<(usize, f64)>> {
+    fn deref_mut(&mut self) -> &mut Vec<Vec<f64>> {
         unsafe { &mut *self.data.weight_map.get() }
     }
 }
@@ -68,7 +68,7 @@ impl<'a> Drop for Lock<'a> {
 /// }
 /// ```
 pub struct VoxelMap {
-    weight_map: UnsafeCell<Vec<Vec<(usize, f64)>>>,
+    weight_map: UnsafeCell<Vec<Vec<f64>>>,
     voxel_map: Vec<AtomicIsize>,
     lock: AtomicBool,
 }
@@ -79,8 +79,7 @@ impl VoxelMap {
     /// Initialises a VoxelMap of dimensions, size.
     pub fn new(size: usize) -> Self {
         // For mapping the the voxels
-        let weight_map =
-            UnsafeCell::new(Vec::<Vec<(usize, f64)>>::with_capacity(size));
+        let weight_map = UnsafeCell::new(Vec::<Vec<f64>>::with_capacity(size));
         let mut voxel_map = Vec::with_capacity(size);
         voxel_map.resize_with(size, || AtomicIsize::new(-1));
         let lock = AtomicBool::new(false);
@@ -90,11 +89,16 @@ impl VoxelMap {
                lock }
     }
 
+    /// How many voxels are boundary voxels?
+    pub fn boundary_voxels(&self) -> usize {
+        (unsafe { &*self.weight_map.get() }).len()
+    }
+
     /// Retrieves the state of the voxel, p. This will lock until p has been stored
     /// in the VoxelMap and then return either a `Voxel::Maxima` or `Voxel::Weight`.
     /// Calling this on a voxel, p, that is below the vacuum_tolerance will deadlock
     /// as a voxel is considered stored once voxel_map\[p\] > -1.
-    pub fn weight_get(&self, i: isize) -> &Vec<(usize, f64)> {
+    pub fn weight_get(&self, i: isize) -> &Vec<f64> {
         let i = -2 - i;
         &(unsafe { &*self.weight_map.get() })[i as usize]
     }
@@ -111,13 +115,13 @@ impl VoxelMap {
 
     /// Atomic loading of voxel, p, from voxel_map
     pub fn maxima_non_block_get(&self, p: isize) -> isize {
-        let volume_number = self.voxel_map[p as usize].load(Ordering::Relaxed);
-        match volume_number.cmp(&-1) {
+        let maxima = self.voxel_map[p as usize].load(Ordering::Relaxed);
+        match maxima.cmp(&-1) {
             std::cmp::Ordering::Equal => -1,
-            std::cmp::Ordering::Greater => volume_number,
+            std::cmp::Ordering::Greater => maxima,
             std::cmp::Ordering::Less => {
-                let weight = self.weight_get(volume_number);
-                weight[0].0 as isize
+                let weight = self.weight_get(maxima);
+                weight[0] as isize
             }
         }
     }
@@ -125,14 +129,14 @@ impl VoxelMap {
     /// A none locking retrieval of the state of voxel, p. This should only be
     /// used once the VoxelMap has been fully populated.
     pub fn voxel_get(&self, p: isize) -> Voxel {
-        let volume_number = self.voxel_map[p as usize].load(Ordering::Relaxed);
-        match volume_number.cmp(&-1) {
+        let maxima = self.voxel_map[p as usize].load(Ordering::Relaxed);
+        match maxima.cmp(&-1) {
             std::cmp::Ordering::Equal => Voxel::Vacuum,
             std::cmp::Ordering::Greater => {
-                Voxel::Maxima(volume_number as usize)
+                Voxel::Maxima(maxima as usize)
             }
             std::cmp::Ordering::Less => {
-                let weight = self.weight_get(volume_number);
+                let weight = self.weight_get(maxima);
                 Voxel::Weight(weight)
             }
         }
