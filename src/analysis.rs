@@ -3,7 +3,7 @@ use crate::grid::Grid;
 use crate::progress::Bar;
 use crate::utils;
 use crate::voxel_map::{Voxel, VoxelMap};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// The Errors Associated with the [`Analysis`] structure.
 pub enum AnalysisError {
@@ -323,6 +323,31 @@ impl Analysis {
             }
             self.atoms_volume[*atom_num] += self.bader_volume[maxima_i];
         }
+    }
+
+    /// Find the Neighbouring Bader atoms for each Bader atom.
+    pub fn neighbouring_atoms_get(&self,
+                                  voxel_map: &VoxelMap)
+                                  -> Vec<Vec<usize>> {
+        let mut neighbours =
+            vec![FxHashSet::<usize>::default(); self.atoms_charge.len()];
+        voxel_map.boundary_voxels().iter().for_each(|weights| {
+            let atoms = weights.iter().map(|b_f| {
+                let b = *b_f as usize;
+                self.atom_get(b).unwrap()
+            }).collect::<Vec<usize>>();
+            let len_a = atoms.len();
+            atoms.iter().for_each(|atom| {
+                (0..len_a).for_each(|neighbour| {
+                    if atoms[neighbour] != *atom {
+                        neighbours[*atom].insert(atoms[neighbour]);
+                    }
+                });
+            });
+        });
+        neighbours.iter()
+                  .map(|set| set.iter().copied().collect())
+                  .collect()
     }
 
     /// Creates a voxel map for a specific atom.

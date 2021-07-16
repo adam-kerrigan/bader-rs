@@ -89,9 +89,9 @@ impl VoxelMap {
                lock }
     }
 
-    /// How many voxels are boundary voxels?
-    pub fn boundary_voxels(&self) -> usize {
-        (unsafe { &*self.weight_map.get() }).len()
+    /// Return just the boundary voxels
+    pub fn boundary_voxels(&self) -> &Vec<Vec<f64>> {
+        unsafe { &*self.weight_map.get() }
     }
 
     /// Retrieves the state of the voxel, p. This will lock until p has been stored
