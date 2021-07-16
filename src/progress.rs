@@ -18,7 +18,7 @@ impl Bar {
     pub fn new(len: u64, refresh_rate: u64, prefix: String) -> Self {
         let progress_bar = ProgressBar::hidden();
         progress_bar.set_length(len);
-        progress_bar.set_prefix(&prefix);
+        progress_bar.set_prefix(prefix);
         progress_bar.set_style(
             ProgressStyle::default_bar()
                 .template(

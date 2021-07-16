@@ -140,7 +140,7 @@ mod test {
                         vec![14],
                         vec![16],
                         vec![4],
-                        vec![7]];
+                        vec![7],];
         assert_eq!(vecs, voronoi.vectors)
     }
 }

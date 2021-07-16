@@ -16,9 +16,9 @@ impl std::fmt::Display for AnalysisError {
     /// Match the error and write the text associated with matched error.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotMaxima => {
-                f.write_str("Error: Attempted to look up non-maxima in maxima index.")
-            },
+            Self::NotMaxima => f.write_str(
+                "Error: Attempted to look up non-maxima in maxima index.",
+            ),
         }
     }
 }
@@ -28,9 +28,9 @@ impl std::fmt::Debug for AnalysisError {
     /// Match the error and write the text associated with matched error.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotMaxima => {
-                f.write_str("Error: Attempted to look up non-maxima in maxima index.")
-            },
+            Self::NotMaxima => f.write_str(
+                "Error: Attempted to look up non-maxima in maxima index.",
+            ),
         }
     }
 }
@@ -263,10 +263,13 @@ impl Analysis {
                             atoms.reduced_lattice.cartesian_shift_matrix.iter()
                         {
                             let distance = {
-                                (p_lll_cartesian[0] - (atom[0] + atom_shift[0])).powi(2)
-                                    + (p_lll_cartesian[1] - (atom[1] + atom_shift[1]))
+                                (p_lll_cartesian[0] - (atom[0] + atom_shift[0]))
+                                    .powi(2)
+                                    + (p_lll_cartesian[1]
+                                        - (atom[1] + atom_shift[1]))
                                         .powi(2)
-                                    + (p_lll_cartesian[2] - (atom[2] + atom_shift[2]))
+                                    + (p_lll_cartesian[2]
+                                        - (atom[2] + atom_shift[2]))
                                         .powi(2)
                             };
                             if distance < minimum_distance[atom_num] {

@@ -206,10 +206,7 @@ impl Args {
         };
 
         // Collect file type
-        let file_type = match arguments.value_of("file type") {
-            Some(f) => Some(String::from(f)),
-            None => None,
-        };
+        let file_type = arguments.value_of("file type").map(String::from);
         let file_type = match file_type {
             Some(ftype) => {
                 if ftype.eq("cube") {
@@ -294,18 +291,15 @@ impl Args {
             1 => Reference::One(String::from(references[0])),
             _ => Reference::None,
         };
-        let spin = match arguments.value_of("spin") {
-            Some(x) => Some(String::from(x)),
-            None => None,
-        };
+        let spin = arguments.value_of("spin").map(String::from);
         Self { file,
                file_type,
                weight_tolerance,
                maxima_tolerance,
                output,
                reference,
-               threads,
                spin,
+               threads,
                vacuum_tolerance }
     }
 }
@@ -376,7 +370,7 @@ mod tests {
     fn argument_file_type_cube() {
         let app = ClapApp::get();
         let matches =
-            app.get_matches_from(vec!["bca", "charge.cube", "--type", "cube",]);
+            app.get_matches_from(vec!["bca", "charge.cube", "--type", "cube"]);
         let args = Args::new(matches);
         let flag = matches!(args.file_type, FileType::Cube);
         assert!(flag);
@@ -426,7 +420,7 @@ mod tests {
     fn argument_output_index() {
         let app = ClapApp::get();
         let matches = app.get_matches_from(vec!["bca", "CHGCAR", "-o",
-                                                "volumes", "-i", "1"]);
+                                                "volumes", "-i", "1",]);
         let args = Args::new(matches);
         match args.output {
             WriteType::Volume(v) => assert_eq!(v, vec![0]),
@@ -439,7 +433,7 @@ mod tests {
         let app = ClapApp::get();
         let matches = app.get_matches_from(vec!["bca", "CHGCAR", "-o",
                                                 "atoms", "--index", "1",
-                                                "-i", "3"]);
+                                                "-i", "3",]);
         let args = Args::new(matches);
         match args.output {
             WriteType::Atom(v) => assert_eq!(v, vec![0, 2]),

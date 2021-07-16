@@ -271,15 +271,24 @@ impl FileFormat for Vasp {
         pbar.set_length(data.len() / 5 + (data.len() % 5 != 0) as usize);
         buffer.write_all(atoms.text.as_bytes())?;
         data.chunks(5).for_each(|line| {
-            if let Err(e) = line.iter()
-                                .try_for_each(|f| write!(buffer, " {:.11}", FortranFormat{ float: *f, mult: atoms.lattice.volume })) {
-                panic!("Error occured during write: {}", e)
-            };
-            if let Err(e) = writeln!(buffer) {
-                panic!("Error occured during write: {}", e)
-            };
-            pbar.tick();
-        });
+                          if let Err(e) = line.iter().try_for_each(|f| {
+                                                         write!(
+                    buffer,
+                    " {:.11}",
+                    FortranFormat {
+                        float: *f,
+                        mult: atoms.lattice.volume
+                    }
+                )
+                                                     })
+                          {
+                              panic!("Error occured during write: {}", e)
+                          };
+                          if let Err(e) = writeln!(buffer) {
+                              panic!("Error occured during write: {}", e)
+                          };
+                          pbar.tick();
+                      });
         Ok(())
     }
 

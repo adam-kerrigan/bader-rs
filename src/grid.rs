@@ -46,10 +46,10 @@ impl Grid {
                size,
                vacuum_tolerance,
                voronoi,
-               weight_tolerance,
-               maxima_tolerance,
                voxel_lattice,
-               voxel_origin }
+               voxel_origin,
+               weight_tolerance,
+               maxima_tolerance }
     }
 
     /// get the full shift to visit the surrounding 26 voxels

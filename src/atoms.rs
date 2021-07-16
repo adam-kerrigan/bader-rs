@@ -34,9 +34,9 @@ impl Atoms {
                      .collect::<Vec<[f64; 3]>>();
         Self { lattice,
                positions,
+               text,
                reduced_lattice,
-               reduced_positions,
-               text }
+               reduced_positions }
     }
 }
 

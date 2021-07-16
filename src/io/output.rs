@@ -323,7 +323,7 @@ pub fn write_densities(atoms: &Atoms,
         std::cmp::Ordering::Greater => vec![String::from("charge"),
                                             String::from("spin_x"),
                                             String::from("spin_y"),
-                                            String::from("spin_z")],
+                                            String::from("spin_z"),],
     };
     match output {
         WriteType::Atom(a) => {
@@ -343,16 +343,11 @@ pub fn write_densities(atoms: &Atoms,
                     let fname = format!("atom_{}_{}", atom + 1, filename[i]);
                     let pbar =
                         Bar::visible(1, 100, format!("Writing {}:", fname));
-                    let den = den.iter()
-                                 .zip(&map)
-                                 .map(|(d, weight)| {
-                                     if let Some(w) = weight {
-                                         Some(d * w)
-                                     } else {
-                                         None
-                                     }
-                                 })
-                                 .collect::<Vec<Option<f64>>>();
+                    let den =
+                        den.iter()
+                           .zip(&map)
+                           .map(|(d, weight)| weight.as_ref().map(|w| d * w))
+                           .collect::<Vec<Option<f64>>>();
                     file_type.write(atoms, den, fname, pbar)?;
                 }
             }
@@ -376,16 +371,11 @@ pub fn write_densities(atoms: &Atoms,
                         format!("volume_{}_{}", volume + 1, filename[i]);
                     let pbar =
                         Bar::visible(1, 100, format!("Writing {}:", fname));
-                    let den = den.iter()
-                                 .zip(&map)
-                                 .map(|(d, weight)| {
-                                     if let Some(w) = weight {
-                                         Some(d * w)
-                                     } else {
-                                         None
-                                     }
-                                 })
-                                 .collect::<Vec<Option<f64>>>();
+                    let den =
+                        den.iter()
+                           .zip(&map)
+                           .map(|(d, weight)| weight.as_ref().map(|w| d * w))
+                           .collect::<Vec<Option<f64>>>();
                     file_type.write(atoms, den, fname, pbar)?;
                 }
                 println!(" Done.");

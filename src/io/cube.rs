@@ -215,14 +215,24 @@ impl FileFormat for Cube {
         pbar.set_length(data.len() / 6 + (data.len() % 6 != 0) as usize);
         buffer.write_all(atoms.text.as_bytes())?;
         data.chunks(6).for_each(|line| {
-            if let Err(e) = line.iter().try_for_each(|f| write!(buffer, " {:.5}", FortranFormat{ float: *f, mult: VOLUME_UNITS })) {
-                panic!("Error occured during write: {}", e)
-            };
-            if let Err(e) = writeln!(buffer) {
-                panic!("Error occured during write: {}", e)
-            };
-            pbar.tick();
-        });
+                          if let Err(e) = line.iter().try_for_each(|f| {
+                                                         write!(
+                    buffer,
+                    " {:.5}",
+                    FortranFormat {
+                        float: *f,
+                        mult: VOLUME_UNITS
+                    }
+                )
+                                                     })
+                          {
+                              panic!("Error occured during write: {}", e)
+                          };
+                          if let Err(e) = writeln!(buffer) {
+                              panic!("Error occured during write: {}", e)
+                          };
+                          pbar.tick();
+                      });
         Ok(())
     }
 
