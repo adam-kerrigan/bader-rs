@@ -1034,36 +1034,22 @@ mod tests {
     #[test]
     fn grid_new() {
         let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
-        let grid = Grid::new([4, 4, 4],
-                             lattice.to_cartesian,
-                             1E-8,
-                             1E-6,
-                             Some(1E-3),
-                             [0., 0., 0.0]);
-        assert_eq!(grid.voxel_lattice.volume, lattice.volume / 64.)
+        let grid = Grid::new([4, 4, 4], lattice.to_cartesian, [0., 0., 0.0]);
+        assert!((grid.voxel_lattice.volume - (lattice.volume / 64.0f64)).abs()
+                < f64::EPSILON)
     }
 
     #[test]
     #[should_panic]
     fn grid_new_bad_grid() {
         let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
-        let _ = Grid::new([1, 4, 4],
-                          lattice.to_cartesian,
-                          1E-8,
-                          1E-6,
-                          Some(1E-3),
-                          [0., 0., 0.0]);
+        let _ = Grid::new([1, 4, 4], lattice.to_cartesian, [0., 0., 0.0]);
     }
 
     #[test]
     fn grid_full_shift() {
         let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
-        let grid = Grid::new([3, 4, 5],
-                             lattice.to_cartesian,
-                             1E-8,
-                             1E-6,
-                             Some(1E-3),
-                             [0., 0., 0.0]);
+        let grid = Grid::new([3, 4, 5], lattice.to_cartesian, [0., 0., 0.0]);
         let shift = [-26, -25, -24, -21, -20, -19, -16, -15, -14, -6, -5, -4,
                      -1, 1, 4, 5, 6, 14, 15, 16, 19, 20, 21, 24, 25, 26];
         assert_eq!(shift, grid.full_shift(26))
@@ -1072,12 +1058,7 @@ mod tests {
     #[test]
     fn grid_reduced_shift() {
         let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
-        let grid = Grid::new([3, 4, 5],
-                             lattice.to_cartesian,
-                             1E-8,
-                             1E-6,
-                             Some(1E-3),
-                             [0., 0., 0.0]);
+        let grid = Grid::new([3, 4, 5], lattice.to_cartesian, [0., 0., 0.0]);
         let shift = [20, -20, 5, -5, 1, -1];
         assert_eq!(shift, grid.reduced_shift(26))
     }
@@ -1085,12 +1066,7 @@ mod tests {
     #[test]
     fn grid_gradient_shift() {
         let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
-        let grid = Grid::new([3, 4, 5],
-                             lattice.to_cartesian,
-                             1E-8,
-                             1E-6,
-                             Some(1E-3),
-                             [0., 0., 0.0]);
+        let grid = Grid::new([3, 4, 5], lattice.to_cartesian, [0., 0., 0.0]);
         assert_eq!(1, grid.gradient_shift(26, [0., 0., 1.]))
     }
 

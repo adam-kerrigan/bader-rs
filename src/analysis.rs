@@ -413,8 +413,8 @@ mod test {
     #[test]
     fn analysis_new_all_vacuum() {
         let voxel_map =
-            VoxelMap::new([1, 5, 2],
-                          [[1.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 2.0]],
+            VoxelMap::new([5, 3, 2],
+                          [[5.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 2.0]],
                           [0.0, 0.0, 0.0]);
         let analysis = Analysis::new(&voxel_map, 1, 1);
         assert!(analysis.bader_maxima.is_empty())
@@ -423,8 +423,8 @@ mod test {
     #[test]
     fn analysis_new_zero_densities_len() {
         let voxel_map =
-            VoxelMap::new([1, 5, 2],
-                          [[1.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 2.0]],
+            VoxelMap::new([3, 5, 2],
+                          [[3.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 2.0]],
                           [0.0, 0.0, 0.0]);
         let analysis = Analysis::new(&voxel_map, 0, 1);
         assert!(analysis.bader_maxima.is_empty())

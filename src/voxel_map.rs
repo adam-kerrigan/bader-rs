@@ -229,8 +229,8 @@ mod tests {
     #[test]
     fn voxel_map_maxima_store() {
         let voxel_map =
-            VoxelMap::new([1, 5, 2],
-                          [[1.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 2.0]],
+            VoxelMap::new([2, 5, 3],
+                          [[2.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 3.0]],
                           [0.0, 0.0, 0.0]);
         for p in 0..(voxel_map.grid.size.total as isize) {
             voxel_map.maxima_store(p, p - 1);
