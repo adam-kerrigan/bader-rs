@@ -7,27 +7,18 @@ pub struct Grid {
     shift: Shift,
     /// The 3d size of the data.
     pub size: Size,
-    /// The cut-off for being considered vacuum.
-    pub vacuum_tolerance: Option<f64>,
     /// The voronoi vectors and their alphas.
     pub voronoi: Voronoi,
     /// Information on the voxel basis.
     pub voxel_lattice: Lattice,
     /// The origin of each voxel.
     pub voxel_origin: [f64; 3],
-    /// The cut-off for ignoring the weight contribution.
-    pub weight_tolerance: f64,
-    /// The cut-off for ignoring the maxima contribution.
-    pub maxima_tolerance: f64,
 }
 
 impl Grid {
     /// Initialises a grid structure. Computes the voxel_lattice from the grid and lattice.
     pub fn new(grid: [usize; 3],
                lattice: [[f64; 3]; 3],
-               weight_tolerance: f64,
-               maxima_tolerance: f64,
-               vacuum_tolerance: Option<f64>,
                voxel_origin: [f64; 3])
                -> Self {
         let size = Size::new(grid[0], grid[1], grid[2]);
@@ -44,12 +35,9 @@ impl Grid {
         let voronoi = Voronoi::new(&voxel_lattice);
         Self { shift,
                size,
-               vacuum_tolerance,
                voronoi,
                voxel_lattice,
-               voxel_origin,
-               weight_tolerance,
-               maxima_tolerance }
+               voxel_origin }
     }
 
     /// get the full shift to visit the surrounding 26 voxels

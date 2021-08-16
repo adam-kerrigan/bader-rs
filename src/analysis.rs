@@ -218,10 +218,10 @@ impl Analysis {
     pub fn charge_sum(&mut self,
                       atoms: &Atoms,
                       densities: &[Vec<f64>],
-                      grid: &Grid,
                       voxel_map: &VoxelMap,
                       pbar: Bar)
                       -> Result<(), AnalysisError> {
+        let grid = &voxel_map.grid;
         let mut minimum_distance = vec![f64::INFINITY; atoms.positions.len()];
         let mut bader_charge =
             vec![vec![0.; self.bader_maxima.len()]; self.bader_charge.len()];
@@ -412,14 +412,20 @@ mod test {
 
     #[test]
     fn analysis_new_all_vacuum() {
-        let voxel_map = VoxelMap::new(10);
+        let voxel_map =
+            VoxelMap::new([1, 5, 2],
+                          [[1.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 2.0]],
+                          [0.0, 0.0, 0.0]);
         let analysis = Analysis::new(&voxel_map, 1, 1);
         assert!(analysis.bader_maxima.is_empty())
     }
 
     #[test]
     fn analysis_new_zero_densities_len() {
-        let voxel_map = VoxelMap::new(10);
+        let voxel_map =
+            VoxelMap::new([1, 5, 2],
+                          [[1.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 2.0]],
+                          [0.0, 0.0, 0.0]);
         let analysis = Analysis::new(&voxel_map, 0, 1);
         assert!(analysis.bader_maxima.is_empty())
     }

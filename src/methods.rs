@@ -1,4 +1,3 @@
-use crate::grid::Grid;
 use crate::voxel_map::VoxelMap;
 use std::collections::HashMap;
 
@@ -56,11 +55,12 @@ pub enum WeightResult {
 /// assert_eq!(weight, vec![62.625, 61.375])
 /// ```
 pub fn weight_step(p: isize,
-                   grid: &Grid,
                    density: &[f64],
-                   voxel_map: &VoxelMap)
+                   voxel_map: &VoxelMap,
+                   weight_tolerance: f64)
                    -> WeightResult {
     let control = density[p as usize];
+    let grid = &voxel_map.grid;
     let mut t_sum = 0.;
     let mut weights = HashMap::<usize, f64>::new();
     // colllect the shift and distances and iterate over them.
@@ -98,7 +98,7 @@ pub fn weight_step(p: isize,
             let mut weights = weights.into_iter()
                                      .filter_map(|(maxima, weight)| {
                                          let weight = weight / t_sum;
-                                         if weight > grid.weight_tolerance {
+                                         if weight > weight_tolerance {
                                              total += weight;
                                              Some((maxima, weight))
                                          } else {
@@ -165,12 +165,15 @@ pub fn weight_step(p: isize,
 /// for (i, p) in [37, 45, 49].iter().enumerate() {
 ///     voxel_map.maxima_store(*p, 62 - (i as isize) % 2);
 /// }
-/// weight(33, &grid, &density, &voxel_map);
+/// weight(33, &density, &voxel_map, 1E-8);
 /// assert_eq!(voxel_map.weight_get(-2), &vec![62.625, 61.375]);
 /// ```
-pub fn weight(p: usize, grid: &Grid, density: &[f64], voxel_map: &VoxelMap) {
+pub fn weight(p: usize,
+              density: &[f64],
+              voxel_map: &VoxelMap,
+              weight_tolerance: f64) {
     let pt = p as isize;
-    match weight_step(pt, grid, density, &voxel_map) {
+    match weight_step(pt, density, voxel_map, weight_tolerance) {
         WeightResult::Maxima => voxel_map.maxima_store(pt, pt),
         WeightResult::Interier(maxima) => {
             voxel_map.maxima_store(pt, maxima as isize);

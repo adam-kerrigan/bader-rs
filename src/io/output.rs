@@ -233,7 +233,8 @@ impl Table {
 pub fn charge_files(analysis: &Analysis,
                     atoms: &Atoms,
                     grid: &Grid,
-                    file_type: &Box<dyn FileFormat>)
+                    file_type: &Box<dyn FileFormat>,
+                    maxima_tolerance: f64)
                     -> (String, String) {
     let mut bader_table =
         Table::new(TableType::BaderCharge, analysis.bader_charge.len());
@@ -274,7 +275,7 @@ pub fn charge_files(analysis: &Analysis,
             { grid.to_cartesian(analysis.bader_maxima[i] as isize) };
         let maxima_cartesian =
             utils::dot(maxima_cartesian, grid.voxel_lattice.to_cartesian);
-        if analysis.bader_charge[0][i] >= grid.maxima_tolerance {
+        if analysis.bader_charge[0][i] >= maxima_tolerance {
             bader_table.add_row(i + 1,
                                 maxima_cartesian,
                                 &analysis.bader_charge
@@ -310,11 +311,11 @@ pub fn write(atoms_charge_file: String,
 pub fn write_densities(atoms: &Atoms,
                        analysis: &Analysis,
                        densities: Vec<Vec<f64>>,
-                       grid: &Grid,
                        output: WriteType,
                        voxel_map: &VoxelMap,
                        file_type: &Box<dyn FileFormat>)
                        -> std::io::Result<()> {
+    let grid = &voxel_map.grid;
     let filename = match densities.len().cmp(&2) {
         std::cmp::Ordering::Less => vec![String::from("charge")],
         std::cmp::Ordering::Equal => {

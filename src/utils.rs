@@ -70,10 +70,10 @@ pub fn invert_lattice(lattice: &[[f64; 3]; 3])
 }
 
 /// returns the first index that is not vacuum from a sorted index list
-pub fn vacuum_tolerance(density: &[f64],
-                        index: &[usize],
-                        tolerance: Option<f64>)
-                        -> usize {
+pub fn vacuum_index(density: &[f64],
+                    index: &[usize],
+                    tolerance: Option<f64>)
+                    -> usize {
     match tolerance {
         Some(tol) => {
             for (i, p) in index.iter().enumerate() {
@@ -116,34 +116,34 @@ mod tests {
     }
 
     #[test]
-    fn utils_vacuum_tolerance_some_high() {
+    fn utils_vacuum_index_some_high() {
         let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
         let index = (0..60).rev().collect::<Vec<usize>>();
-        let i = vacuum_tolerance(&data, &index, Some(100.));
+        let i = vacuum_index(&data, &index, Some(100.));
         assert_eq!(i, 0)
     }
 
     #[test]
-    fn utils_vacuum_tolerance_some_low() {
+    fn utils_vacuum_index_some_low() {
         let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
         let index = (0..60).rev().collect::<Vec<usize>>();
-        let i = vacuum_tolerance(&data, &index, Some(-1.));
+        let i = vacuum_index(&data, &index, Some(-1.));
         assert_eq!(i, 60)
     }
 
     #[test]
-    fn utils_vacuum_tolerance_some() {
+    fn utils_vacuum_index_some() {
         let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
         let index = (0..60).rev().collect::<Vec<usize>>();
-        let i = vacuum_tolerance(&data, &index, Some(10.));
+        let i = vacuum_index(&data, &index, Some(10.));
         assert_eq!(i, 49)
     }
 
     #[test]
-    fn utils_vacuum_tolerance_none() {
+    fn utils_vacuum_index_none() {
         let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
         let index = (0..60).rev().collect::<Vec<usize>>();
-        let i = vacuum_tolerance(&data, &index, None);
+        let i = vacuum_index(&data, &index, None);
         assert_eq!(i, 60)
     }
 }
