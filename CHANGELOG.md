@@ -1,3 +1,4 @@
+## v0.5.0
 ## v0.4.0
 ### Changes
 - VoxelMap now handles the running of the bader calculation, using VoxelMap::calc().
