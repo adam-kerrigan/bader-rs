@@ -1,9 +1,9 @@
-# bader-rs (0.3.2)
+# bader-rs (0.4.0)
 ![build](https://github.com/kerrigoon/bader-rs/workflows/build/badge.svg?branch=master)
 [![Latest Version](https://img.shields.io/crates/v/bader.svg)](https://crates.io/crates/bader)
 [![Documentation](https://docs.rs/bader/badge.svg)](https://docs.rs/bader/)
 [![DOI](https://zenodo.org/badge/292534636.svg)](https://zenodo.org/badge/latestdoi/292534636)
-[![MSRV: rustc 1.43+](https://img.shields.io/badge/MSRV-rustc_1.43+-lightgray.svg)](https://blog.rust-lang.org/2020/04/23/Rust-1.43.0.html)
+[![MSRV: rustc 1.54+](https://img.shields.io/badge/MSRV-rustc_1.54+-lightgray.svg)](https://blog.rust-lang.org/2021/07/29/Rust-1.54.0.html)
 
 An incredibly fast, multi-threaded, Bader charge partitioning tool. Based on methods presented in [Yu Min  and Trinkle Dallas R. 2011  J. Che.m Phys. 134 064111] with adaptions for multi-threading.
 ## Installation
