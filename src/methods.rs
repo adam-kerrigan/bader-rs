@@ -24,22 +24,15 @@ pub enum WeightResult {
 ///
 /// # Examples
 /// ```
-/// use bader::grid::Grid;
-/// use bader::atoms::Lattice;
 /// use bader::voxel_map::VoxelMap;
 /// use bader::methods::{WeightResult, weight_step};
 ///
 /// // Intialise the reference density, setting index 34 to 0. for easy maths.
 /// let density = (0..64).map(|rho| if rho != 34 { rho  as f64 } else {0.})
 ///                      .collect::<Vec<f64>>();
-/// let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
-/// let grid = Grid::new( [4, 4, 4],
-///                            lattice.to_cartesian,
-///                            1E-8,
-///                            1E-6,
-///                            None,
-///                            [0., 0., 0.]);
-/// let voxel_map = VoxelMap::new(64);
+/// let voxel_map = VoxelMap::new([4, 4, 4],
+///                               [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
+///                               [0.0, 0.0, 0.0]);
 /// // The highest gradient between point, p = 33, and it's neighbours, with
 /// // periodic boundary conditions, is with point p = 61.
 ///
@@ -48,7 +41,7 @@ pub enum WeightResult {
 /// for (i, p) in [37, 45, 49].iter().enumerate() {
 ///     voxel_map.maxima_store(*p, 62 - (i as isize) % 2);
 /// }
-/// let weight = match weight_step(33, &grid, &density, &voxel_map) {
+/// let weight = match weight_step(33, &density, &voxel_map, 1E-8) {
 ///     WeightResult::Boundary(weights) => weights,
 ///     _ => Vec::with_capacity(0),
 /// };
@@ -141,22 +134,15 @@ pub fn weight_step(p: isize,
 ///
 /// # Examples
 /// ```
-/// use bader::grid::Grid;
-/// use bader::atoms::Lattice;
 /// use bader::voxel_map::VoxelMap;
 /// use bader::methods::weight;
 ///
 /// // Intialise the reference density, setting index 34 to 0. for easy maths.
 /// let density = (0..64).map(|rho| if rho != 34 { rho  as f64 } else {0.})
 ///                      .collect::<Vec<f64>>();
-/// let lattice = Lattice::new([[3., 0., 0.], [0., 3., 0.], [0., 0., 3.]]);
-/// let grid = Grid::new( [4, 4, 4],
-///                            lattice.to_cartesian,
-///                            1E-8,
-///                            1E-6,
-///                            None,
-///                            [0., 0., 0.]);
-/// let voxel_map = VoxelMap::new(64);
+/// let voxel_map = VoxelMap::new([4, 4, 4],
+///                               [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
+///                               [0.0, 0.0, 0.0]);
 /// // The highest gradient between point, p = 33, and it's neighbours, with
 /// // periodic boundary conditions, is with point p = 61.
 ///

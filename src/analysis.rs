@@ -81,8 +81,10 @@ impl Analysis {
     /// use bader::analysis::Analysis;
     /// use bader::voxel_map::VoxelMap;
     ///
-    /// let voxel_map = VoxelMap::new(10);
-    /// (0..10).for_each(|p| voxel_map.maxima_store(p, p.rem_euclid(2)));
+    /// let voxel_map = VoxelMap::new([2, 2, 5],
+    ///                               [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 5.0]],
+    ///                               [0.0, 0.0, 0.0]);
+    /// (0..20).for_each(|p| voxel_map.maxima_store(p, p.rem_euclid(2)));
     /// let analysis = Analysis::new(&voxel_map, 2, 2);
     /// assert_eq!(analysis.bader_maxima, vec![0, 1])
     /// ```
