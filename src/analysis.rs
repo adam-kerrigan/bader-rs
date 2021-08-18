@@ -81,8 +81,10 @@ impl Analysis {
     /// use bader::analysis::Analysis;
     /// use bader::voxel_map::VoxelMap;
     ///
-    /// let voxel_map = VoxelMap::new(10);
-    /// (0..10).for_each(|p| voxel_map.maxima_store(p, p.rem_euclid(2)));
+    /// let voxel_map = VoxelMap::new([2, 2, 5],
+    ///                               [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 5.0]],
+    ///                               [0.0, 0.0, 0.0]);
+    /// (0..20).for_each(|p| voxel_map.maxima_store(p, p.rem_euclid(2)));
     /// let analysis = Analysis::new(&voxel_map, 2, 2);
     /// assert_eq!(analysis.bader_maxima, vec![0, 1])
     /// ```
@@ -218,10 +220,10 @@ impl Analysis {
     pub fn charge_sum(&mut self,
                       atoms: &Atoms,
                       densities: &[Vec<f64>],
-                      grid: &Grid,
                       voxel_map: &VoxelMap,
                       pbar: Bar)
                       -> Result<(), AnalysisError> {
+        let grid = &voxel_map.grid;
         let mut minimum_distance = vec![f64::INFINITY; atoms.positions.len()];
         let mut bader_charge =
             vec![vec![0.; self.bader_maxima.len()]; self.bader_charge.len()];
@@ -412,14 +414,20 @@ mod test {
 
     #[test]
     fn analysis_new_all_vacuum() {
-        let voxel_map = VoxelMap::new(10);
+        let voxel_map =
+            VoxelMap::new([5, 3, 2],
+                          [[5.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 2.0]],
+                          [0.0, 0.0, 0.0]);
         let analysis = Analysis::new(&voxel_map, 1, 1);
         assert!(analysis.bader_maxima.is_empty())
     }
 
     #[test]
     fn analysis_new_zero_densities_len() {
-        let voxel_map = VoxelMap::new(10);
+        let voxel_map =
+            VoxelMap::new([3, 5, 2],
+                          [[3.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 2.0]],
+                          [0.0, 0.0, 0.0]);
         let analysis = Analysis::new(&voxel_map, 0, 1);
         assert!(analysis.bader_maxima.is_empty())
     }

@@ -1,3 +1,8 @@
+use crate::grid::Grid;
+use crate::methods::weight;
+use crate::progress::Bar;
+use atomic_counter::{AtomicCounter, RelaxedCounter};
+use crossbeam_utils::thread;
 use std::cell::UnsafeCell;
 use std::collections::BTreeSet;
 use std::ops::{Deref, DerefMut};
@@ -58,7 +63,9 @@ impl<'a> Drop for Lock<'a> {
 /// use bader::voxel_map::VoxelMap;
 ///
 /// for p in 0..1isize {
-///     let voxel_map = VoxelMap::new(10);
+///     let voxel_map = VoxelMap::new([2, 5, 2],
+///                                   [[2.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 2.0]],
+///                                   [0.0, 0.0, 0.0]);
 ///     let i = {
 ///         let mut weight = voxel_map.lock();
 ///         (*weight).push(Vec::with_capacity(0));
@@ -70,6 +77,7 @@ impl<'a> Drop for Lock<'a> {
 pub struct VoxelMap {
     weight_map: UnsafeCell<Vec<Vec<f64>>>,
     voxel_map: Vec<AtomicIsize>,
+    pub grid: Grid,
     lock: AtomicBool,
 }
 
@@ -77,7 +85,12 @@ unsafe impl Sync for VoxelMap {}
 
 impl VoxelMap {
     /// Initialises a VoxelMap of dimensions, size.
-    pub fn new(size: usize) -> Self {
+    pub fn new(grid: [usize; 3],
+               lattice: [[f64; 3]; 3],
+               voxel_origin: [f64; 3])
+               -> Self {
+        let grid = Grid::new(grid, lattice, voxel_origin);
+        let size = grid.size.total;
         // For mapping the the voxels
         let weight_map = UnsafeCell::new(Vec::<Vec<f64>>::with_capacity(size));
         let mut voxel_map = Vec::with_capacity(size);
@@ -86,7 +99,38 @@ impl VoxelMap {
         // For post processing
         Self { weight_map,
                voxel_map,
+               grid,
                lock }
+    }
+
+    /// Perform the Bader partitioning.
+    pub fn calc(&self,
+                density: &[f64],
+                index: &[usize],
+                progress_bar: Bar,
+                threads: usize,
+                vacuum_index: usize,
+                weight_tolerance: f64) {
+        let counter = RelaxedCounter::new(0);
+        thread::scope(|s| {
+            for _ in 0..threads {
+                s.spawn(|_| loop {
+                     let p = {
+                         let i = counter.inc();
+                         if i >= vacuum_index {
+                             break;
+                         };
+                         index[i]
+                     };
+                     weight(p, density, self, weight_tolerance);
+                     progress_bar.tick();
+                 });
+            }
+        }).unwrap();
+        {
+            let mut weights = self.lock();
+            weights.shrink_to_fit();
+        }
     }
 
     /// How many voxels are boundary voxels?
@@ -172,6 +216,12 @@ impl VoxelMap {
         while self.lock.swap(true, Ordering::SeqCst) {}
         Lock { data: self }
     }
+
+    /// Extract the voxel map data.
+    pub fn into_inner(self) -> (Vec<isize>, Vec<Vec<f64>>) {
+        (self.voxel_map.into_iter().map(|x| x.into_inner()).collect(),
+         (unsafe { &*self.weight_map.get() }).clone())
+    }
 }
 
 #[cfg(test)]
@@ -180,8 +230,11 @@ mod tests {
 
     #[test]
     fn voxel_map_maxima_store() {
-        let voxel_map = VoxelMap::new(10);
-        for p in 0..10isize {
+        let voxel_map =
+            VoxelMap::new([2, 5, 3],
+                          [[2.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 3.0]],
+                          [0.0, 0.0, 0.0]);
+        for p in 0..(voxel_map.grid.size.total as isize) {
             voxel_map.maxima_store(p, p - 1);
         }
         assert_eq!(voxel_map.maxima_non_block_get(0), -1);

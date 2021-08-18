@@ -26,7 +26,7 @@ From here you can either move or link the binary to folder in your path.
 $ mv ./target/release/bca ~/bin
 ```
 ### Minimum Supported Rust Version (MSRV)
-This crate is guaranteed to compile on stable Rust 1.43.0 and up. It *might* compile with older versions but that may change in any new patch release.
+This crate is guaranteed to compile on stable Rust 1.54.0 and up. It *might* compile with older versions but that may change in any new patch release.
 ## Usage
 The program takes a charge density file as input and performs Bader analysis of the data. Currently it supports density in [VASP] or [cube] formats. It is recommended to run VASP calculations with [LAECHG] = .TRUE. to print the core density and self-consistent valence density. These can then be passed as reference files to the program using the -r, --reference flag where they will be summed.
 ```sh
