@@ -84,7 +84,8 @@ pub struct VoxelMap {
 unsafe impl Sync for VoxelMap {}
 
 impl VoxelMap {
-    /// Initialises a VoxelMap of dimensions, size.
+    /// Initialises a VoxelMap and the bader::grid::Grid that will faciliate movemoment around the
+    /// map.
     pub fn new(grid: [usize; 3],
                lattice: [[f64; 3]; 3],
                voxel_origin: [f64; 3])

@@ -1,4 +1,6 @@
 ## v0.4.0
+### Changes
+- VoxelMap now handles the running of the bader calculation, using VoxelMap::calc().
 ## v0.3.2
 ### Features
 - Writing of the charge density is now suppported
