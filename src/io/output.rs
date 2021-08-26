@@ -4,7 +4,7 @@ use crate::grid::Grid;
 use crate::io::{FileFormat, WriteType};
 use crate::progress::Bar;
 use crate::utils;
-use crate::voxel_map::VoxelMap;
+use crate::voxel_map::NonBlockingVoxelMap as VoxelMap;
 use std::fs::File;
 use std::io::Write;
 

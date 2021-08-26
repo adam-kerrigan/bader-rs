@@ -1,5 +1,8 @@
-use crate::voxel_map::VoxelMap;
-use std::collections::HashMap;
+use crate::progress::Bar;
+use crate::voxel_map::BlockingVoxelMap as VoxelMap;
+use atomic_counter::{AtomicCounter, RelaxedCounter};
+use crossbeam_utils::thread;
+use rustc_hash::FxHashMap;
 
 pub enum WeightResult {
     Maxima,
@@ -55,7 +58,7 @@ pub fn weight_step(p: isize,
     let control = density[p as usize];
     let grid = &voxel_map.grid;
     let mut t_sum = 0.;
-    let mut weights = HashMap::<usize, f64>::new();
+    let mut weights = FxHashMap::<usize, f64>::default();
     // colllect the shift and distances and iterate over them.
     for (shift, alpha) in grid.voronoi.vectors.iter().zip(&grid.voronoi.alphas)
     {
@@ -154,24 +157,45 @@ pub fn weight_step(p: isize,
 /// weight(33, &density, &voxel_map, 1E-8);
 /// assert_eq!(voxel_map.weight_get(-2), &vec![62.625, 61.375]);
 /// ```
-pub fn weight(p: usize,
-              density: &[f64],
+pub fn weight(density: &[f64],
               voxel_map: &VoxelMap,
+              index: &[usize],
+              progress_bar: Bar,
+              threads: usize,
+              vacuum_index: usize,
               weight_tolerance: f64) {
-    let pt = p as isize;
-    match weight_step(pt, density, voxel_map, weight_tolerance) {
-        WeightResult::Maxima => voxel_map.maxima_store(pt, pt),
-        WeightResult::Interier(maxima) => {
-            voxel_map.maxima_store(pt, maxima as isize);
+    let counter = RelaxedCounter::new(0);
+    thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|_| loop {
+                 let p = {
+                     let i = counter.inc();
+                     if i >= vacuum_index {
+                         break;
+                     };
+                     index[i] as isize
+                 };
+                 match weight_step(p, density, voxel_map, weight_tolerance) {
+                     WeightResult::Maxima => voxel_map.maxima_store(p, p),
+                     WeightResult::Interier(maxima) => {
+                         voxel_map.maxima_store(p, maxima as isize);
+                     }
+                     WeightResult::Boundary(weights) => {
+                         let i = {
+                             let mut weight = voxel_map.lock();
+                             let i = weight.len();
+                             (*weight).push(weights);
+                             i
+                         };
+                         voxel_map.weight_store(p, i);
+                     }
+                 }
+                 progress_bar.tick();
+             });
         }
-        WeightResult::Boundary(weights) => {
-            let i = {
-                let mut weight = voxel_map.lock();
-                let i = weight.len();
-                (*weight).push(weights);
-                i
-            };
-            voxel_map.weight_store(pt, i);
-        }
+    }).unwrap();
+    {
+        let mut weights = voxel_map.lock();
+        weights.shrink_to_fit();
     }
 }

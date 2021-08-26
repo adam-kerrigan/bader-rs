@@ -1,8 +1,5 @@
 use crate::grid::Grid;
-use crate::methods::weight;
-use crate::progress::Bar;
-use atomic_counter::{AtomicCounter, RelaxedCounter};
-use crossbeam_utils::thread;
+use rustc_hash::FxHashMap;
 use std::cell::UnsafeCell;
 use std::collections::BTreeSet;
 use std::ops::{Deref, DerefMut};
@@ -21,7 +18,7 @@ pub enum Voxel<'a> {
 
 /// A lock guard for write access to [`VoxelMap.weight_map`]
 pub struct Lock<'a> {
-    data: &'a VoxelMap,
+    data: &'a BlockingVoxelMap,
 }
 
 unsafe impl<'a> Sync for Lock<'a> {}
@@ -74,16 +71,16 @@ impl<'a> Drop for Lock<'a> {
 ///     voxel_map.weight_store(p, i)
 /// }
 /// ```
-pub struct VoxelMap {
+pub struct BlockingVoxelMap {
     weight_map: UnsafeCell<Vec<Vec<f64>>>,
     voxel_map: Vec<AtomicIsize>,
     pub grid: Grid,
     lock: AtomicBool,
 }
 
-unsafe impl Sync for VoxelMap {}
+unsafe impl Sync for BlockingVoxelMap {}
 
-impl VoxelMap {
+impl BlockingVoxelMap {
     /// Initialises a VoxelMap and the bader::grid::Grid that will faciliate movemoment around the
     /// map.
     pub fn new(grid: [usize; 3],
@@ -102,41 +99,6 @@ impl VoxelMap {
                voxel_map,
                grid,
                lock }
-    }
-
-    /// Perform the Bader partitioning.
-    pub fn calc(&self,
-                density: &[f64],
-                index: &[usize],
-                progress_bar: Bar,
-                threads: usize,
-                vacuum_index: usize,
-                weight_tolerance: f64) {
-        let counter = RelaxedCounter::new(0);
-        thread::scope(|s| {
-            for _ in 0..threads {
-                s.spawn(|_| loop {
-                     let p = {
-                         let i = counter.inc();
-                         if i >= vacuum_index {
-                             break;
-                         };
-                         index[i]
-                     };
-                     weight(p, density, self, weight_tolerance);
-                     progress_bar.tick();
-                 });
-            }
-        }).unwrap();
-        {
-            let mut weights = self.lock();
-            weights.shrink_to_fit();
-        }
-    }
-
-    /// How many voxels are boundary voxels?
-    pub fn boundary_voxels(&self) -> usize {
-        (unsafe { &*self.weight_map.get() }).len()
     }
 
     /// Retrieves the state of the voxel, p. This will lock until p has been stored
@@ -158,48 +120,6 @@ impl VoxelMap {
         }
     }
 
-    /// Atomic loading of voxel, p, from voxel_map
-    pub fn maxima_non_block_get(&self, p: isize) -> isize {
-        let maxima = self.voxel_map[p as usize].load(Ordering::Relaxed);
-        match maxima.cmp(&-1) {
-            std::cmp::Ordering::Equal => -1,
-            std::cmp::Ordering::Greater => maxima,
-            std::cmp::Ordering::Less => {
-                let weight = self.weight_get(maxima);
-                weight[0] as isize
-            }
-        }
-    }
-
-    /// A none locking retrieval of the state of voxel, p. This should only be
-    /// used once the VoxelMap has been fully populated.
-    pub fn voxel_get(&self, p: isize) -> Voxel {
-        let maxima = self.voxel_map[p as usize].load(Ordering::Relaxed);
-        match maxima.cmp(&-1) {
-            std::cmp::Ordering::Equal => Voxel::Vacuum,
-            std::cmp::Ordering::Greater => Voxel::Maxima(maxima as usize),
-            std::cmp::Ordering::Less => {
-                let weight = self.weight_get(maxima);
-                Voxel::Weight(weight)
-            }
-        }
-    }
-
-    /// Finds the unique values contained in voxel_map and returns them sorted by
-    /// value.
-    pub fn maxima_list(&self) -> Vec<usize> {
-        let len = self.voxel_map.len() as isize;
-        let maximas = (0..len).filter_map(|x| {
-                                  if let Voxel::Maxima(m) = self.voxel_get(x) {
-                                      Some(m)
-                                  } else {
-                                      None
-                                  }
-                              })
-                              .collect::<BTreeSet<usize>>();
-        maximas.into_iter().collect()
-    }
-
     /// Stores the maxima of voxel, p, in the voxel_map.
     pub fn maxima_store(&self, p: isize, maxima: isize) {
         self.voxel_map[p as usize].store(maxima, Ordering::Relaxed);
@@ -219,29 +139,101 @@ impl VoxelMap {
     }
 
     /// Extract the voxel map data.
-    pub fn into_inner(self) -> (Vec<isize>, Vec<Vec<f64>>) {
+    pub fn into_inner(self) -> (Vec<isize>, Vec<Vec<f64>>, Grid) {
         (self.voxel_map.into_iter().map(|x| x.into_inner()).collect(),
-         (unsafe { &*self.weight_map.get() }).clone())
+         self.weight_map.into_inner(),
+         self.grid)
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub struct NonBlockingVoxelMap {
+    pub voxel_map: Vec<isize>,
+    pub weight_map: Vec<Vec<f64>>,
+    pub grid: Grid,
+    pub maxima_map: FxHashMap<usize, usize>,
+}
 
-    #[test]
-    fn voxel_map_maxima_store() {
-        let voxel_map =
-            VoxelMap::new([2, 5, 3],
-                          [[2.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 3.0]],
-                          [0.0, 0.0, 0.0]);
-        for p in 0..(voxel_map.grid.size.total as isize) {
-            voxel_map.maxima_store(p, p - 1);
-        }
-        assert_eq!(voxel_map.maxima_non_block_get(0), -1);
-        assert_eq!(voxel_map.maxima_non_block_get(9), 8);
+impl NonBlockingVoxelMap {
+    pub fn new(voxel_map: Vec<isize>,
+               weight_map: Vec<Vec<f64>>,
+               grid: Grid)
+               -> Self {
+        let maxima_map = Self::get_maxima_map(&voxel_map);
+        Self { voxel_map,
+               weight_map,
+               grid,
+               maxima_map }
     }
 
-    #[test]
-    fn voxel_map_weight_store() {}
+    pub fn from_blocking_voxel_map(voxel_map: BlockingVoxelMap) -> Self {
+        let (voxel_map, weight_map, grid) = voxel_map.into_inner();
+        Self::new(voxel_map, weight_map, grid)
+    }
+
+    pub fn weight_get(&self, maxima: isize) -> &Vec<f64> {
+        let i = -2 - maxima;
+        &self.weight_map[i as usize]
+    }
+    /// Atomic loading of voxel, p, from voxel_map
+    pub fn maxima_get(&self, p: isize) -> isize {
+        let maxima = self.voxel_map[p as usize];
+        match maxima.cmp(&-1) {
+            std::cmp::Ordering::Equal => -1,
+            std::cmp::Ordering::Greater => maxima,
+            std::cmp::Ordering::Less => {
+                let weight = self.weight_get(maxima);
+                weight[0] as isize
+            }
+        }
+    }
+
+    /// A none locking retrieval of the state of voxel, p. This should only be
+    /// used once the VoxelMap has been fully populated.
+    pub fn voxel_get(&self, p: isize) -> Voxel {
+        let maxima = self.voxel_map[p as usize];
+        match maxima.cmp(&-1) {
+            std::cmp::Ordering::Equal => Voxel::Vacuum,
+            std::cmp::Ordering::Greater => Voxel::Maxima(maxima as usize),
+            std::cmp::Ordering::Less => {
+                let weight = self.weight_get(maxima);
+                Voxel::Weight(weight)
+            }
+        }
+    }
+
+    /// Finds the unique values contained in voxel_map and returns them sorted by
+    /// value.
+    pub fn maxima_list(&self) -> Vec<usize> {
+        let maximas =
+            self.voxel_map
+                .iter()
+                .filter_map(|maxima| {
+                    if let std::cmp::Ordering::Greater = maxima.cmp(&-1) {
+                        Some(*maxima as usize)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<BTreeSet<usize>>();
+        maximas.into_iter().collect()
+    }
+
+    /// Finds the unique values contained in voxel_map and returns them sorted by
+    /// value.
+    pub fn get_maxima_map(voxel_map: &[isize]) -> FxHashMap<usize, usize> {
+        let maximas =
+            voxel_map.iter()
+                     .filter_map(|maxima| {
+                         if let std::cmp::Ordering::Greater = maxima.cmp(&-1) {
+                             Some(*maxima as usize)
+                         } else {
+                             None
+                         }
+                     })
+                     .collect::<BTreeSet<usize>>();
+        maximas.into_iter()
+               .enumerate()
+               .map(|(a, b)| (b, a))
+               .collect()
+    }
 }

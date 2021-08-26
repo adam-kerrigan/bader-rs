@@ -1,3 +1,5 @@
+use anyhow::{bail, Result};
+
 /// compute the dot product between a vector and a matrix
 pub fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [a[1] * b[2] - a[2] * b[1],
@@ -41,15 +43,14 @@ pub fn transpose_square(m: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
 }
 
 /// calculates the inverse of a 3x3 lattice
-pub fn invert_lattice(lattice: &[[f64; 3]; 3])
-                      -> Result<[[f64; 3]; 3], String> {
+pub fn invert_lattice(lattice: &[[f64; 3]; 3]) -> Result<[[f64; 3]; 3]> {
     let minor00 = lattice[1][1] * lattice[2][2] - lattice[1][2] * lattice[2][1];
     let minor01 = lattice[1][0] * lattice[2][2] - lattice[1][2] * lattice[2][0];
     let minor02 = lattice[1][0] * lattice[2][1] - lattice[1][1] * lattice[2][0];
     let determinant = lattice[0][0] * minor00 - lattice[0][1] * minor01
                       + lattice[0][2] * minor02;
     if determinant.abs() < 1e-16 {
-        Err(String::from("Lattice doesn't span 3D space"))
+        bail!("Lattice doesn't span 3D space.")
     } else {
         Ok([[minor00 / determinant,
              (lattice[0][2] * lattice[2][1] - lattice[2][2] * lattice[0][1])
@@ -73,17 +74,21 @@ pub fn invert_lattice(lattice: &[[f64; 3]; 3])
 pub fn vacuum_index(density: &[f64],
                     index: &[usize],
                     tolerance: Option<f64>)
-                    -> usize {
+                    -> Result<usize> {
     match tolerance {
         Some(tol) => {
-            for (i, p) in index.iter().enumerate() {
-                if density[*p] < tol {
-                    return i.saturating_sub(1);
+            for (i, p) in index.iter().rev().enumerate() {
+                if density[*p] > tol {
+                    return Ok(index.len() - i);
                 }
             }
-            index.len()
+            bail!(
+                "Vacuum tolerance ({}) is higher than maximum value of density ({}).",
+                tol,
+                density[index[0]]
+            )
         }
-        None => index.len(),
+        None => Ok(index.len()),
     }
 }
 
@@ -119,15 +124,14 @@ mod tests {
     fn utils_vacuum_index_some_high() {
         let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
         let index = (0..60).rev().collect::<Vec<usize>>();
-        let i = vacuum_index(&data, &index, Some(100.));
-        assert_eq!(i, 0)
+        assert!(vacuum_index(&data, &index, Some(100.)).is_err())
     }
 
     #[test]
     fn utils_vacuum_index_some_low() {
         let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
         let index = (0..60).rev().collect::<Vec<usize>>();
-        let i = vacuum_index(&data, &index, Some(-1.));
+        let i = vacuum_index(&data, &index, Some(-1.)).unwrap();
         assert_eq!(i, 60)
     }
 
@@ -135,7 +139,7 @@ mod tests {
     fn utils_vacuum_index_some() {
         let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
         let index = (0..60).rev().collect::<Vec<usize>>();
-        let i = vacuum_index(&data, &index, Some(10.));
+        let i = vacuum_index(&data, &index, Some(10.)).unwrap();
         assert_eq!(i, 49)
     }
 
@@ -143,7 +147,7 @@ mod tests {
     fn utils_vacuum_index_none() {
         let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
         let index = (0..60).rev().collect::<Vec<usize>>();
-        let i = vacuum_index(&data, &index, None);
+        let i = vacuum_index(&data, &index, None).unwrap();
         assert_eq!(i, 60)
     }
 }

@@ -2,7 +2,9 @@ use crate::atoms::Atoms;
 use crate::grid::Grid;
 use crate::progress::Bar;
 use crate::utils;
-use crate::voxel_map::{Voxel, VoxelMap};
+use crate::voxel_map::{NonBlockingVoxelMap as VoxelMap, Voxel};
+use anyhow::{bail, Context, Result};
+use crossbeam_utils::thread;
 use rustc_hash::FxHashMap;
 
 /// The Errors Associated with the [`Analysis`] structure.
@@ -31,6 +33,296 @@ impl std::fmt::Debug for AnalysisError {
             Self::NotMaxima => f.write_str(
                 "Error: Attempted to look up non-maxima in maxima index.",
             ),
+        }
+    }
+}
+
+fn maxima_to_atom(chunk: &[isize],
+                  atoms: &Atoms,
+                  grid: &Grid,
+                  progress_bar: &Bar)
+                  -> Result<(Vec<usize>, Vec<f64>)> {
+    let chunk_size = chunk.len();
+    let mut ass_atom = Vec::with_capacity(chunk_size);
+    let mut min_dist = Vec::with_capacity(chunk_size);
+    for m in chunk.iter() {
+        let maxima_cartesian = grid.to_cartesian(*m as isize);
+        let maxima_cartesian =
+            { utils::dot(maxima_cartesian, grid.voxel_lattice.to_cartesian) };
+        let mut maxima_lll_fractional =
+            utils::dot(maxima_cartesian, atoms.reduced_lattice.to_fractional);
+        for f in &mut maxima_lll_fractional {
+            *f = f.rem_euclid(1.);
+        }
+        let maxima_lll_cartesian = utils::dot(maxima_lll_fractional,
+                                              atoms.reduced_lattice
+                                                   .to_cartesian);
+        let mut atom_num = 0;
+        let mut min_distance = f64::INFINITY;
+        for (i, atom) in atoms.reduced_positions.iter().enumerate() {
+            for atom_shift in
+                atoms.reduced_lattice.cartesian_shift_matrix.iter()
+            {
+                let distance = {
+                    (maxima_lll_cartesian[0]
+                                        - (atom[0] + atom_shift[0]))
+                                                                    .powi(2)
+                                       + (maxima_lll_cartesian[1]
+                                          - (atom[1] + atom_shift[1]))
+                                                                      .powi(2)
+                                       + (maxima_lll_cartesian[2]
+                                          - (atom[2] + atom_shift[2]))
+                                                                      .powi(2)
+                };
+                if distance < min_distance {
+                    min_distance = distance;
+                    atom_num = i;
+                }
+            }
+        }
+        ass_atom.push(atom_num);
+        min_dist.push(min_distance.powf(0.5));
+        progress_bar.tick()
+    }
+    Ok((ass_atom, min_dist))
+}
+
+/// Assign a Bader maxima to the nearest atom.
+pub fn assign_maxima(maxima: &[isize],
+                     atoms: &Atoms,
+                     grid: &Grid,
+                     threads: usize,
+                     progress_bar: Bar)
+                     -> Result<(Vec<usize>, Vec<f64>)> {
+    let mut assigned_atom = vec![0; maxima.len()];
+    let mut minimum_distance = vec![0.0; maxima.len()];
+    let pbar = &progress_bar;
+    match threads.cmp(&1) {
+        std::cmp::Ordering::Greater => {
+            let chunk_size =
+                (maxima.len() / threads) + (maxima.len() % threads).min(1);
+            thread::scope(|s| {
+                let spawned_threads =
+                    maxima.chunks(chunk_size)
+                          .enumerate()
+                          .map(|(index, chunk)| {
+                              s.spawn(move |_| {
+                                  match maxima_to_atom(chunk, atoms, grid, pbar) {
+                                      Ok(result) => (result, index),
+                                      _ => panic!("Failed to match maxima to atom"),
+                                  }
+                               })
+                          })
+                          .collect::<Vec<_>>();
+                for thread in spawned_threads {
+                    if let Ok(((ass_atom, min_dist), chunk_index)) =
+                        thread.join()
+                    {
+                        let i = chunk_index * chunk_size;
+                        assigned_atom.splice(i..(i + ass_atom.len()), ass_atom);
+                        minimum_distance.splice(i..(i + min_dist.len()),
+                                                min_dist);
+                    } else {
+                        panic!("Failed to join thread in assign maxima.")
+                    };
+                }
+            }).unwrap();
+        }
+        _ => {
+            let (ass_atom, min_dist) =
+                maxima_to_atom(maxima, atoms, grid, pbar).context("Failed to assign maxima to atom.")?;
+            assigned_atom = ass_atom;
+            minimum_distance = min_dist;
+        }
+    }
+    Ok((assigned_atom, minimum_distance))
+}
+
+fn sum_densities(chunk: &[isize],
+                 densities: &[Vec<f64>],
+                 atoms_map: &FxHashMap<usize, usize>,
+                 atoms: &Atoms,
+                 voxel_map: &VoxelMap,
+                 index: usize,
+                 progress_bar: &Bar)
+                 -> Result<(Vec<Vec<f64>>, Vec<f64>, Vec<f64>)> {
+    let mut bader_charge =
+        vec![vec![0.0; voxel_map.maxima_map.len()]; densities.len()];
+    let mut bader_volume = vec![0.0; voxel_map.maxima_map.len()];
+    let mut surface_distance = vec![f64::INFINITY; atoms.positions.len()];
+    let maxima_map = &voxel_map.maxima_map;
+    chunk.iter().enumerate().for_each(|(voxel_index, voxel)| {
+        let p = index * chunk.len() + voxel_index;
+        match voxel.cmp(&-1) {
+            std::cmp::Ordering::Greater => {
+                let maxima = maxima_map.get(&(*voxel as usize)).unwrap();
+                for (i, rho) in bader_charge.iter_mut().enumerate() {
+                    rho[*maxima] += densities[i][p];
+                }
+                bader_volume[*maxima] += 1.0;
+            }
+            std::cmp::Ordering::Less => {
+                let weights = voxel_map.weight_get(*voxel);
+                let atom_number = atoms_map.get(&(weights[0] as usize)).unwrap();
+                let mut is_atom_boundary = false;
+                for w in weights.iter() {
+                    let m = *w as usize;
+                    let weight = w - m as f64;
+                    let maxima = maxima_map.get(&m).unwrap();
+                    if atom_number != atoms_map.get(&m).unwrap() {
+                        is_atom_boundary = true;
+                    }
+                    for (i, rho) in bader_charge.iter_mut().enumerate() {
+                        rho[*maxima] += densities[i][p];
+                    }
+                    bader_volume[*maxima] += weight;
+                }
+                if is_atom_boundary {
+                    let minimum_distance = &mut surface_distance[*atom_number];
+                    let p_cartesian = voxel_map.grid.to_cartesian(p as isize);
+                    let p_cartesian = utils::dot(p_cartesian,
+                                                 voxel_map.grid.voxel_lattice.to_cartesian);
+                    let mut p_lll_fractional =
+                        utils::dot(p_cartesian,
+                                   atoms.reduced_lattice.to_fractional);
+                    for f in &mut p_lll_fractional {
+                        *f = f.rem_euclid(1.);
+                    }
+                    let p_lll_cartesian = utils::dot(p_lll_fractional,
+                                                     atoms.reduced_lattice
+                                                          .to_cartesian);
+                    let atom = atoms.reduced_positions[*atom_number];
+                    for atom_shift in
+                        atoms.reduced_lattice.cartesian_shift_matrix.iter()
+                    {
+                        let distance = {
+                            (p_lll_cartesian[0] - (atom[0] + atom_shift[0]))
+                                .powi(2)
+                                + (p_lll_cartesian[1]
+                                    - (atom[1] + atom_shift[1]))
+                                    .powi(2)
+                                + (p_lll_cartesian[2]
+                                    - (atom[2] + atom_shift[2]))
+                                    .powi(2)
+                        };
+                        if distance < *minimum_distance {
+                            *minimum_distance = distance;
+                        }
+                    }
+                }
+            },
+            std::cmp::Ordering::Equal => (),
+        }
+        progress_bar.tick();
+    });
+    Ok((bader_charge, bader_volume, surface_distance))
+}
+
+pub fn sum_bader_densities(densities: &[Vec<f64>],
+                           voxel_map: &VoxelMap,
+                           atoms: &Atoms,
+                           atoms_map: &FxHashMap<usize, usize>,
+                           threads: usize,
+                           progress_bar: Bar)
+                           -> Result<(Vec<Vec<f64>>, Vec<f64>, Vec<f64>)> {
+    let pbar = &progress_bar;
+    // Only spawn threads if more than 1 thread is required.
+    // This minimises overhead?
+    match threads.cmp(&1) {
+        std::cmp::Ordering::Greater => {
+            let mut surface_distance =
+                vec![f64::INFINITY; atoms.positions.len()];
+            let mut bader_charge =
+                vec![vec![0.0; voxel_map.maxima_map.len()]; densities.len()];
+            let mut bader_volume = vec![0.0; voxel_map.maxima_map.len()];
+            // Calculate the size of the vector to be passed to each thread.
+            let chunk_size = (voxel_map.voxel_map.len() / threads)
+                             + (voxel_map.voxel_map.len() % threads).min(1);
+            thread::scope(|s| {
+                let spawned_threads =
+                    voxel_map.voxel_map
+                             .chunks(chunk_size)
+                             .enumerate()
+                             .map(|(index, chunk)| {
+                                 s.spawn(move |_| match sum_densities(chunk,
+                                                                      densities,
+                                                                      atoms_map,
+                                                                      atoms,
+                                                                      voxel_map,
+                                                                      index,
+                                                                      pbar)
+                                  {
+                                      Ok(result) => result,
+                                      _ => panic!("Unable to sum densities."),
+                                  })
+                             })
+                             .collect::<Vec<_>>();
+                // Join each thread and collect the results.
+                // If one thread terminates before the other this is not operated on first.
+                // Either use the sorted index to remove vacuum from the summation or
+                // find a way to operate on finshed threads first (ideally both).
+                for thread in spawned_threads {
+                    if let Ok((tmp_bc, tmp_bv, tmp_sd)) = thread.join() {
+                        for (i, density) in tmp_bc.iter().enumerate() {
+                            bader_charge[i].iter_mut()
+                                           .zip(density.iter())
+                                           .for_each(|(a, b)| {
+                                               *a += b * voxel_map.grid
+                                                                  .voxel_lattice
+                                                                  .volume;
+                                           });
+                        }
+                        bader_volume.iter_mut()
+                                    .zip(tmp_bv.into_iter())
+                                    .for_each(|(a, b)| {
+                                        *a += b * voxel_map.grid
+                                                           .voxel_lattice
+                                                           .volume;
+                                    });
+                        surface_distance.iter_mut()
+                                        .zip(tmp_sd.into_iter())
+                                        .for_each(|(a, b)| {
+                                            *a = a.min(b);
+                                        });
+                    } else {
+                        panic!("Unable to join thread in sum_bader_densities.")
+                    };
+                }
+            }).unwrap();
+            // The distance isn't square rooted in the calcation of distance to save time.
+            // As we need to filter out the infinite distances (atoms with no assigned maxima)
+            // we can square root here also.
+            surface_distance.iter_mut()
+                            .for_each(|d| {
+                                if let Some(std::cmp::Ordering::Less) = (*d).partial_cmp(&f64::INFINITY) {
+                                    *d = d.powf(0.5)
+                                } else {
+                                    *d = 0.0
+                                }
+                            });
+            Ok((bader_charge, bader_volume, surface_distance))
+        }
+        _ => {
+            let (bader_charge, bader_volume, mut surface_distance) =
+                sum_densities(&voxel_map.voxel_map,
+                              densities,
+                              atoms_map,
+                              atoms,
+                              voxel_map,
+                              0,
+                              pbar).context("Unable to sum bader densities")?;
+            // The distance isn't square rooted in the calcation of distance to save time.
+            // As we need to filter out the infinite distances (atoms with no assigned maxima)
+            // we can square root here also.
+            surface_distance.iter_mut()
+                            .for_each(|d| {
+                                if let Some(std::cmp::Ordering::Less) = (*d).partial_cmp(&f64::INFINITY) {
+                                    *d = d.powf(0.5)
+                                } else {
+                                    *d = 0.0
+                                }
+                            });
+            Ok((bader_charge, bader_volume, surface_distance))
         }
     }
 }
@@ -154,7 +446,7 @@ impl Analysis {
                             -> Result<bool, AnalysisError> {
         for shift in grid.voronoi.vectors.iter() {
             let pn = grid.voronoi_shift(p, shift);
-            let maxima = voxel_map.maxima_non_block_get(pn);
+            let maxima = voxel_map.maxima_get(pn);
             match maxima.cmp(&-1) {
                 std::cmp::Ordering::Equal => return Ok(true),
                 _ => {
@@ -238,7 +530,7 @@ impl Analysis {
                         let maxima = *maxima_weight as usize;
                         let weight = maxima_weight - maxima as f64;
                         if atom_num != self.atom_get(maxima)? {
-                            is_atom_boundary = true
+                            is_atom_boundary = true;
                         }
                         let i = self.index_get(maxima)?;
                         bader_volume[i] += weight;
@@ -265,14 +557,15 @@ impl Analysis {
                             atoms.reduced_lattice.cartesian_shift_matrix.iter()
                         {
                             let distance = {
-                                (p_lll_cartesian[0] - (atom[0] + atom_shift[0]))
-                                    .powi(2)
-                                    + (p_lll_cartesian[1]
-                                        - (atom[1] + atom_shift[1]))
-                                        .powi(2)
-                                    + (p_lll_cartesian[2]
-                                        - (atom[2] + atom_shift[2]))
-                                        .powi(2)
+                                (p_lll_cartesian[0]
+                                 - (atom[0] + atom_shift[0]))
+                                                             .powi(2)
+                                + (p_lll_cartesian[1]
+                                   - (atom[1] + atom_shift[1]))
+                                                               .powi(2)
+                                + (p_lll_cartesian[2]
+                                   - (atom[2] + atom_shift[2]))
+                                                               .powi(2)
                             };
                             if distance < minimum_distance[atom_num] {
                                 minimum_distance[atom_num] = distance;
@@ -409,7 +702,7 @@ impl Analysis {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     #[test]
