@@ -1,7 +1,6 @@
 use crate::grid::Grid;
-use rustc_hash::FxHashMap;
+use rustc_hash::FxHashSet;
 use std::cell::UnsafeCell;
-use std::collections::BTreeSet;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
@@ -57,7 +56,7 @@ impl<'a> Drop for Lock<'a> {
 ///
 /// # Examples
 /// ```
-/// use bader::voxel_map::VoxelMap;
+/// use bader::voxel_map::BlockingVoxelMap as VoxelMap;
 ///
 /// for p in 0..1isize {
 ///     let voxel_map = VoxelMap::new([2, 5, 2],
@@ -150,7 +149,6 @@ pub struct NonBlockingVoxelMap {
     pub voxel_map: Vec<isize>,
     pub weight_map: Vec<Vec<f64>>,
     pub grid: Grid,
-    pub maxima_map: FxHashMap<usize, usize>,
 }
 
 impl NonBlockingVoxelMap {
@@ -158,11 +156,9 @@ impl NonBlockingVoxelMap {
                weight_map: Vec<Vec<f64>>,
                grid: Grid)
                -> Self {
-        let maxima_map = Self::get_maxima_map(&voxel_map);
         Self { voxel_map,
                weight_map,
-               grid,
-               maxima_map }
+               grid }
     }
 
     pub fn from_blocking_voxel_map(voxel_map: BlockingVoxelMap) -> Self {
@@ -201,39 +197,50 @@ impl NonBlockingVoxelMap {
         }
     }
 
-    /// Finds the unique values contained in voxel_map and returns them sorted by
-    /// value.
-    pub fn maxima_list(&self) -> Vec<usize> {
-        let maximas =
-            self.voxel_map
-                .iter()
-                .filter_map(|maxima| {
-                    if let std::cmp::Ordering::Greater = maxima.cmp(&-1) {
-                        Some(*maxima as usize)
-                    } else {
-                        None
+    pub fn volume_map(&self, volume_number: isize) -> Vec<Option<f64>> {
+        self.voxel_map
+            .iter()
+            .map(|maxima| {
+                if *maxima == volume_number {
+                    Some(1.0)
+                } else if *maxima < -1 {
+                    let mut w = None;
+                    for weight in self.weight_get(*maxima) {
+                        let m = *weight as isize;
+                        if m == volume_number {
+                            w = Some(weight - m as f64);
+                            break;
+                        }
                     }
-                })
-                .collect::<BTreeSet<usize>>();
-        maximas.into_iter().collect()
+                    w
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
-    /// Finds the unique values contained in voxel_map and returns them sorted by
-    /// value.
-    pub fn get_maxima_map(voxel_map: &[isize]) -> FxHashMap<usize, usize> {
-        let maximas =
-            voxel_map.iter()
-                     .filter_map(|maxima| {
-                         if let std::cmp::Ordering::Greater = maxima.cmp(&-1) {
-                             Some(*maxima as usize)
-                         } else {
-                             None
-                         }
-                     })
-                     .collect::<BTreeSet<usize>>();
-        maximas.into_iter()
-               .enumerate()
-               .map(|(a, b)| (b, a))
-               .collect()
+    pub fn multi_volume_map(&self,
+                            volume_numbers: &FxHashSet<isize>)
+                            -> Vec<Option<f64>> {
+        self.voxel_map
+            .iter()
+            .map(|maxima| {
+                if volume_numbers.contains(maxima) {
+                    Some(1.0)
+                } else if *maxima < -1 {
+                    let mut w = 0.0;
+                    for weight in self.weight_get(*maxima) {
+                        let m = *weight as isize;
+                        if volume_numbers.contains(&m) {
+                            w += weight - m as f64;
+                        }
+                    }
+                    Some(w)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 }

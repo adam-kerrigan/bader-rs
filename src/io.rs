@@ -22,9 +22,9 @@ pub enum FileType {
 /// What type of density to write.
 pub enum WriteType {
     /// Write a Bader Atom.
-    Atom(Vec<usize>),
+    Atom(Vec<isize>),
     /// Write a Bader Volume.
-    Volume(Vec<usize>),
+    Volume(Vec<isize>),
     /// Don't write anything.
     None,
 }

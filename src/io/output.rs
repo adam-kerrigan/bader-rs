@@ -1,15 +1,83 @@
-use crate::analysis::Analysis;
-use crate::atoms::Atoms;
-use crate::grid::Grid;
-use crate::io::{FileFormat, WriteType};
-use crate::progress::Bar;
-use crate::utils;
-use crate::voxel_map::NonBlockingVoxelMap as VoxelMap;
+use anyhow::{bail, Result};
 use std::fs::File;
 use std::io::Write;
 
+pub fn partitions_file(positions: Vec<(String, String, String)>,
+                       partitioned_density: &[Vec<f64>],
+                       partitioned_volume: &[f64],
+                       total_density: &[f64],
+                       total_volume: f64,
+                       distance: &[f64],
+                       atom_map: Option<&[usize]>)
+                       -> Result<String> {
+    let total_partitioned_density =
+        partitioned_density.iter().fold(vec![
+                                            0.0;
+                                            partitioned_density[0].len()
+                                        ],
+                                        |mut sum, d| {
+                                            sum.iter_mut()
+                                               .zip(d)
+                                               .for_each(|(tpd, pd)| {
+                                                   *tpd += pd
+                                               });
+                                            sum
+                                        });
+    let total_partitioned_volume = partitioned_volume.iter().sum();
+    let vacuum_density = total_partitioned_density.iter()
+                                                  .zip(total_density)
+                                                  .map(|(a, b)| b - a)
+                                                  .collect::<Vec<f64>>();
+    let vacuum_volume = total_volume - total_partitioned_volume;
+    if atom_map.is_none() {
+        let mut table =
+            Table::new(TableType::AtomsCharge, partitioned_density[0].len());
+        let mut index = 1;
+        positions.into_iter()
+                 .zip(partitioned_density)
+                 .zip(partitioned_volume)
+                 .zip(distance)
+                 .for_each(|(((coord, density), volume), distance)| {
+                     table.add_row(index, coord, density, *volume, *distance);
+                     index += 1;
+                 });
+        Ok(table.get_string(&vacuum_density,
+                            vacuum_volume,
+                            &total_partitioned_density,
+                            total_partitioned_volume))
+    } else {
+        let mut table =
+            Table::new(TableType::BaderCharge, partitioned_density[0].len());
+        let atom_map = if let Some(x) = atom_map {
+            x
+        } else {
+            bail!("da fuk")
+        };
+        let mut index: Vec<usize> = (0..atom_map.len()).collect();
+        index.sort_by(|a, b| atom_map[*a].cmp(&atom_map[*b]));
+        let mut atom_num = atom_map[index[0]];
+        table.separators.push(atom_num + 1);
+        index.into_iter().for_each(|i| {
+                             let a = atom_map[i];
+                             if a != atom_num {
+                                 table.add_separator(a + 1);
+                                 atom_num = a
+                             }
+                             table.add_row(i,
+                                           positions[i].clone(),
+                                           &partitioned_density[i],
+                                           partitioned_volume[i],
+                                           distance[i]);
+                         });
+        Ok(table.get_string(&vacuum_density,
+                            vacuum_volume,
+                            &total_partitioned_density,
+                            total_partitioned_volume))
+    }
+}
+
 /// Enum of available tables.
-enum TableType {
+pub enum TableType {
     /// Table for the ACF file.
     AtomsCharge,
     /// Table for the BCF file.
@@ -24,6 +92,7 @@ struct Table {
     density_num: usize,
     /// The rows of the table as a vector of strings.
     rows: Vec<Vec<String>>,
+    separators: Vec<usize>,
     /// What type of table the structure is.
     table_type: TableType,
 }
@@ -49,27 +118,29 @@ impl Table {
         };
         column_width.push(6);
         column_width.push(8);
+        let separators = match table_type {
+            TableType::AtomsCharge => vec![0, 0],
+            TableType::BaderCharge => vec![],
+        };
         Self { column_width,
                density_num,
                rows,
+               separators,
                table_type }
     }
 
     /// Adds a row the table.
-    #[allow(clippy::borrowed_box)]
     fn add_row(&mut self,
                index: usize,
-               p: [f64; 3],
+               p: (String, String, String),
                density: &[f64],
                volume: f64,
-               distance: f64,
-               file_type: &Box<dyn FileFormat>) {
+               distance: f64) {
         let mut row: Vec<String> = Vec::with_capacity(6 + self.density_num);
         row.push(format!("{}", index));
-        let coord = file_type.coordinate_format(p);
-        row.push(coord.0);
-        row.push(coord.1);
-        row.push(coord.2);
+        row.push(p.0);
+        row.push(p.1);
+        row.push(p.2);
         density.iter().for_each(|d| row.push(format!("{:.6}", d)));
         row.push(format!("{:.6}", volume));
         row.push(format!("{:.6}", distance));
@@ -80,40 +151,50 @@ impl Table {
     }
 
     /// Adds a blank row to be a separator in the final string.
-    fn add_separator(&mut self) {
+    fn add_separator(&mut self, index: usize) {
         self.rows.push(Vec::with_capacity(0));
+        self.separators.push(index);
     }
 
     /// Creates and formats the footer.
-    fn format_footer(&self, analysis: &Analysis) -> String {
+    fn format_footer(&self,
+                     vacuum_density: &[f64],
+                     vacuum_volume: f64,
+                     partitioned_density: &[f64],
+                     partitioned_volume: f64)
+                     -> String {
         match self.table_type {
             TableType::AtomsCharge => {
                 let mut separator = self.format_separator(0);
                 let footer = match self.density_num.cmp(&2) {
                         std::cmp::Ordering::Less => format!(
-                            "\n  Vacuum Charge: {:>18.4}\n  Vacuum Volume: {:>18.4}\n  Partitioned Charge: {:>13.4}",
-                            analysis.vacuum_charge[0],
-                            analysis.vacuum_volume,
-                            analysis.total_charge[0],
+                            "\n  Vacuum Charge: {:>18.4}\n  Vacuum Volume: {:>18.4}\n  Partitioned Charge: {:>13.4}\n  Partitioned Volume: {:>13.4}",
+                            vacuum_density[0],
+                            vacuum_volume,
+                            partitioned_density[0],
+                            partitioned_volume,
                         ),
                         std::cmp::Ordering::Equal =>  format!(
-                            "\n  Vacuum Charge: {:>18.4}\n  Vacuum Spin: {:>20.4}\n  Vacuum Volume: {:>18.4}\n  Partitioned Charge: {:>13.4}\n  Partitioned Spin: {:>15.4}",
-                            analysis.vacuum_charge[0],
-                            analysis.vacuum_charge[1],
-                            analysis.vacuum_volume,
-                            analysis.total_charge[0], analysis.total_charge[1]
+                            "\n  Vacuum Charge: {:>18.4}\n  Vacuum Spin: {:>20.4}\n  Vacuum Volume: {:>18.4}\n  Partitioned Charge: {:>13.4}\n  Partitioned Spin: {:>15.4}\n  Partitioned Volume: {:>13.4}",
+                            vacuum_density[0],
+                            vacuum_density[1],
+                            vacuum_volume,
+                            partitioned_density[0],
+                            partitioned_density[1],
+                            partitioned_volume,
                         ),
                         std::cmp::Ordering::Greater =>  format!(
-                            "\n  Vacuum Charge: {:>18.4}\n  Vacuum Spin X: {:>18.4}\n  Vacuum Spin Y: {:>18.4}\n  Vacuum Spin Z: {:>18.4}\n  Vacuum Volume: {:>18.4}\n  Partitioned Charge: {:>13.4}\n  Partitioned Spin X: {:>13.4}\n  Partitioned Spin Y: {:>13.4}\n  Partitioned Spin Z: {:>13.4}",
-                            analysis.vacuum_charge[0],
-                            analysis.vacuum_charge[1],
-                            analysis.vacuum_charge[2],
-                            analysis.vacuum_charge[3],
-                            analysis.vacuum_volume,
-                            analysis.total_charge[0],
-                            analysis.total_charge[1],
-                            analysis.total_charge[2],
-                            analysis.total_charge[3]
+                            "\n  Vacuum Charge: {:>18.4}\n  Vacuum Spin X: {:>18.4}\n  Vacuum Spin Y: {:>18.4}\n  Vacuum Spin Z: {:>18.4}\n  Vacuum Volume: {:>18.4}\n  Partitioned Charge: {:>13.4}\n  Partitioned Spin X: {:>13.4}\n  Partitioned Spin Y: {:>13.4}\n  Partitioned Spin Z: {:>13.4}\n  Partitioned Volume: {:>13.4}",
+                            vacuum_density[0],
+                            vacuum_density[1],
+                            vacuum_density[2],
+                            vacuum_density[3],
+                            vacuum_volume,
+                            partitioned_density[0],
+                            partitioned_density[1],
+                            partitioned_density[2],
+                            partitioned_density[3],
+                            partitioned_volume,
                         ),
                 };
                 separator.push_str(&footer);
@@ -193,14 +274,18 @@ impl Table {
     }
 
     /// Creates a String representation of the Table.
-    fn to_string(&self, analysis: &Analysis) -> String {
-        let mut i = 0;
+    fn get_string(self,
+                  vacuum_density: &[f64],
+                  vacuum_volume: f64,
+                  partitioned_density: &[f64],
+                  partitioned_volume: f64)
+                  -> String {
+        let mut separator_iter = self.separators.iter();
         let mut table = String::new();
         table.push_str(&self.format_header());
         self.rows.iter().for_each(|r| {
                             if r.is_empty() {
-                                i += 1;
-                                table.push_str(&self.format_separator(i));
+                                table.push_str(&self.format_separator(*separator_iter.next().unwrap()));
                             } else {
                                 let mut row = String::new();
                                 r.iter()
@@ -215,174 +300,101 @@ impl Table {
                             }
                             table.push('\n');
                         });
-        table.push_str(&self.format_footer(analysis));
+        table.push_str(&self.format_footer(vacuum_density,
+                                           vacuum_volume,
+                                           partitioned_density,
+                                           partitioned_volume));
         table
     }
-}
-
-/// Writes the tables for outputting charge data.
-///
-/// * analysis: The [`Analysis`] structure to be tabulated.
-/// * atoms: The [`Atoms`] referenced to the structure.
-/// * grid: The [`Grid`] structure for moving around the analysed density.
-/// * file_type: [`FileFormat`] for printing the correct coordinates.
-///
-/// ### Returns:
-/// (String, String): The ACF and BCF as Strings.
-#[allow(clippy::borrowed_box)]
-pub fn charge_files(analysis: &Analysis,
-                    atoms: &Atoms,
-                    grid: &Grid,
-                    file_type: &Box<dyn FileFormat>,
-                    maxima_tolerance: f64)
-                    -> (String, String) {
-    let mut bader_table =
-        Table::new(TableType::BaderCharge, analysis.bader_charge.len());
-    let mut atoms_table =
-        Table::new(TableType::AtomsCharge, analysis.bader_charge.len());
-    let mut index: Vec<usize> = (0..analysis.bader_maxima.len()).collect();
-    index.sort_by(|a, b| {
-             analysis.assigned_atom[*a].cmp(&analysis.assigned_atom[*b])
-         });
-    let mut atom_num = 0;
-    atoms_table.add_row(atom_num + 1,
-                        atoms.positions[atom_num],
-                        &analysis.atoms_charge
-                                 .iter()
-                                 .map(|charge| charge[atom_num])
-                                 .collect::<Vec<f64>>(),
-                        analysis.atoms_volume[atom_num],
-                        analysis.surface_distance[atom_num],
-                        file_type);
-    for i in index {
-        atom_num = {
-            let a = analysis.assigned_atom[i];
-            if a != atom_num {
-                bader_table.add_separator();
-                atoms_table.add_row(a + 1,
-                                    atoms.positions[a],
-                                    &analysis.atoms_charge
-                                             .iter()
-                                             .map(|charge| charge[a])
-                                             .collect::<Vec<f64>>(),
-                                    analysis.atoms_volume[a],
-                                    analysis.surface_distance[a],
-                                    file_type);
-            }
-            a
-        };
-        let maxima_cartesian =
-            { grid.to_cartesian(analysis.bader_maxima[i] as isize) };
-        let maxima_cartesian =
-            utils::dot(maxima_cartesian, grid.voxel_lattice.to_cartesian);
-        if analysis.bader_charge[0][i] >= maxima_tolerance {
-            bader_table.add_row(i + 1,
-                                maxima_cartesian,
-                                &analysis.bader_charge
-                                         .iter()
-                                         .map(|charge| charge[i])
-                                         .collect::<Vec<f64>>(),
-                                analysis.bader_volume[i],
-                                analysis.minimum_distance[i],
-                                file_type);
-        }
-    }
-    let bader_charge_file = bader_table.to_string(analysis);
-    let atoms_charge_file = atoms_table.to_string(analysis);
-    (atoms_charge_file, bader_charge_file)
 }
 
 /// Write the files
 ///
 /// * `atoms_charge_file`: The contents, as a String, of the ACF.dat file.
 /// * `bader_charge_file`: The contents, as a String, of the BCF.dat file.
-pub fn write(atoms_charge_file: String,
-             bader_charge_file: String)
-             -> std::io::Result<()> {
-    let mut bader_file = File::create("BCF.dat")?;
-    bader_file.write_all(bader_charge_file.as_bytes())?;
-    let mut atoms_file = File::create("ACF.dat")?;
-    atoms_file.write_all(atoms_charge_file.as_bytes())?;
+pub fn write(string: String, filename: String) -> std::io::Result<()> {
+    let mut bader_file = File::create(&filename)?;
+    bader_file.write_all(string.as_bytes())?;
     Ok(())
 }
 
-/// Write the densities of either Bader atoms or volumes.
-#[allow(clippy::borrowed_box)]
-pub fn write_densities(atoms: &Atoms,
-                       analysis: &Analysis,
-                       densities: Vec<Vec<f64>>,
-                       output: WriteType,
-                       voxel_map: &VoxelMap,
-                       file_type: &Box<dyn FileFormat>)
-                       -> std::io::Result<()> {
-    let grid = &voxel_map.grid;
-    let filename = match densities.len().cmp(&2) {
-        std::cmp::Ordering::Less => vec![String::from("charge")],
-        std::cmp::Ordering::Equal => {
-            vec![String::from("charge"), String::from("spin")]
-        }
-        std::cmp::Ordering::Greater => vec![String::from("charge"),
-                                            String::from("spin_x"),
-                                            String::from("spin_y"),
-                                            String::from("spin_z"),],
-    };
-    match output {
-        WriteType::Atom(a) => {
-            println!("Writing out charge densities for atoms:");
-            let atom_iter = if a.is_empty() {
-                (0..atoms.positions.len()).collect()
-            } else {
-                a
-            };
-            for atom in atom_iter {
-                println!("Atom {}:", atom + 1);
-                let pbar = Bar::visible(grid.size.total as u64,
-                                        100,
-                                        String::from("Building map:"));
-                let map = analysis.output_atom_map(grid, voxel_map, atom, pbar);
-                for (i, den) in densities.iter().enumerate() {
-                    let fname = format!("atom_{}_{}", atom + 1, filename[i]);
-                    let pbar =
-                        Bar::visible(1, 100, format!("Writing {}:", fname));
-                    let den =
-                        den.iter()
-                           .zip(&map)
-                           .map(|(d, weight)| weight.as_ref().map(|w| d * w))
-                           .collect::<Vec<Option<f64>>>();
-                    file_type.write(atoms, den, fname, pbar)?;
-                }
-            }
-        }
-        WriteType::Volume(v) => {
-            println!("Writing out charge densities for atoms:");
-            let volume_iter = if v.is_empty() {
-                (0..analysis.bader_maxima.len()).collect()
-            } else {
-                v
-            };
-            for volume in volume_iter {
-                print!("Atom: {}.", volume + 1);
-                let pbar = Bar::visible(grid.size.total as u64,
-                                        100,
-                                        String::from("Building map:"));
-                let map =
-                    analysis.output_volume_map(grid, voxel_map, volume, pbar);
-                for (i, den) in densities.iter().enumerate() {
-                    let fname =
-                        format!("volume_{}_{}", volume + 1, filename[i]);
-                    let pbar =
-                        Bar::visible(1, 100, format!("Writing {}:", fname));
-                    let den =
-                        den.iter()
-                           .zip(&map)
-                           .map(|(d, weight)| weight.as_ref().map(|w| d * w))
-                           .collect::<Vec<Option<f64>>>();
-                    file_type.write(atoms, den, fname, pbar)?;
-                }
-                println!(" Done.");
-            }
-        }
-        WriteType::None => (),
-    }
-    Ok(())
-}
+// /// Write the densities of either Bader atoms or volumes.
+// #[allow(clippy::borrowed_box)]
+// pub fn write_densities(atoms: &Atoms,
+//                        analysis: &Analysis,
+//                        densities: Vec<Vec<f64>>,
+//                        output: WriteType,
+//                        voxel_map: &VoxelMap,
+//                        file_type: &Box<dyn FileFormat>)
+//                        -> std::io::Result<()> {
+//     let grid = &voxel_map.grid;
+//     let filename = match densities.len().cmp(&2) {
+//         std::cmp::Ordering::Less => vec![String::from("charge")],
+//         std::cmp::Ordering::Equal => {
+//             vec![String::from("charge"), String::from("spin")]
+//         }
+//         std::cmp::Ordering::Greater => vec![String::from("charge"),
+//                                             String::from("spin_x"),
+//                                             String::from("spin_y"),
+//                                             String::from("spin_z"),],
+//     };
+//     match output {
+//         WriteType::Atom(a) => {
+//             println!("Writing out charge densities for atoms:");
+//             let atom_iter = if a.is_empty() {
+//                 (0..atoms.positions.len()).collect()
+//             } else {
+//                 a
+//             };
+//             for atom in atom_iter {
+//                 println!("Atom {}:", atom + 1);
+//                 let pbar = Bar::visible(grid.size.total as u64,
+//                                         100,
+//                                         String::from("Building map:"));
+//                 let map = analysis.output_atom_map(grid, voxel_map, atom, pbar);
+//                 for (i, den) in densities.iter().enumerate() {
+//                     let fname = format!("atom_{}_{}", atom + 1, filename[i]);
+//                     let pbar =
+//                         Bar::visible(1, 100, format!("Writing {}:", fname));
+//                     let den =
+//                         den.iter()
+//                            .zip(&map)
+//                            .map(|(d, weight)| weight.as_ref().map(|w| d * w))
+//                            .collect::<Vec<Option<f64>>>();
+//                     file_type.write(atoms, den, fname, pbar)?;
+//                 }
+//             }
+//         }
+//         WriteType::Volume(v) => {
+//             println!("Writing out charge densities for atoms:");
+//             let volume_iter = if v.is_empty() {
+//                 (0..analysis.bader_maxima.len()).collect()
+//             } else {
+//                 v
+//             };
+//             for volume in volume_iter {
+//                 print!("Atom: {}.", volume + 1);
+//                 let pbar = Bar::visible(grid.size.total as u64,
+//                                         100,
+//                                         String::from("Building map:"));
+//                 let map =
+//                     analysis.output_volume_map(grid, voxel_map, volume, pbar);
+//                 for (i, den) in densities.iter().enumerate() {
+//                     let fname =
+//                         format!("volume_{}_{}", volume + 1, filename[i]);
+//                     let pbar =
+//                         Bar::visible(1, 100, format!("Writing {}:", fname));
+//                     let den =
+//                         den.iter()
+//                            .zip(&map)
+//                            .map(|(d, weight)| weight.as_ref().map(|w| d * w))
+//                            .collect::<Vec<Option<f64>>>();
+//                     file_type.write(atoms, den, fname, pbar)?;
+//                 }
+//                 println!(" Done.");
+//             }
+//         }
+//         WriteType::None => (),
+//     }
+//     Ok(())
+// }
