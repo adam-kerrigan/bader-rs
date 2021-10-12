@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use crossbeam_utils::thread;
 use rustc_hash::FxHashSet;
 
+/// A type to simplify the result of charge summing functions
 type ChargeSumResult = Result<(Vec<Vec<f64>>, Vec<f64>, Vec<f64>)>;
 
 /// The Errors Associated with the [`Analysis`] structure.
@@ -39,40 +40,38 @@ impl std::fmt::Debug for AnalysisError {
     }
 }
 
+/// Calculates the distance between a maxima and its nearest atom.
+/// Chunk represents a collection of bader maxima positions withing the density
+/// array.
 fn maxima_to_atom(chunk: &[isize],
                   atoms: &Atoms,
                   grid: &Grid,
                   progress_bar: &Bar)
                   -> Result<(Vec<usize>, Vec<f64>)> {
     let chunk_size = chunk.len();
+    // create vectors for storing the assigned atom and distance for each maxima
     let mut ass_atom = Vec::with_capacity(chunk_size);
     let mut min_dist = Vec::with_capacity(chunk_size);
     for m in chunk.iter() {
-        let maxima_cartesian = grid.to_cartesian(*m as isize);
-        let maxima_cartesian =
-            { utils::dot(maxima_cartesian, grid.voxel_lattice.to_cartesian) };
-        let mut maxima_lll_fractional =
-            utils::dot(maxima_cartesian, atoms.reduced_lattice.to_fractional);
-        for f in &mut maxima_lll_fractional {
-            *f = f.rem_euclid(1.);
-        }
-        let maxima_lll_cartesian = utils::dot(maxima_lll_fractional,
-                                              atoms.reduced_lattice
-                                                   .to_cartesian);
+        // convert the point first to cartesian, then to the reduced basis
+        let m_cartesian = grid.to_cartesian(*m as isize);
+        let m_reduced_cartesian = atoms.reduced_lattice.to_reduced(m_cartesian);
         let mut atom_num = 0;
         let mut min_distance = f64::INFINITY;
+        // go through each atom in the reduced basis and shift in each
+        // reduced direction, save the atom with the shortest distance
         for (i, atom) in atoms.reduced_positions.iter().enumerate() {
             for atom_shift in
                 atoms.reduced_lattice.cartesian_shift_matrix.iter()
             {
                 let distance = {
-                    (maxima_lll_cartesian[0]
+                    (m_reduced_cartesian[0]
                                         - (atom[0] + atom_shift[0]))
                                                                     .powi(2)
-                                       + (maxima_lll_cartesian[1]
+                                       + (m_reduced_cartesian[1]
                                           - (atom[1] + atom_shift[1]))
                                                                       .powi(2)
-                                       + (maxima_lll_cartesian[2]
+                                       + (m_reduced_cartesian[2]
                                           - (atom[2] + atom_shift[2]))
                                                                       .powi(2)
                 };
@@ -82,6 +81,7 @@ fn maxima_to_atom(chunk: &[isize],
                 }
             }
         }
+        // remember to square root the distance
         ass_atom.push(atom_num);
         min_dist.push(min_distance.powf(0.5));
         progress_bar.tick()
@@ -89,7 +89,9 @@ fn maxima_to_atom(chunk: &[isize],
     Ok((ass_atom, min_dist))
 }
 
-/// Assign a Bader maxima to the nearest atom.
+/// Assign the Bader maxima to the nearest atom.
+/// Threading will split the slice of maxima into chunks and operate on each
+/// chunk in parallel.
 pub fn assign_maxima(maxima: &[isize],
                      atoms: &Atoms,
                      grid: &Grid,
@@ -99,6 +101,8 @@ pub fn assign_maxima(maxima: &[isize],
     let mut assigned_atom = vec![0; maxima.len()];
     let mut minimum_distance = vec![0.0; maxima.len()];
     let pbar = &progress_bar;
+    // this is basically a thread handling function for running the
+    // maxima_to_atom function
     match threads.cmp(&1) {
         std::cmp::Ordering::Greater => {
             let chunk_size =
@@ -120,6 +124,9 @@ pub fn assign_maxima(maxima: &[isize],
                     if let Ok(((ass_atom, min_dist), chunk_index)) =
                         thread.join()
                     {
+                        // is this required? is the collection of handles not
+                        // already sorted like this, is it possible to join as
+                        // they finish?
                         let i = chunk_index * chunk_size;
                         assigned_atom.splice(i..(i + ass_atom.len()), ass_atom);
                         minimum_distance.splice(i..(i + min_dist.len()),
@@ -140,6 +147,11 @@ pub fn assign_maxima(maxima: &[isize],
     Ok((assigned_atom, minimum_distance))
 }
 
+// I don't like having two functions here there is so much duplicated code
+// how can this be fixed?
+
+/// Sum the densities for when the maxima are Bader volumes and not atoms.
+/// Chunk is a slice of the voxel map.
 fn sum_densities_bader(chunk: &[isize],
                        densities: &[Vec<f64>],
                        atoms_map: &[usize],
@@ -233,6 +245,8 @@ fn sum_densities_bader(chunk: &[isize],
     Ok((bader_charge, bader_volume, surface_distance))
 }
 
+/// Sum the densities for when the maxima are Bader atoms.
+/// Chunk is a slice of the voxel map.
 fn sum_densities_atom(chunk: &[isize],
                       densities: &[Vec<f64>],
                       atoms: &Atoms,
@@ -469,6 +483,7 @@ pub fn sum_atoms_densities(bader_charge: &[Vec<f64>],
     Ok((atoms_density, atoms_volume))
 }
 
+// The unwrap here is necessary for lifetime resolution
 /// Create nearest neighbour matrix from the atoms with shared voxels.
 #[allow(clippy::unnecessary_unwrap)]
 pub fn nearest_neighbours(voxel_map: &VoxelMap,
@@ -490,6 +505,9 @@ pub fn nearest_neighbours(voxel_map: &VoxelMap,
                                                            .collect()
                                                 }))
         };
+    // as both indices are added then the removal of the maxima from the set is
+    // valid, this also helps with not operating on single occupancy sets from
+    // voxel maps with non-atomic maxima
     maxima_map.for_each(|mut maxima_set| {
                   let maximas: Vec<usize> =
                       maxima_set.iter().copied().collect();
