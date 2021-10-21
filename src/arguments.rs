@@ -245,12 +245,12 @@ impl Args {
         // Collect weight tolerance
         let weight_tolerance = match arguments.value_of("weight tolerance") {
             Some(x) => match x.parse::<f64>() {
-                Ok(x) => x,
+                Ok(x) => x.max(1E-13),
                 Err(e) => {
                     panic!("Couldn't parse weight tolerance into float:\n{}", e)
                 }
             },
-            _ => 1E-6,
+            _ => 1E-8,
         };
         // Collect maxima tolerance
         let maxima_tolerance = match arguments.value_of("maxima tolerance") {

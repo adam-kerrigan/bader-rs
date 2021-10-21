@@ -342,16 +342,18 @@ pub fn sum_bader_densities(densities: &[Vec<f64>],
     let pbar = &progress_bar;
     // Only spawn threads if more than 1 thread is required.
     // This minimises overhead?
-    match threads.cmp(&1) {
-        std::cmp::Ordering::Greater => {
-            let mut surface_distance =
-                vec![f64::INFINITY; atoms.positions.len()];
-            let mut bader_charge = vec![vec![0.0; densities.len()]; maxima_len];
-            let mut bader_volume = vec![0.0; maxima_len];
-            // Calculate the size of the vector to be passed to each thread.
-            let chunk_size = (voxel_map.voxel_map.len() / threads)
-                             + (voxel_map.voxel_map.len() % threads).min(1);
-            thread::scope(|s| {
+    let (mut bader_charge, mut bader_volume, mut surface_distance) =
+        match threads.cmp(&1) {
+            std::cmp::Ordering::Greater => {
+                let mut surface_distance =
+                    vec![f64::INFINITY; atoms.positions.len()];
+                let mut bader_charge =
+                    vec![vec![0.0; densities.len()]; maxima_len];
+                let mut bader_volume = vec![0.0; maxima_len];
+                // Calculate the size of the vector to be passed to each thread.
+                let chunk_size = (voxel_map.voxel_map.len() / threads)
+                                 + (voxel_map.voxel_map.len() % threads).min(1);
+                thread::scope(|s| {
                 let spawned_threads = voxel_map.voxel_map
                                                .chunks(chunk_size)
                                                .enumerate()
@@ -398,15 +400,13 @@ pub fn sum_bader_densities(densities: &[Vec<f64>],
                             bc.iter_mut()
                               .zip(density.iter())
                               .for_each(|(a, b)| {
-                                  *a += b * voxel_map.grid.voxel_lattice.volume;
+                                  *a += b;
                               });
                         }
                         bader_volume.iter_mut()
                                     .zip(tmp_bv.into_iter())
                                     .for_each(|(a, b)| {
-                                        *a += b * voxel_map.grid
-                                                           .voxel_lattice
-                                                           .volume;
+                                        *a += b;
                                     });
                         surface_distance.iter_mut()
                                         .zip(tmp_sd.into_iter())
@@ -418,21 +418,20 @@ pub fn sum_bader_densities(densities: &[Vec<f64>],
                     };
                 }
             }).unwrap();
-            // The distance isn't square rooted in the calcation of distance to save time.
-            // As we need to filter out the infinite distances (atoms with no assigned maxima)
-            // we can square root here also.
-            surface_distance.iter_mut()
+                // The distance isn't square rooted in the calcation of distance to save time.
+                // As we need to filter out the infinite distances (atoms with no assigned maxima)
+                // we can square root here also.
+                surface_distance.iter_mut()
                             .for_each(|d| {
                                 match (*d).partial_cmp(&f64::INFINITY) {
                                     Some(std::cmp::Ordering::Less) => *d = d.powf(0.5),
                                     _ => *d = 0.0,
                                 }
                             });
-            Ok((bader_charge, bader_volume, surface_distance))
-        }
-        _ => {
-            let (bader_charge, bader_volume, mut surface_distance) = {
-                match atoms_map {
+                (bader_charge, bader_volume, surface_distance)
+            }
+            _ => {
+                    match atoms_map {
                     Some(am) => sum_densities_bader(&voxel_map.voxel_map,
                                   densities,
                                   am,
@@ -447,20 +446,28 @@ pub fn sum_bader_densities(densities: &[Vec<f64>],
                                                0,
                                                pbar).context("Unable to sum bader densities")?
                 }
-            };
-            // The distance isn't square rooted in the calcation of distance to save time.
-            // As we need to filter out the infinite distances (atoms with no assigned maxima)
-            // we can square root here also.
-            surface_distance.iter_mut()
-                            .for_each(|d| {
-                                match (*d).partial_cmp(&f64::INFINITY) {
-                                    Some(std::cmp::Ordering::Less) => *d = d.powf(0.5),
-                                    _ => *d = 0.0,
-                                }
-                            });
-            Ok((bader_charge, bader_volume, surface_distance))
-        }
+            }
+        };
+    // The distance isn't square rooted in the calcation of distance to save time.
+    // As we need to filter out the infinite distances (atoms with no assigned maxima)
+    // we can square root here also.
+    for bc in bader_charge.iter_mut() {
+        bc.iter_mut().for_each(|a| {
+                         *a *= voxel_map.grid.voxel_lattice.volume;
+                     });
     }
+    bader_volume.iter_mut().for_each(|a| {
+                               *a *= voxel_map.grid.voxel_lattice.volume;
+                           });
+    surface_distance.iter_mut().for_each(|d| {
+                                   match (*d).partial_cmp(&f64::INFINITY) {
+                                       Some(std::cmp::Ordering::Less) => {
+                                           *d = d.powf(0.5)
+                                       }
+                                       _ => *d = 0.0,
+                                   }
+                               });
+    Ok((bader_charge, bader_volume, surface_distance))
 }
 
 /// Sums the densities for each atom.

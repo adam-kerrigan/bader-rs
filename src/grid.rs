@@ -68,12 +68,19 @@ impl Grid {
     }
 
     /// Shifts a point, p, by a single voronoi vector.
-    pub fn voronoi_shift(&self, p: isize, shift: &[usize]) -> isize {
-        let mut pn = p;
-        for p_shift in shift.iter() {
-            pn += self.shift.get(pn)[*p_shift];
-        }
-        pn
+    pub fn voronoi_shifts(&self, p: isize) -> Vec<(isize, f64)> {
+        self.voronoi
+            .vectors
+            .iter()
+            .zip(&self.voronoi.alphas)
+            .map(|(shifts, alpha)| {
+                let mut pn = p;
+                for p_shift in shifts.iter() {
+                    pn += self.shift.get(pn)[*p_shift];
+                }
+                (pn, *alpha)
+            })
+            .collect()
     }
 
     /// Converts a point in the array to cartesian.

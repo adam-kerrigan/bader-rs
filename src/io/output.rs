@@ -1,7 +1,8 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use std::fs::File;
 use std::io::Write;
 
+/// Create the partitioned charge files using an optional atom map to decide the format
 pub fn partitions_file(positions: Vec<(String, String, String)>,
                        partitioned_density: &[Vec<f64>],
                        partitioned_volume: &[f64],
@@ -10,6 +11,7 @@ pub fn partitions_file(positions: Vec<(String, String, String)>,
                        distance: &[f64],
                        atom_map: Option<&[usize]>)
                        -> Result<String> {
+    // calculate the total density for each density supplied
     let total_partitioned_density =
         partitioned_density.iter().fold(vec![
                                             0.0;
@@ -23,36 +25,17 @@ pub fn partitions_file(positions: Vec<(String, String, String)>,
                                                });
                                             sum
                                         });
+    // the volume is the same for all densities
     let total_partitioned_volume = partitioned_volume.iter().sum();
     let vacuum_density = total_partitioned_density.iter()
                                                   .zip(total_density)
                                                   .map(|(a, b)| b - a)
                                                   .collect::<Vec<f64>>();
     let vacuum_volume = total_volume - total_partitioned_volume;
-    if atom_map.is_none() {
-        let mut table =
-            Table::new(TableType::AtomsCharge, partitioned_density[0].len());
-        let mut index = 1;
-        positions.into_iter()
-                 .zip(partitioned_density)
-                 .zip(partitioned_volume)
-                 .zip(distance)
-                 .for_each(|(((coord, density), volume), distance)| {
-                     table.add_row(index, coord, density, *volume, *distance);
-                     index += 1;
-                 });
-        Ok(table.get_string(&vacuum_density,
-                            vacuum_volume,
-                            &total_partitioned_density,
-                            total_partitioned_volume))
-    } else {
+    // which charge file to write, if there's an atom_map -> BCF
+    if let Some(atom_map) = atom_map {
         let mut table =
             Table::new(TableType::BaderCharge, partitioned_density[0].len());
-        let atom_map = if let Some(x) = atom_map {
-            x
-        } else {
-            bail!("da fuk")
-        };
         let mut index: Vec<usize> = (0..atom_map.len()).collect();
         index.sort_by(|a, b| atom_map[*a].cmp(&atom_map[*b]));
         let mut atom_num = atom_map[index[0]];
@@ -69,6 +52,23 @@ pub fn partitions_file(positions: Vec<(String, String, String)>,
                                            partitioned_volume[i],
                                            distance[i]);
                          });
+        Ok(table.get_string(&vacuum_density,
+                            vacuum_volume,
+                            &total_partitioned_density,
+                            total_partitioned_volume))
+    // if no atom_map -> ACF
+    } else {
+        let mut table =
+            Table::new(TableType::AtomsCharge, partitioned_density[0].len());
+        let mut index = 1;
+        positions.into_iter()
+                 .zip(partitioned_density)
+                 .zip(partitioned_volume)
+                 .zip(distance)
+                 .for_each(|(((coord, density), volume), distance)| {
+                     table.add_row(index, coord, density, *volume, *distance);
+                     index += 1;
+                 });
         Ok(table.get_string(&vacuum_density,
                             vacuum_volume,
                             &total_partitioned_density,
@@ -308,93 +308,9 @@ impl Table {
     }
 }
 
-/// Write the files
-///
-/// * `atoms_charge_file`: The contents, as a String, of the ACF.dat file.
-/// * `bader_charge_file`: The contents, as a String, of the BCF.dat file.
+/// Write a string to filename. Creates a new file regardless of what exists.
 pub fn write(string: String, filename: String) -> std::io::Result<()> {
     let mut bader_file = File::create(&filename)?;
     bader_file.write_all(string.as_bytes())?;
     Ok(())
 }
-
-// /// Write the densities of either Bader atoms or volumes.
-// #[allow(clippy::borrowed_box)]
-// pub fn write_densities(atoms: &Atoms,
-//                        analysis: &Analysis,
-//                        densities: Vec<Vec<f64>>,
-//                        output: WriteType,
-//                        voxel_map: &VoxelMap,
-//                        file_type: &Box<dyn FileFormat>)
-//                        -> std::io::Result<()> {
-//     let grid = &voxel_map.grid;
-//     let filename = match densities.len().cmp(&2) {
-//         std::cmp::Ordering::Less => vec![String::from("charge")],
-//         std::cmp::Ordering::Equal => {
-//             vec![String::from("charge"), String::from("spin")]
-//         }
-//         std::cmp::Ordering::Greater => vec![String::from("charge"),
-//                                             String::from("spin_x"),
-//                                             String::from("spin_y"),
-//                                             String::from("spin_z"),],
-//     };
-//     match output {
-//         WriteType::Atom(a) => {
-//             println!("Writing out charge densities for atoms:");
-//             let atom_iter = if a.is_empty() {
-//                 (0..atoms.positions.len()).collect()
-//             } else {
-//                 a
-//             };
-//             for atom in atom_iter {
-//                 println!("Atom {}:", atom + 1);
-//                 let pbar = Bar::visible(grid.size.total as u64,
-//                                         100,
-//                                         String::from("Building map:"));
-//                 let map = analysis.output_atom_map(grid, voxel_map, atom, pbar);
-//                 for (i, den) in densities.iter().enumerate() {
-//                     let fname = format!("atom_{}_{}", atom + 1, filename[i]);
-//                     let pbar =
-//                         Bar::visible(1, 100, format!("Writing {}:", fname));
-//                     let den =
-//                         den.iter()
-//                            .zip(&map)
-//                            .map(|(d, weight)| weight.as_ref().map(|w| d * w))
-//                            .collect::<Vec<Option<f64>>>();
-//                     file_type.write(atoms, den, fname, pbar)?;
-//                 }
-//             }
-//         }
-//         WriteType::Volume(v) => {
-//             println!("Writing out charge densities for atoms:");
-//             let volume_iter = if v.is_empty() {
-//                 (0..analysis.bader_maxima.len()).collect()
-//             } else {
-//                 v
-//             };
-//             for volume in volume_iter {
-//                 print!("Atom: {}.", volume + 1);
-//                 let pbar = Bar::visible(grid.size.total as u64,
-//                                         100,
-//                                         String::from("Building map:"));
-//                 let map =
-//                     analysis.output_volume_map(grid, voxel_map, volume, pbar);
-//                 for (i, den) in densities.iter().enumerate() {
-//                     let fname =
-//                         format!("volume_{}_{}", volume + 1, filename[i]);
-//                     let pbar =
-//                         Bar::visible(1, 100, format!("Writing {}:", fname));
-//                     let den =
-//                         den.iter()
-//                            .zip(&map)
-//                            .map(|(d, weight)| weight.as_ref().map(|w| d * w))
-//                            .collect::<Vec<Option<f64>>>();
-//                     file_type.write(atoms, den, fname, pbar)?;
-//                 }
-//                 println!(" Done.");
-//             }
-//         }
-//         WriteType::None => (),
-//     }
-//     Ok(())
-// }

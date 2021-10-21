@@ -33,26 +33,20 @@ fn main() -> Result<()> {
                                      * voxel_map.grid.voxel_lattice.volume
                                  })
                                  .collect::<Vec<f64>>();
+    // create the index list which will tell us in which order to evaluate the
+    // voxels
     let mut index: Vec<usize> = (0..voxel_map.grid.size.total).collect();
+    let pbar =
+        Bar::visible(index.len() as u64, 100, String::from("Maxima Finding: "));
+    let bader_maxima =
+        maxima_finder(&mut index, reference, &voxel_map, args.threads, pbar)?;
     index.sort_unstable_by(|a, b| {
              reference[*b].partial_cmp(&reference[*a]).unwrap()
          });
-    index.truncate(vacuum_index(reference, &index, args.vacuum_tolerance).context("Failed to apply vacuum tolerance")?);
+    // remove from the indices any voxel that is below the vacuum limit
+    index.truncate(vacuum_index(reference, &index, args.vacuum_tolerance)
+         .context("Failed to apply vacuum tolerance")?);
     // Start a thread-safe progress bar and run the main calculation
-    let pbar =
-        Bar::visible(index.len() as u64, 100, String::from("Maxima Finding: "));
-    let bader_maxima = maxima_finder(&index,
-                                     reference,
-                                     &voxel_map,
-                                     args.threads,
-                                     pbar)?.into_iter()
-                                           .map(|i| {
-                                               let maxima = index[i] as isize;
-                                               index[i] = reference.len();
-                                               maxima
-                                           })
-                                           .collect::<Vec<isize>>();
-    index.retain(|&i| i != reference.len());
     let pbar = Bar::visible(bader_maxima.len() as u64,
                             100,
                             String::from("Assigning to Atoms: "));
@@ -64,6 +58,7 @@ fn main() -> Result<()> {
     let pbar = Bar::visible(index.len() as u64,
                             100,
                             String::from("Bader Partitioning: "));
+    // input the maxima into the voxel map
     if let Verbosity::Atoms = args.verbosity {
         bader_maxima.iter().enumerate().for_each(|(i, maxima)| {
                                            voxel_map.maxima_store(*maxima,
@@ -77,16 +72,19 @@ fn main() -> Result<()> {
                         voxel_map.maxima_store(*maxima, i as isize);
                     })
     }
+    // calculate the weights
     weight(reference,
            &voxel_map,
            &index,
            pbar,
            args.threads,
            args.weight_tolerance);
+    // convert into a NonBlockingVoxelMap as the map is filled
     let voxel_map = NonBlockingVoxelMap::from_blocking_voxel_map(voxel_map);
     let pbar = Bar::visible(index.len() as u64,
                             100,
                             String::from("Summing Densities: "));
+    // sum the densities and then write the charge partition files
     if let Verbosity::Atoms = args.verbosity {
         let (atoms_density, atoms_volume, min_surf_dist) =
             sum_bader_densities(&densities,
@@ -180,48 +178,59 @@ fn main() -> Result<()> {
     // with an id for each volume that is to be outputted. Save this as a lazy
     // iterator as to save memory? This is now a large part of the binary,
     // should it be moved?
-    let write_map: Box<dyn Iterator<Item=(isize, Vec<Option<f64>>)>> = match (args.output, args.verbosity) {
-        (WriteType::Volume(_), Verbosity::Atoms) => bail!("Unable to write Bader volumes at this level of verbosity, either increase verbosity or export atoms."),
-        (WriteType::Volume(v), _) => {
-            let volume_iter = if v.is_empty() {
-                (0..bader_maxima.len() as isize).collect()
-            } else {
-                v
-            };
-            Box::new(volume_iter.into_iter()
+    let write_map: Box<dyn Iterator<Item = (isize, Vec<Option<f64>>)>> =
+        match (args.output, args.verbosity) {
+            (WriteType::Volume(_), Verbosity::Atoms) => bail!(
+"Unable to write Bader volumes at this level of verbosity, either increase
+verbosity or export atoms."
+                ),
+            (WriteType::Volume(v), _) => {
+                let volume_iter = if v.is_empty() {
+                    (0..bader_maxima.len() as isize).collect()
+                } else {
+                    v
+                };
+                Box::new(volume_iter.into_iter()
                        .map(|volume_number| (volume_number, voxel_map.volume_map(volume_number))))
-        },
-        (WriteType::Atom(a), Verbosity::Atoms) => {
-            let atom_iter = if a.is_empty() {
-                (0..atoms.positions.len() as isize).collect()
-            } else {
-                a
-            };
-            Box::new(atom_iter.into_iter()
+            }
+            (WriteType::Atom(a), Verbosity::Atoms) => {
+                let atom_iter = if a.is_empty() {
+                    (0..atoms.positions.len() as isize).collect()
+                } else {
+                    a
+                };
+                Box::new(atom_iter.into_iter()
                      .map(|atom_number| {
                          let map = voxel_map.volume_map(atom_number);
                          (atom_number, map)
                      }))
-        },
-        (WriteType::Atom(a), _) => {
-            let atom_iter: Vec<FxHashSet<isize>> = if a.is_empty() {
-                let mut a_i = vec![FxHashSet::default(); atoms.positions.len()];
-                atom_map.iter().enumerate().for_each(|(i, atom)| {
+            }
+            (WriteType::Atom(a), _) => {
+                let atom_iter: Vec<FxHashSet<isize>> =
+                    if a.is_empty() {
+                        let mut a_i =
+                            vec![FxHashSet::default(); atoms.positions.len()];
+                        atom_map.iter().enumerate().for_each(|(i, atom)| {
                     a_i[*atom].insert(i as isize);
                 });
-                a_i
-            } else {
-                a.iter()
-                 .map(|atom_number| atom_map.iter()
-                                            .enumerate()
-                                            .filter_map(|(i, atom)| if (*atom as isize) == *atom_number {
-                                                Some(i as isize)
-                                            } else {
-                                                None
-                                            }).collect::<FxHashSet<isize>>())
-                 .collect()
-            };
-            Box::new(atom_iter.into_iter()
+                        a_i
+                    } else {
+                        a.iter()
+                         .map(|atom_number| {
+                             atom_map.iter()
+                                     .enumerate()
+                                     .filter_map(|(i, atom)| {
+                                         if (*atom as isize) == *atom_number {
+                                             Some(i as isize)
+                                         } else {
+                                             None
+                                         }
+                                     })
+                                     .collect::<FxHashSet<isize>>()
+                         })
+                         .collect()
+                    };
+                Box::new(atom_iter.into_iter()
                      .filter_map(|volume_numbers| {
                          if !volume_numbers.is_empty() {
                              let map = voxel_map.multi_volume_map(&volume_numbers);
@@ -232,9 +241,9 @@ fn main() -> Result<()> {
                              None
                          }
                      }))
-        },
-        (WriteType::None, _) => Box::new(Vec::with_capacity(0).into_iter()),
-    };
+            }
+            (WriteType::None, _) => Box::new(Vec::with_capacity(0).into_iter()),
+        };
     write_map.for_each(|(id, weight_map)| {
         densities.iter()
                  .zip(&filename)
@@ -251,7 +260,7 @@ fn main() -> Result<()> {
                          format!("{}_{}", id + 1, flnm),
                          pbar).is_err()
                      {
-                         panic!("holy fuck batman")
+                         panic!("Error in writing {}", flnm)
                      }
                  });
     });
