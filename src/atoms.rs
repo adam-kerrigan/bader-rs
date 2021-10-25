@@ -23,14 +23,7 @@ impl Atoms {
         let reduced_lattice = ReducedLattice::from_lattice(&lattice);
         let reduced_positions =
             positions.iter()
-                     .map(|v| {
-                         let mut frac =
-                             utils::dot(*v, reduced_lattice.to_fractional);
-                         for f in &mut frac {
-                             *f = f.rem_euclid(1.);
-                         }
-                         utils::dot(frac, reduced_lattice.to_cartesian)
-                     })
+                     .map(|p| reduced_lattice.to_reduced(*p))
                      .collect::<Vec<[f64; 3]>>();
         Self { lattice,
                positions,
@@ -189,6 +182,7 @@ impl ReducedLattice {
         for c_shift in cartesian_shift_matrix.iter().take(26) {
             shift_matrix.push({
                 let mut shift_vec = Vec::<usize>::new();
+                // There has to be a better way to round this
                 let mut shift = utils::dot(*c_shift, lattice.to_fractional)
                     .iter()
                     .map(|x| ((x * 1E14).round() / 1E14) as isize)
@@ -273,6 +267,15 @@ impl ReducedLattice {
             u[2][i] = v[2][i] - (mu[2][0] * u[0][i]) - (mu[2][1] * u[1][i]);
         }
         (u, mu)
+    }
+
+    /// Wraps a cartesian position into the reduced basis.
+    pub fn to_reduced(&self, p: [f64; 3]) -> [f64; 3] {
+        let mut frac = utils::dot(p, self.to_fractional);
+        for f in &mut frac {
+            *f = f.rem_euclid(1.);
+        }
+        utils::dot(frac, self.to_cartesian)
     }
 }
 

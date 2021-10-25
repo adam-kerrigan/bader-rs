@@ -12,6 +12,12 @@ pub enum Reference {
     None,
 }
 
+pub enum Verbosity {
+    Atoms,
+    Bader,
+    Full,
+}
+
 /// Create a container for dealing with clap and being able to test arg parsing.
 pub enum ClapApp {}
 
@@ -88,7 +94,6 @@ contain a single density (ie. the original file has been split)."))
                 .takes_value(false)
                 .conflicts_with("reference"))
             .arg(Arg::new("vacuum tolerance")
-                .short('v')
                 .long("vac")
                 .takes_value(true)
                 .about("Cut-off at which charge is considered vacuum.")
@@ -123,6 +128,17 @@ unaccounted for in the final partitions. Be sure to test this!"))
 "The number of threads to be used by the program. A default value of 0 is used
 to allow the program to best decide how to use the available hardware. It does
 this by using the minimum value out of the number cores available and 12."))
+            .arg(Arg::new("verbosity")
+                .short('v')
+                .takes_value(false)
+                .multiple_occurrences(true)
+                .max_occurrences(2)
+                .about("Sets the program output verbosity.")
+                .long_about(
+"Sets the output verbosity of the program. By defualt only the atomic charges
+will be saved to file, one level of verbosity the bader volumes are also written
+to file. A thrid level of verbosity will print aditional information to the
+footer of the the atomic charges file."))
     }
 }
 
@@ -146,6 +162,7 @@ pub struct Args {
     pub threads: usize,
     /// Is there a tolerance to consider a density vacuum.
     pub vacuum_tolerance: Option<f64>,
+    pub verbosity: Verbosity,
 }
 
 impl Args {
@@ -164,7 +181,7 @@ impl Args {
                     Some(vec) => {
                         vec.map(|s| match s.parse::<usize>() {
                             Ok(u) => match u.checked_sub(1) {
-                                Some(u) => u,
+                                Some(u) => u as isize,
                                 None => {
                                     panic!("Counting for index starts at 1.")
                                 }
@@ -174,7 +191,7 @@ impl Args {
                                        s)
                             }
                         })
-                        .collect::<Vec<usize>>()
+                        .collect::<Vec<isize>>()
                     }
                     None => Vec::with_capacity(0),
                 };
@@ -185,7 +202,7 @@ impl Args {
                     Some(vec) => {
                         vec.map(|s| match s.parse::<usize>() {
                             Ok(u) => match u.checked_sub(1) {
-                                Some(u) => u,
+                                Some(u) => u as isize,
                                 None => {
                                     panic!("Counting for index starts at 1.")
                                 }
@@ -195,7 +212,7 @@ impl Args {
                                        s)
                             }
                         })
-                        .collect::<Vec<usize>>()
+                        .collect::<Vec<isize>>()
                     }
                     None => Vec::with_capacity(0),
                 };
@@ -228,12 +245,12 @@ impl Args {
         // Collect weight tolerance
         let weight_tolerance = match arguments.value_of("weight tolerance") {
             Some(x) => match x.parse::<f64>() {
-                Ok(x) => x,
+                Ok(x) => x.max(1E-13),
                 Err(e) => {
                     panic!("Couldn't parse weight tolerance into float:\n{}", e)
                 }
             },
-            _ => 1E-6,
+            _ => 1E-8,
         };
         // Collect maxima tolerance
         let maxima_tolerance = match arguments.value_of("maxima tolerance") {
@@ -291,6 +308,11 @@ impl Args {
             _ => Reference::None,
         };
         let spin = arguments.value_of("spin").map(String::from);
+        let verbosity = match arguments.occurrences_of("verbosity") {
+            0 => Verbosity::Atoms,
+            1 => Verbosity::Bader,
+            _ => Verbosity::Full,
+        };
         Self { file,
                file_type,
                weight_tolerance,
@@ -299,7 +321,8 @@ impl Args {
                reference,
                spin,
                threads,
-               vacuum_tolerance }
+               vacuum_tolerance,
+               verbosity }
     }
 }
 
@@ -531,7 +554,7 @@ mod tests {
     #[test]
     fn argument_vacuum_tolerance_auto() {
         let app = ClapApp::get();
-        let v = vec!["bca", "CHGCAR", "-v", "auto"];
+        let v = vec!["bca", "CHGCAR", "--vac", "auto"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
         assert_eq!(args.vacuum_tolerance, Some(1E-6))
@@ -550,7 +573,7 @@ mod tests {
     #[should_panic]
     fn argument_vacuum_tolerance_not_float() {
         let app = ClapApp::get();
-        let v = vec!["bca", "CHGCAR", "-v", "0.00.1"];
+        let v = vec!["bca", "CHGCAR", "--vac", "0.00.1"];
         let matches = app.get_matches_from(v);
         let _ = Args::new(matches);
     }

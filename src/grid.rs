@@ -1,4 +1,5 @@
 use crate::atoms::Lattice;
+use crate::utils::dot;
 use crate::voronoi::Voronoi;
 
 /// Structure for managing the movement within the reference density.
@@ -67,12 +68,19 @@ impl Grid {
     }
 
     /// Shifts a point, p, by a single voronoi vector.
-    pub fn voronoi_shift(&self, p: isize, shift: &[usize]) -> isize {
-        let mut pn = p;
-        for p_shift in shift.iter() {
-            pn += self.shift.get(pn)[*p_shift];
-        }
-        pn
+    pub fn voronoi_shifts(&self, p: isize) -> Vec<(isize, f64)> {
+        self.voronoi
+            .vectors
+            .iter()
+            .zip(&self.voronoi.alphas)
+            .map(|(shifts, alpha)| {
+                let mut pn = p;
+                for p_shift in shifts.iter() {
+                    pn += self.shift.get(pn)[*p_shift];
+                }
+                (pn, *alpha)
+            })
+            .collect()
     }
 
     /// Converts a point in the array to cartesian.
@@ -80,9 +88,10 @@ impl Grid {
         let x = (p / (self.size.y * self.size.z)) as f64;
         let y = (p / self.size.z).rem_euclid(self.size.y) as f64;
         let z = p.rem_euclid(self.size.z) as f64;
-        [x + self.voxel_origin[0],
-         y + self.voxel_origin[1],
-         z + self.voxel_origin[2]]
+        let p = [x + self.voxel_origin[0],
+                 y + self.voxel_origin[1],
+                 z + self.voxel_origin[2]];
+        dot(p, self.voxel_lattice.to_cartesian)
     }
 }
 
