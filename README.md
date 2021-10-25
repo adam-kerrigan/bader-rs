@@ -5,7 +5,7 @@
 [![DOI](https://zenodo.org/badge/292534636.svg)](https://zenodo.org/badge/latestdoi/292534636)
 [![MSRV: rustc 1.54+](https://img.shields.io/badge/MSRV-rustc_1.54+-lightgray.svg)](https://blog.rust-lang.org/2021/07/29/Rust-1.54.0.html)
 
-An incredibly fast, multi-threaded, Bader charge partitioning tool. Based on methods presented in [Yu Min  and Trinkle Dallas R. 2011  J. Che.m Phys. 134 064111] with adaptions for multi-threading.
+An incredibly fast, multi-threaded, Bader charge partitioning tool. Based on methods presented in [Yu Min  and Trinkle Dallas R. 2011  J. Che.m Phys. 134 064111] with adaptions for multi-threading and increased speed.
 ## Installation
 ### Pre-built Binary
 There are pre-built 64bit binaries for Linux, Mac and Windows provided with the source code for the latest [release].
