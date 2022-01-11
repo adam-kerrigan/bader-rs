@@ -175,10 +175,9 @@ impl Args {
         };
 
         // Collect write charge info
-        let output =
-            match arguments.value_of("output") {
-                Some("atoms") => {
-                    let atoms = match arguments.values_of("index") {
+        let output = match arguments.value_of("output") {
+            Some("atoms") => {
+                let atoms = match arguments.values_of("index") {
                     Some(vec) => {
                         vec.map(|s| match s.parse::<usize>() {
                             Ok(u) => match u.checked_sub(1) {
@@ -196,10 +195,10 @@ impl Args {
                     }
                     None => Vec::with_capacity(0),
                 };
-                    WriteType::Atom(atoms)
-                }
-                Some("volumes") => {
-                    let volumes = match arguments.values_of("index") {
+                WriteType::Atom(atoms)
+            }
+            Some("volumes") => {
+                let volumes = match arguments.values_of("index") {
                     Some(vec) => {
                         vec.map(|s| match s.parse::<usize>() {
                             Ok(u) => match u.checked_sub(1) {
@@ -217,10 +216,10 @@ impl Args {
                     }
                     None => Vec::with_capacity(0),
                 };
-                    WriteType::Volume(volumes)
-                }
-                _ => WriteType::None,
-            };
+                WriteType::Volume(volumes)
+            }
+            _ => WriteType::None,
+        };
 
         // Collect file type
         let file_type = arguments.value_of("file type").map(String::from);
@@ -303,10 +302,8 @@ impl Args {
             }
         };
         let reference = match references.len() {
-            2 => Reference::Two(
-                String::from(references[0]),
-                String::from(references[1]),
-            ),
+            2 => Reference::Two(String::from(references[0]),
+                                String::from(references[1])),
             1 => Reference::One(String::from(references[0])),
             _ => Reference::None,
         };
@@ -316,18 +313,16 @@ impl Args {
             1 => Verbosity::Bader,
             _ => Verbosity::Full,
         };
-        Self {
-            file,
-            file_type,
-            weight_tolerance,
-            maxima_tolerance,
-            output,
-            reference,
-            spin,
-            threads,
-            vacuum_tolerance,
-            verbosity,
-        }
+        Self { file,
+               file_type,
+               weight_tolerance,
+               maxima_tolerance,
+               output,
+               reference,
+               spin,
+               threads,
+               vacuum_tolerance,
+               verbosity }
     }
 }
 
@@ -353,9 +348,8 @@ mod tests {
     #[should_panic]
     fn argument_no_file() {
         let app = ClapApp::get();
-        let _ = app
-            .try_get_matches_from(vec!["bca"])
-            .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+        let _ = app.try_get_matches_from(vec!["bca"])
+                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
@@ -408,9 +402,8 @@ mod tests {
     #[should_panic]
     fn argument_file_type_not_type() {
         let app = ClapApp::get();
-        let _ = app
-            .try_get_matches_from(vec!["bca", "CHGCAR", "-t", "basp"])
-            .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+        let _ = app.try_get_matches_from(vec!["bca", "CHGCAR", "-t", "basp"])
+                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
@@ -441,17 +434,15 @@ mod tests {
     #[should_panic]
     fn argument_output_not_output() {
         let app = ClapApp::get();
-        let _ = app
-            .try_get_matches_from(vec!["bca", "CHGCAR", "-o", "Atoms"])
-            .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+        let _ = app.try_get_matches_from(vec!["bca", "CHGCAR", "-o", "Atoms"])
+                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
     fn argument_output_index() {
         let app = ClapApp::get();
-        let matches = app.get_matches_from(vec![
-            "bca", "CHGCAR", "-o", "volumes", "-i", "1",
-        ]);
+        let matches = app.get_matches_from(vec!["bca", "CHGCAR", "-o",
+                                                "volumes", "-i", "1",]);
         let args = Args::new(matches);
         match args.output {
             WriteType::Volume(v) => assert_eq!(v, vec![0]),
@@ -462,9 +453,9 @@ mod tests {
     #[test]
     fn argument_output_mult_index() {
         let app = ClapApp::get();
-        let matches = app.get_matches_from(vec![
-            "bca", "CHGCAR", "-o", "atoms", "--index", "1", "-i", "3",
-        ]);
+        let matches = app.get_matches_from(vec!["bca", "CHGCAR", "-o",
+                                                "atoms", "--index", "1",
+                                                "-i", "3",]);
         let args = Args::new(matches);
         match args.output {
             WriteType::Atom(v) => assert_eq!(v, vec![0, 2]),
@@ -476,8 +467,8 @@ mod tests {
     #[should_panic]
     fn argument_index_zero() {
         let app = ClapApp::get();
-        let matches = app
-            .get_matches_from(vec!["bca", "CHGCAR", "-o", "atoms", "-i", "0"]);
+        let matches = app.get_matches_from(vec!["bca", "CHGCAR", "-o",
+                                                "atoms", "-i", "0"]);
         let _ = Args::new(matches);
     }
 
@@ -485,29 +476,25 @@ mod tests {
     #[should_panic]
     fn argument_index_no_output() {
         let app = ClapApp::get();
-        let _ = app
-            .try_get_matches_from(vec!["bca", "CHGCAR", "-i", "1"])
-            .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+        let _ = app.try_get_matches_from(vec!["bca", "CHGCAR", "-i", "1"])
+                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
     #[should_panic]
     fn argument_index_not_parse() {
         let app = ClapApp::get();
-        let _ = app
-            .try_get_matches_from(vec!["bca", "CHGCAR", "-i", "1,6"])
-            .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+        let _ = app.try_get_matches_from(vec!["bca", "CHGCAR", "-i", "1,6"])
+                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
     fn argument_spin() {
         let app = ClapApp::get();
-        let matches = app.get_matches_from(vec![
-            "bca",
-            "density.cube",
-            "-s",
-            "spin.cube",
-        ]);
+        let matches = app.get_matches_from(vec!["bca",
+                                                "density.cube",
+                                                "-s",
+                                                "spin.cube",]);
         let args = Args::new(matches);
         assert_eq!(args.spin, Some(String::from("spin.cube")))
     }
