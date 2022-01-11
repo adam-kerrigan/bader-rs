@@ -30,16 +30,16 @@ impl<'a> ClapApp {
             .arg(Arg::new("file")
                 .required(true)
                 .index(1)
-                .about("The file to analyse."))
+                .help("The file to analyse."))
             .arg(Arg::new("output")
                 .short('o')
                 .long("output")
                 .takes_value(true)
                 .possible_value("atoms")
                 .possible_value("volumes")
-                .case_insensitive(false)
-                .about("Output the Bader atoms or volumes.")
-                .long_about(
+                .ignore_case(false)
+                .help("Output the Bader atoms or volumes.")
+                .long_help(
 "Output the Bader atoms or the Bader volumes in the same file formtat as the
 input density. This can be used in conjunction with the index flag to specify a
 specific atoms or volumes. Without the index flag it will print all the atoms or
@@ -50,8 +50,8 @@ volumes."))
                 .multiple_occurrences(true)
                 .number_of_values(1)
                 .requires("output")
-                .about("Index of Bader atoms or volumes to be written out.")
-                .long_about(
+                .help("Index of Bader atoms or volumes to be written out.")
+                .long_help(
 "An index of a Bader atom or volume to be written out, starting at 1. This flag
 requires the output flag to be set. Multiple atoms or volumes can be written by
 repeating the flag ie. bca CHGCAR -o atoms -i 1 -i 2."))
@@ -61,9 +61,9 @@ repeating the flag ie. bca CHGCAR -o atoms -i 1 -i 2."))
                 .takes_value(true)
                 .possible_value("cube")
                 .possible_value("vasp")
-                .case_insensitive(false)
-                .about("The file type of the charge density.")
-                .long_about(
+                .ignore_case(false)
+                .help("The file type of the charge density.")
+                .long_help(
 "The file type of the input file. If this is not supplied the type will attempt
 to be infered from the filename."))
             .arg(Arg::new("reference")
@@ -72,8 +72,8 @@ to be infered from the filename."))
                 .multiple_occurrences(true)
                 .max_values(2)
                 .number_of_values(1)
-                .about("File(s) containing reference charge.")
-                .long_about(
+                .help("File(s) containing reference charge.")
+                .long_help(
 "A reference charge to do the partitioning upon. Two files can be passed
 by using multiple flags (bca CHGCAR -r AECCAR0 -r AECCAR2). If two files are
 passed they are summed together."))
@@ -81,8 +81,8 @@ passed they are summed together."))
                 .short('s')
                 .long("spin")
                 .number_of_values(1)
-                .about("File containing spin density.")
-                .long_about(
+                .help("File containing spin density.")
+                .long_help(
 "A path to the spin density associated with the original file. This is primarily
 for cube files as if spin density exists in a CHGCAR it will be read automatically.
 If using with VASP outputs then the files for charge and spin density must only
@@ -90,30 +90,30 @@ contain a single density (ie. the original file has been split)."))
             .arg(Arg::new("all electron")
                 .short('a')
                 .long("aec")
-                .about("Convience flag for reading both aeccars.")
+                .help("Convience flag for reading both aeccars.")
                 .takes_value(false)
                 .conflicts_with("reference"))
             .arg(Arg::new("vacuum tolerance")
                 .long("vac")
                 .takes_value(true)
-                .about("Cut-off at which charge is considered vacuum.")
-                .long_about(
+                .help("Cut-off at which charge is considered vacuum.")
+                .long_help(
 "Values of density below the supplied value are considered vacuum and are not
 included in the calculation. A value of \"auto\" can be passed to use 1E-6 C*m^-3."))
             .arg(Arg::new("maxima tolerance")
                 .short('m')
                 .long("maxima")
                 .takes_value(true)
-                .about("Cut-off for charge at which a maxima is not printed.")
-                .long_about(
+                .help("Cut-off for charge at which a maxima is not printed.")
+                .long_help(
 "Values of charge for the Bader maxima below the supplied value are not written
 to the Bader charge file (BCF.dat). A default value of 1E-6 is used."))
             .arg(Arg::new("weight tolerance")
                 .short('w')
                 .long("weight")
                 .takes_value(true)
-                .about("Cut-off at which contributions to the weighting will be ignored.")
-                .long_about(
+                .help("Cut-off at which contributions to the weighting will be ignored.")
+                .long_help(
 "Values of density below the supplied value are ignored from the weighting and
 included in the calculation. A default vaule of 1E-6 is used. By raising the
 tolerance the calculation speed can be increased but every ignored weight is
@@ -123,8 +123,8 @@ unaccounted for in the final partitions. Be sure to test this!"))
                 .long("threads")
                 .takes_value(true)
                 .default_value("0")
-                .about("Number of threads to distribute the calculation over.")
-                .long_about(
+                .help("Number of threads to distribute the calculation over.")
+                .long_help(
 "The number of threads to be used by the program. A default value of 0 is used
 to allow the program to best decide how to use the available hardware. It does
 this by using the minimum value out of the number cores available and 12."))
@@ -133,8 +133,8 @@ this by using the minimum value out of the number cores available and 12."))
                 .takes_value(false)
                 .multiple_occurrences(true)
                 .max_occurrences(2)
-                .about("Sets the program output verbosity.")
-                .long_about(
+                .help("Sets the program output verbosity.")
+                .long_help(
 "Sets the output verbosity of the program. By defualt only the atomic charges
 will be saved to file, one level of verbosity the bader volumes are also written
 to file. A thrid level of verbosity will print aditional information to the
