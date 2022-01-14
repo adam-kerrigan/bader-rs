@@ -10,7 +10,8 @@ pub enum Voxel<'a> {
     Maxima(usize),
     /// Contians a vector of the maxima the current voxel contributes to and
     /// their weights.
-    Weight(&'a Vec<f64>),
+    Boundary(&'a Vec<f64>),
+    AtomBoundary(&'a Vec<f64>),
     /// A voxel beneath the vacuum tolerance and not contributing to any maxima.
     Vacuum,
 }
@@ -145,67 +146,77 @@ impl BlockingVoxelMap {
     }
 }
 
-pub struct NonBlockingVoxelMap {
-    pub voxel_map: Vec<isize>,
-    pub weight_map: Vec<Vec<f64>>,
-    pub grid: Grid,
+// This feels ridiculous
+impl<V: VoxelMap + ?Sized> VoxelMap for Box<V> {
+    fn boundary_iter(&self) -> std::slice::Iter<'_, Vec<f64>> {
+        (**self).boundary_iter()
+    }
+    fn atom_map(&self) -> Option<&[usize]> {
+        (**self).atom_map()
+    }
+    fn maxima_to_atom(&self, maxima: usize) -> usize {
+        (**self).maxima_to_atom(maxima)
+    }
+    fn maxima_to_voxel(&self, maxima: isize) -> Voxel {
+        (**self).maxima_to_voxel(maxima)
+    }
+    fn maxima_to_weight(&self, maxima: isize) -> &Vec<f64> {
+        (**self).maxima_to_weight(maxima)
+    }
+    fn maxima_iter(&self) -> std::slice::Iter<'_, isize> {
+        (**self).maxima_iter()
+    }
+    fn maxima_chunks(&self,
+                     chunk_size: usize)
+                     -> std::slice::Chunks<'_, isize> {
+        (**self).maxima_chunks(chunk_size)
+    }
+    /// Retrieval of the state of the voxel, p.
+    fn voxel_get(&self, p: isize) -> Voxel {
+        (**self).voxel_get(p)
+    }
+    fn maxima_get(&self, p: isize) -> isize {
+        (**self).maxima_get(p)
+    }
+    fn grid_get(&self) -> &Grid {
+        (**self).grid_get()
+    }
+    fn volume_map(&self, volume_number: isize) -> Vec<Option<f64>> {
+        (**self).volume_map(volume_number)
+    }
+    fn multi_volume_map(&self,
+                        volume_numbers: &FxHashSet<isize>)
+                        -> Vec<Option<f64>> {
+        (**self).multi_volume_map(volume_numbers)
+    }
 }
 
-impl NonBlockingVoxelMap {
-    pub fn new(voxel_map: Vec<isize>,
-               weight_map: Vec<Vec<f64>>,
-               grid: Grid)
-               -> Self {
-        Self { voxel_map,
-               weight_map,
-               grid }
+pub trait VoxelMap: Sync + Send {
+    fn boundary_iter(&self) -> std::slice::Iter<'_, Vec<f64>>;
+    fn maxima_to_atom(&self, maxima: usize) -> usize;
+    fn maxima_to_voxel(&self, maxima: isize) -> Voxel;
+    fn maxima_to_weight(&self, maxima: isize) -> &Vec<f64>;
+    fn maxima_iter(&self) -> std::slice::Iter<'_, isize>;
+    fn maxima_chunks(&self, chunk_size: usize)
+                     -> std::slice::Chunks<'_, isize>;
+    /// Retrieval of the state of the voxel, p.
+    fn voxel_get(&self, p: isize) -> Voxel {
+        self.maxima_to_voxel(self.maxima_get(p))
     }
-
-    pub fn from_blocking_voxel_map(voxel_map: BlockingVoxelMap) -> Self {
-        let (voxel_map, weight_map, grid) = voxel_map.into_inner();
-        Self::new(voxel_map, weight_map, grid)
+    fn maxima_get(&self, p: isize) -> isize;
+    fn grid_get(&self) -> &Grid;
+    fn atom_map(&self) -> Option<&[usize]> {
+        None
     }
-
-    pub fn weight_get(&self, maxima: isize) -> &Vec<f64> {
-        let i = -2 - maxima;
-        &self.weight_map[i as usize]
-    }
-    /// Atomic loading of voxel, p, from voxel_map
-    pub fn maxima_get(&self, p: isize) -> isize {
-        let maxima = self.voxel_map[p as usize];
-        match maxima.cmp(&-1) {
-            std::cmp::Ordering::Equal => -1,
-            std::cmp::Ordering::Greater => maxima,
-            std::cmp::Ordering::Less => {
-                let weight = self.weight_get(maxima);
-                weight[0] as isize
-            }
-        }
-    }
-
-    /// A none locking retrieval of the state of voxel, p. This should only be
-    /// used once the VoxelMap has been fully populated.
-    pub fn voxel_get(&self, p: isize) -> Voxel {
-        let maxima = self.voxel_map[p as usize];
-        match maxima.cmp(&-1) {
-            std::cmp::Ordering::Equal => Voxel::Vacuum,
-            std::cmp::Ordering::Greater => Voxel::Maxima(maxima as usize),
-            std::cmp::Ordering::Less => {
-                let weight = self.weight_get(maxima);
-                Voxel::Weight(weight)
-            }
-        }
-    }
-
-    pub fn volume_map(&self, volume_number: isize) -> Vec<Option<f64>> {
-        self.voxel_map
-            .iter()
+    /// Produce a mask for a specific volume number.
+    fn volume_map(&self, volume_number: isize) -> Vec<Option<f64>> {
+        self.maxima_iter()
             .map(|maxima| {
                 if *maxima == volume_number {
                     Some(1.0)
                 } else if *maxima < -1 {
                     let mut w = None;
-                    for weight in self.weight_get(*maxima) {
+                    for weight in self.maxima_to_weight(*maxima) {
                         let m = *weight as isize;
                         if m == volume_number {
                             w = Some(weight - m as f64);
@@ -219,18 +230,17 @@ impl NonBlockingVoxelMap {
             })
             .collect()
     }
-
-    pub fn multi_volume_map(&self,
-                            volume_numbers: &FxHashSet<isize>)
-                            -> Vec<Option<f64>> {
-        self.voxel_map
-            .iter()
+    /// Produce a mask for a collection volume numbers.
+    fn multi_volume_map(&self,
+                        volume_numbers: &FxHashSet<isize>)
+                        -> Vec<Option<f64>> {
+        self.maxima_iter()
             .map(|maxima| {
                 if volume_numbers.contains(maxima) {
                     Some(1.0)
                 } else if *maxima < -1 {
                     let mut w = 0.0;
-                    for weight in self.weight_get(*maxima) {
+                    for weight in self.maxima_to_weight(*maxima) {
                         let m = *weight as isize;
                         if volume_numbers.contains(&m) {
                             w += weight - m as f64;
@@ -242,5 +252,150 @@ impl NonBlockingVoxelMap {
                 }
             })
             .collect()
+    }
+}
+
+pub struct AtomVoxelMap {
+    pub voxel_map: Vec<isize>,
+    pub weight_map: Vec<Vec<f64>>,
+    pub grid: Grid,
+}
+
+pub struct BaderVoxelMap {
+    pub voxel_map: Vec<isize>,
+    pub weight_map: Vec<Vec<f64>>,
+    pub grid: Grid,
+    atom_map: Vec<usize>,
+}
+
+impl VoxelMap for AtomVoxelMap {
+    fn boundary_iter(&self) -> std::slice::Iter<'_, Vec<f64>> {
+        self.weight_map.iter()
+    }
+    fn grid_get(&self) -> &Grid {
+        &self.grid
+    }
+    /// Returns the atom associated with the point.
+    fn maxima_to_atom(&self, maxima: usize) -> usize {
+        maxima
+    }
+
+    fn maxima_to_voxel(&self, maxima: isize) -> Voxel {
+        match maxima.cmp(&-1) {
+            std::cmp::Ordering::Equal => Voxel::Vacuum,
+            std::cmp::Ordering::Greater => Voxel::Maxima(maxima as usize),
+            std::cmp::Ordering::Less => {
+                Voxel::AtomBoundary(self.maxima_to_weight(maxima))
+            }
+        }
+    }
+
+    fn maxima_to_weight(&self, maxima: isize) -> &Vec<f64> {
+        &self.weight_map[(-2 - maxima) as usize]
+    }
+
+    fn maxima_iter(&self) -> std::slice::Iter<'_, isize> {
+        self.voxel_map.iter()
+    }
+
+    fn maxima_chunks(&self,
+                     chunk_size: usize)
+                     -> std::slice::Chunks<'_, isize> {
+        self.voxel_map.chunks(chunk_size)
+    }
+
+    fn maxima_get(&self, p: isize) -> isize {
+        self.voxel_map[p as usize]
+    }
+}
+
+impl VoxelMap for BaderVoxelMap {
+    fn boundary_iter(&self) -> std::slice::Iter<'_, Vec<f64>> {
+        self.weight_map.iter()
+    }
+    fn grid_get(&self) -> &Grid {
+        &self.grid
+    }
+    /// Returns the atom associated with the point.
+    fn maxima_to_atom(&self, maxima: usize) -> usize {
+        self.atom_map[maxima]
+    }
+
+    /// Retrieval of the state of the voxel, p.
+    fn maxima_to_voxel(&self, maxima: isize) -> Voxel {
+        match maxima.cmp(&-1) {
+            std::cmp::Ordering::Equal => Voxel::Vacuum,
+            std::cmp::Ordering::Greater => Voxel::Maxima(maxima as usize),
+            std::cmp::Ordering::Less => {
+                let weight = self.maxima_to_weight(maxima);
+                let atom = self.maxima_to_atom(weight[0] as usize);
+                for maxima in &weight[1..] {
+                    if self.maxima_to_atom(*maxima as usize) != atom {
+                        return Voxel::AtomBoundary(weight);
+                    }
+                }
+                Voxel::Boundary(weight)
+            }
+        }
+    }
+
+    fn maxima_to_weight(&self, maxima: isize) -> &Vec<f64> {
+        &self.weight_map[(-2 - maxima) as usize]
+    }
+
+    fn maxima_iter(&self) -> std::slice::Iter<'_, isize> {
+        self.voxel_map.iter()
+    }
+
+    fn maxima_chunks(&self,
+                     chunk_size: usize)
+                     -> std::slice::Chunks<'_, isize> {
+        self.voxel_map.chunks(chunk_size)
+    }
+
+    fn atom_map(&self) -> Option<&[usize]> {
+        Some(&self.atom_map)
+    }
+
+    fn maxima_get(&self, p: isize) -> isize {
+        self.voxel_map[p as usize]
+    }
+}
+
+impl AtomVoxelMap {
+    pub fn new(voxel_map: Vec<isize>,
+               weight_map: Vec<Vec<f64>>,
+               grid: Grid)
+               -> Self {
+        Self { voxel_map,
+               weight_map,
+               grid }
+    }
+
+    /// Create the structure from a blocking VoxelMap.
+    pub fn from_blocking_voxel_map(voxel_map: BlockingVoxelMap) -> Self {
+        let (voxel_map, weight_map, grid) = voxel_map.into_inner();
+        Self::new(voxel_map, weight_map, grid)
+    }
+}
+
+impl BaderVoxelMap {
+    pub fn new(voxel_map: Vec<isize>,
+               weight_map: Vec<Vec<f64>>,
+               grid: Grid,
+               atom_map: Vec<usize>)
+               -> Self {
+        Self { voxel_map,
+               weight_map,
+               grid,
+               atom_map }
+    }
+
+    /// Create the structure from a blocking VoxelMap.
+    pub fn from_blocking_voxel_map(voxel_map: BlockingVoxelMap,
+                                   atom_map: Vec<usize>)
+                                   -> Self {
+        let (voxel_map, weight_map, grid) = voxel_map.into_inner();
+        Self::new(voxel_map, weight_map, grid, atom_map)
     }
 }
