@@ -146,7 +146,7 @@ impl BlockingVoxelMap {
     }
 }
 
-// This feels ridiculous
+// This feels ridiculous. Does this need ** or *? 
 impl<V: VoxelMap + ?Sized> VoxelMap for Box<V> {
     fn boundary_iter(&self) -> std::slice::Iter<'_, Vec<f64>> {
         (**self).boundary_iter()
@@ -191,20 +191,30 @@ impl<V: VoxelMap + ?Sized> VoxelMap for Box<V> {
     }
 }
 
+/// Trait for accessing the VoxelMap regardless of whether only atomic volumes or full Bader volumes.
 pub trait VoxelMap: Sync + Send {
+    /// Produce an Iter over the boundary voxels.
     fn boundary_iter(&self) -> std::slice::Iter<'_, Vec<f64>>;
+    /// Return the atom number associated to the maxima.
     fn maxima_to_atom(&self, maxima: usize) -> usize;
+    /// Return the Voxel associated with the logged maxima.
     fn maxima_to_voxel(&self, maxima: isize) -> Voxel;
+    /// Return the Vec of the weights for the supplied maxima. Here the maxima must be less than -1.
     fn maxima_to_weight(&self, maxima: isize) -> &Vec<f64>;
+    /// Return an Iter over the maxima stored in the VoxelMap.
     fn maxima_iter(&self) -> std::slice::Iter<'_, isize>;
+    /// Return Chunks over the maxima stored in the VoxelMap.
     fn maxima_chunks(&self, chunk_size: usize)
                      -> std::slice::Chunks<'_, isize>;
     /// Retrieval of the state of the voxel, p.
     fn voxel_get(&self, p: isize) -> Voxel {
         self.maxima_to_voxel(self.maxima_get(p))
     }
+    /// Get the maxima at a point, p.
     fn maxima_get(&self, p: isize) -> isize;
+    /// Get a refernce to the grid used by the VoxelMap.
     fn grid_get(&self) -> &Grid;
+    /// Return the map between maxima and atoms, if it exists.
     fn atom_map(&self) -> Option<&[usize]> {
         None
     }
@@ -255,23 +265,35 @@ pub trait VoxelMap: Sync + Send {
     }
 }
 
+/// A VoxelMap for if the maxima stored are atomic indices.
 pub struct AtomVoxelMap {
+    /// The vector mapping the voxel to a maxima.
     pub voxel_map: Vec<isize>,
+    /// The vector containing the weights for boundary voxels.
     pub weight_map: Vec<Vec<f64>>,
+    /// The Grid used to navigate the VoxelMap.
     pub grid: Grid,
 }
 
+
+/// A VoxelMap for if the maxima stored are Bader maxima.
 pub struct BaderVoxelMap {
+    /// The vector mapping the voxel to a maxima.
     pub voxel_map: Vec<isize>,
+    /// The vector containing the weights for boundary voxels.
     pub weight_map: Vec<Vec<f64>>,
+    /// The Grid used to navigate the VoxelMap.
     pub grid: Grid,
+    /// A map to convert between maxima and atomic indices.
     atom_map: Vec<usize>,
 }
 
 impl VoxelMap for AtomVoxelMap {
+    /// Produce an Iter over the boundary voxels.
     fn boundary_iter(&self) -> std::slice::Iter<'_, Vec<f64>> {
         self.weight_map.iter()
     }
+    /// Get a refernce to the grid used by the VoxelMap.
     fn grid_get(&self) -> &Grid {
         &self.grid
     }
@@ -279,7 +301,8 @@ impl VoxelMap for AtomVoxelMap {
     fn maxima_to_atom(&self, maxima: usize) -> usize {
         maxima
     }
-
+    
+    /// Retrieval of the state of the voxel, p.
     fn maxima_to_voxel(&self, maxima: isize) -> Voxel {
         match maxima.cmp(&-1) {
             std::cmp::Ordering::Equal => Voxel::Vacuum,
@@ -289,33 +312,41 @@ impl VoxelMap for AtomVoxelMap {
             }
         }
     }
-
+    
+    /// Return a reference to the weights from the given maxima, Note: maxima here must be < -1.
     fn maxima_to_weight(&self, maxima: isize) -> &Vec<f64> {
         &self.weight_map[(-2 - maxima) as usize]
     }
 
+    /// Return an Iter over the maxima stored in the VoxelMap.
     fn maxima_iter(&self) -> std::slice::Iter<'_, isize> {
         self.voxel_map.iter()
     }
 
+    /// Return a Chunk over the maxima stored in the VoxelMap.
     fn maxima_chunks(&self,
                      chunk_size: usize)
                      -> std::slice::Chunks<'_, isize> {
         self.voxel_map.chunks(chunk_size)
     }
 
+    /// Return the stored maxima at point p.
     fn maxima_get(&self, p: isize) -> isize {
         self.voxel_map[p as usize]
     }
 }
 
 impl VoxelMap for BaderVoxelMap {
+    /// Produce an Iter over the boundary voxels.
     fn boundary_iter(&self) -> std::slice::Iter<'_, Vec<f64>> {
         self.weight_map.iter()
     }
+    
+    /// Get a refernce to the grid used by the VoxelMap.
     fn grid_get(&self) -> &Grid {
         &self.grid
     }
+    
     /// Returns the atom associated with the point.
     fn maxima_to_atom(&self, maxima: usize) -> usize {
         self.atom_map[maxima]
@@ -339,24 +370,29 @@ impl VoxelMap for BaderVoxelMap {
         }
     }
 
+    /// Return a reference to the weights from the given maxima, Note: maxima here must be < -1.
     fn maxima_to_weight(&self, maxima: isize) -> &Vec<f64> {
         &self.weight_map[(-2 - maxima) as usize]
     }
 
+    /// Return an Iter over the maxima stored in the VoxelMap.
     fn maxima_iter(&self) -> std::slice::Iter<'_, isize> {
         self.voxel_map.iter()
     }
-
+    
+    /// Return a Chunk over the maxima stored in the VoxelMap.
     fn maxima_chunks(&self,
                      chunk_size: usize)
                      -> std::slice::Chunks<'_, isize> {
         self.voxel_map.chunks(chunk_size)
     }
 
+    /// Return the map between maxima and atomic indices.
     fn atom_map(&self) -> Option<&[usize]> {
         Some(&self.atom_map)
     }
 
+    /// Return the stored maxima at point p.
     fn maxima_get(&self, p: isize) -> isize {
         self.voxel_map[p as usize]
     }
