@@ -10,36 +10,6 @@ use rustc_hash::FxHashSet;
 /// A type to simplify the result of charge summing functions
 type ChargeSumResult = Result<(Vec<Vec<f64>>, Vec<f64>, Vec<f64>)>;
 
-/// The Errors Associated with the [`Analysis`] structure.
-pub enum AnalysisError {
-    /// Not finding index for supplied maxima.
-    NotMaxima,
-}
-
-/// Make Errors printable.
-impl std::fmt::Display for AnalysisError {
-    /// Match the error and write the text associated with matched error.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotMaxima => f.write_str(
-                "Error: Attempted to look up non-maxima in maxima index.",
-            ),
-        }
-    }
-}
-
-/// Make errors unwrapable
-impl std::fmt::Debug for AnalysisError {
-    /// Match the error and write the text associated with matched error.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotMaxima => f.write_str(
-                "Error: Attempted to look up non-maxima in maxima index.",
-            ),
-        }
-    }
-}
-
 /// Calculates the distance between a maxima and its nearest atom.
 /// Chunk represents a collection of bader maxima positions withing the density
 /// array.
