@@ -146,7 +146,7 @@ impl BlockingVoxelMap {
     }
 }
 
-// This feels ridiculous. Does this need ** or *? 
+// This feels ridiculous. Does this need ** or *?
 impl<V: VoxelMap + ?Sized> VoxelMap for Box<V> {
     fn boundary_iter(&self) -> std::slice::Iter<'_, Vec<f64>> {
         (**self).boundary_iter()
@@ -275,7 +275,6 @@ pub struct AtomVoxelMap {
     pub grid: Grid,
 }
 
-
 /// A VoxelMap for if the maxima stored are Bader maxima.
 pub struct BaderVoxelMap {
     /// The vector mapping the voxel to a maxima.
@@ -301,7 +300,7 @@ impl VoxelMap for AtomVoxelMap {
     fn maxima_to_atom(&self, maxima: usize) -> usize {
         maxima
     }
-    
+
     /// Retrieval of the state of the voxel, p.
     fn maxima_to_voxel(&self, maxima: isize) -> Voxel {
         match maxima.cmp(&-1) {
@@ -312,7 +311,7 @@ impl VoxelMap for AtomVoxelMap {
             }
         }
     }
-    
+
     /// Return a reference to the weights from the given maxima, Note: maxima here must be < -1.
     fn maxima_to_weight(&self, maxima: isize) -> &Vec<f64> {
         &self.weight_map[(-2 - maxima) as usize]
@@ -341,12 +340,12 @@ impl VoxelMap for BaderVoxelMap {
     fn boundary_iter(&self) -> std::slice::Iter<'_, Vec<f64>> {
         self.weight_map.iter()
     }
-    
+
     /// Get a refernce to the grid used by the VoxelMap.
     fn grid_get(&self) -> &Grid {
         &self.grid
     }
-    
+
     /// Returns the atom associated with the point.
     fn maxima_to_atom(&self, maxima: usize) -> usize {
         self.atom_map[maxima]
@@ -379,7 +378,7 @@ impl VoxelMap for BaderVoxelMap {
     fn maxima_iter(&self) -> std::slice::Iter<'_, isize> {
         self.voxel_map.iter()
     }
-    
+
     /// Return a Chunk over the maxima stored in the VoxelMap.
     fn maxima_chunks(&self,
                      chunk_size: usize)

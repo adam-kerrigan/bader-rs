@@ -285,6 +285,9 @@ pub fn sum_atoms_densities(bader_charge: &[Vec<f64>],
 }
 
 /// Create nearest neighbour matrix from the atoms with shared voxels.
+///
+/// It is important to remember not all atoms have to have an assigned bader maxima.
+/// How to deal with this is often dependant on what you want to do with the information.
 pub fn nearest_neighbours(voxel_map: &dyn VoxelMap,
                           n_atoms: usize)
                           -> Result<Vec<Vec<bool>>> {
