@@ -12,9 +12,13 @@ pub enum Reference {
     None,
 }
 
+/// Levels of verbosity for the program.
 pub enum Verbosity {
+    /// Just run the calculation calculating the weights of atomic volumes.
     Atoms,
+    /// Run the calculation calculating the weights of all bader volumes.
     Bader,
+    /// Add extra information to the output files.
     Full,
 }
 

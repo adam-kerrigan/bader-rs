@@ -6,8 +6,10 @@ use bader::arguments::{Args, ClapApp, Verbosity};
 use bader::io::{self, FileFormat, FileType, WriteType};
 use bader::methods::{maxima_finder, weight};
 use bader::progress::Bar;
-use bader::utils::{dot, vacuum_index};
-use bader::voxel_map::{BlockingVoxelMap, NonBlockingVoxelMap};
+use bader::utils::vacuum_index;
+use bader::voxel_map::{
+    AtomVoxelMap, BaderVoxelMap, BlockingVoxelMap, VoxelMap,
+};
 use rustc_hash::FxHashSet;
 
 fn main() -> Result<()> {
@@ -80,89 +82,74 @@ fn main() -> Result<()> {
            args.threads,
            args.weight_tolerance);
     // convert into a NonBlockingVoxelMap as the map is filled
-    let voxel_map = NonBlockingVoxelMap::from_blocking_voxel_map(voxel_map);
+    let (maxima_n, voxel_map): (usize, Box<dyn VoxelMap>) = match args.verbosity
+    {
+        Verbosity::Atoms => {
+            (atoms.positions.len(),
+             Box::new(AtomVoxelMap::from_blocking_voxel_map(voxel_map)))
+        }
+        _ => (atom_map.len(),
+              Box::new(BaderVoxelMap::from_blocking_voxel_map(voxel_map,
+                                                              atom_map))),
+    };
     let pbar = Bar::visible(index.len() as u64,
                             100,
                             String::from("Summing Densities: "));
     // sum the densities and then write the charge partition files
-    if let Verbosity::Atoms = args.verbosity {
-        let (atoms_density, atoms_volume, min_surf_dist) =
-            sum_bader_densities(&densities,
-                                &voxel_map,
-                                &atoms,
-                                None,
-                                args.threads,
-                                atoms.positions.len(),
-                                pbar)?;
-        let positions = atoms.positions
-                             .iter()
-                             .map(|coords| file_type.coordinate_format(*coords))
-                             .collect();
-        let atoms_charge_file = io::output::partitions_file(positions,
+    let (bader_density, bader_volume, min_surf_dist) =
+        sum_bader_densities(&densities,
+                            &voxel_map,
+                            &atoms,
+                            args.threads,
+                            maxima_n,
+                            pbar)?;
+    let (atoms_density, atoms_volume) = match args.verbosity {
+        Verbosity::Atoms => (bader_density, bader_volume),
+        _ => {
+            let positions = bader_maxima.iter()
+                                        .map(|p| {
+                                            let p = voxel_map.grid_get()
+                                                             .to_cartesian(*p);
+                                            file_type.coordinate_format(p)
+                                        })
+                                        .collect();
+            let bader_charge_file =
+                io::output::partitions_file(positions,
+                                            &bader_density,
+                                            &bader_volume,
+                                            &total_density,
+                                            atoms.lattice.volume,
+                                            &minimum_distance,
+                                            voxel_map.atom_map())?;
+            // check that the write was successfull
+            io::output::write(bader_charge_file, String::from("BCF.dat"))?;
+            sum_atoms_densities(&bader_density,
+                                &bader_volume,
+                                voxel_map.atom_map().unwrap(),
+                                atoms.positions.len())?
+        }
+    };
+    let positions = atoms.positions
+                         .iter()
+                         .map(|coords| file_type.coordinate_format(*coords))
+                         .collect();
+    let mut atoms_charge_file = io::output::partitions_file(positions,
                                                             &atoms_density,
                                                             &atoms_volume,
                                                             &total_density,
                                                             atoms.lattice
                                                                  .volume,
                                                             &min_surf_dist,
-                                                            None).context("Building the Atom output file")?;
-        // check that the write was successfull
-        io::output::write(atoms_charge_file, String::from("ACF.dat"))?;
-    } else {
-        let (bader_density, bader_volume, min_surf_dist) =
-            sum_bader_densities(&densities,
-                                &voxel_map,
-                                &atoms,
-                                Some(&atom_map),
-                                args.threads,
-                                bader_maxima.len(),
-                                pbar)?;
-        let positions = bader_maxima.iter()
-                                    .map(|p| {
-                                        let p = voxel_map.grid.to_cartesian(*p);
-                                        let p = dot(p,
-                                                    voxel_map.grid
-                                                             .voxel_lattice
-                                                             .to_cartesian);
-                                        file_type.coordinate_format(p)
-                                    })
-                                    .collect();
-        let bader_charge_file = io::output::partitions_file(positions,
-                                                            &bader_density,
-                                                            &bader_volume,
-                                                            &total_density,
-                                                            atoms.lattice
-                                                                 .volume,
-                                                            &minimum_distance,
-                                                            Some(&atom_map))?;
-        let (atoms_density, atoms_volume) =
-            sum_atoms_densities(&bader_density,
-                                &bader_volume,
-                                &atom_map,
-                                atoms.positions.len())?;
-        let positions = atoms.positions
-                             .iter()
-                             .map(|coords| file_type.coordinate_format(*coords))
-                             .collect();
-        // check that the write was successfull
-        io::output::write(bader_charge_file, String::from("BCF.dat"))?;
-        let mut atoms_charge_file =
-            io::output::partitions_file(positions,
-                                        &atoms_density,
-                                        &atoms_volume,
-                                        &total_density,
-                                        atoms.lattice.volume,
-                                        &min_surf_dist,
-                                        None)?;
-        if let Verbosity::Full = args.verbosity {
-            atoms_charge_file.push_str(&format!("\n  Bader Maxima: {}\n Boundary Voxels: {}",
-                                                bader_maxima.len(),
-                                                voxel_map.weight_map.len())
-                                       );
-        }
-        // check that the write was successfull
-        io::output::write(atoms_charge_file, String::from("ACF.dat"))?;
+                                                            None)?;
+    if let Verbosity::Full = args.verbosity {
+        atoms_charge_file.push_str(&format!("\n  Bader Maxima: {}\n  Boundary Voxels: {}\n  Total Voxels: {}",
+                                            bader_maxima.len(),
+                                            voxel_map.boundary_iter().len(),
+                                            reference.len())
+                                   );
     }
+    // check that the write was successfull
+    io::output::write(atoms_charge_file, String::from("ACF.dat"))?;
     // Prepare to write any densities that have been requested.
     let filename = match densities.len().cmp(&2) {
         std::cmp::Ordering::Less => vec![String::from("charge")],
@@ -206,36 +193,41 @@ verbosity or export atoms."
                      }))
             }
             (WriteType::Atom(a), _) => {
-                let atom_iter: Vec<FxHashSet<isize>> =
-                    if a.is_empty() {
-                        let mut a_i =
-                            vec![FxHashSet::default(); atoms.positions.len()];
-                        atom_map.iter().enumerate().for_each(|(i, atom)| {
-                    a_i[*atom].insert(i as isize);
-                });
-                        a_i
-                    } else {
-                        a.iter()
-                         .map(|atom_number| {
-                             atom_map.iter()
-                                     .enumerate()
-                                     .filter_map(|(i, atom)| {
-                                         if (*atom as isize) == *atom_number {
-                                             Some(i as isize)
-                                         } else {
-                                             None
-                                         }
-                                     })
-                                     .collect::<FxHashSet<isize>>()
-                         })
-                         .collect()
-                    };
+                let atom_iter: Vec<FxHashSet<isize>> = if a.is_empty() {
+                    let mut a_i =
+                        vec![FxHashSet::default(); atoms.positions.len()];
+                    voxel_map.atom_map()
+                             .unwrap()
+                             .iter()
+                             .enumerate()
+                             .for_each(|(i, atom)| {
+                                 a_i[*atom].insert(i as isize);
+                             });
+                    a_i
+                } else {
+                    a.iter()
+                     .map(|atom_number| {
+                         voxel_map.atom_map()
+                                  .unwrap()
+                                  .iter()
+                                  .enumerate()
+                                  .filter_map(|(i, atom)| {
+                                      if (*atom as isize) == *atom_number {
+                                          Some(i as isize)
+                                      } else {
+                                          None
+                                      }
+                                  })
+                                  .collect::<FxHashSet<isize>>()
+                     })
+                     .collect()
+                };
                 Box::new(atom_iter.into_iter()
                      .filter_map(|volume_numbers| {
                          if !volume_numbers.is_empty() {
                              let map = voxel_map.multi_volume_map(&volume_numbers);
                              let vn = *volume_numbers.iter().next().unwrap() as usize;
-                             let atom_number = atom_map[vn] as isize;
+                             let atom_number = voxel_map.maxima_to_atom(vn) as isize;
                              Some((atom_number, map))
                          } else {
                              None
