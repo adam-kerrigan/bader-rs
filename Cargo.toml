@@ -13,11 +13,11 @@ keywords = ["Analysis", "Materials_Science", "Physics", "Chemistry", "Multi-Thre
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-regex = "1"
-clap = {version = "3.0.14", features = ["cargo"]}
-indicatif = "0.16.2"
+regex = "1.6.0"
+clap = {version = "3.2.2", features = ["cargo"]}
+indicatif = "0.17.1"
 atomic-counter = "1.0.1"
 num_cpus = "1.13.0"
-crossbeam-utils = "0.8"
+crossbeam-utils = "0.8.12"
 rustc-hash = "1.1.0"
-anyhow = "1.0.53"
+anyhow = "1.0.65"

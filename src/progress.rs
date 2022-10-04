@@ -24,6 +24,7 @@ impl Bar {
                 .template(
                     "{prefix}[{bar:40}] [{elapsed_precise}] {percent:>3}%",
                 )
+                .expect("Incorrect template")
                 .progress_chars("=>-"),
         );
         let pb = Arc::new(progress_bar);
