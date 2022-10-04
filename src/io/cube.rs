@@ -45,7 +45,6 @@ impl FileFormat for Cube {
                     let (text, size) = line?;
                     pos += size;
                     let split = text
-                        .trim()
                         .split_whitespace()
                         .map(|x| x.parse::<f64>())
                         .collect::<Vec<Result<f64, std::num::ParseFloatError>>>(
@@ -82,7 +81,7 @@ impl FileFormat for Cube {
                     Some(line) => {
                         let (text, size) = line?;
                         pos += size;
-                        match text.trim().split_whitespace().next() {
+                        match text.split_whitespace().next() {
                             Some(x) => match x.parse::<usize>() {
                                 Ok(x) => x,
                                 Err(_) => panic!(
