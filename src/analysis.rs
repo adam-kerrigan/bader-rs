@@ -3,9 +3,8 @@ use crate::grid::Grid;
 use crate::progress::Bar;
 use crate::utils;
 use crate::voxel_map::{Voxel, VoxelMap};
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use crossbeam_utils::thread;
-use rustc_hash::FxHashSet;
 
 /// A type to simplify the result of charge summing functions
 type ChargeSumResult = Result<(Vec<Vec<f64>>, Vec<f64>, Vec<f64>)>;
@@ -16,12 +15,12 @@ type ChargeSumResult = Result<(Vec<Vec<f64>>, Vec<f64>, Vec<f64>)>;
 fn maxima_to_atom(chunk: &[isize],
                   atoms: &Atoms,
                   grid: &Grid,
+                  maximum_distance: &f64,
                   progress_bar: &Bar)
-                  -> Result<(Vec<usize>, Vec<f64>)> {
+                  -> Result<Vec<usize>> {
     let chunk_size = chunk.len();
     // create vectors for storing the assigned atom and distance for each maxima
     let mut ass_atom = Vec::with_capacity(chunk_size);
-    let mut min_dist = Vec::with_capacity(chunk_size);
     for m in chunk.iter() {
         // convert the point first to cartesian, then to the reduced basis
         let m_cartesian = grid.to_cartesian(*m as isize);
@@ -51,12 +50,21 @@ fn maxima_to_atom(chunk: &[isize],
                 }
             }
         }
+        if min_distance.powf(0.5) > *maximum_distance {
+            bail!(
+                "Bader maximum ({}, {}, {}) is too far from nearest atom ({}): {} Ang",
+                m_cartesian[0],
+                m_cartesian[1],
+                m_cartesian[2],
+                atom_num,
+                min_distance,
+            )
+        }
         // remember to square root the distance
         ass_atom.push(atom_num);
-        min_dist.push(min_distance.powf(0.5));
         progress_bar.tick()
     }
-    Ok((ass_atom, min_dist))
+    Ok(ass_atom)
 }
 
 /// Assign the Bader maxima to the nearest atom.
@@ -65,11 +73,11 @@ fn maxima_to_atom(chunk: &[isize],
 pub fn assign_maxima(maxima: &[isize],
                      atoms: &Atoms,
                      grid: &Grid,
+                     maximum_distance: &f64,
                      threads: usize,
                      progress_bar: Bar)
-                     -> Result<(Vec<usize>, Vec<f64>)> {
+                     -> Result<Vec<usize>> {
     let mut assigned_atom = vec![0; maxima.len()];
-    let mut minimum_distance = vec![0.0; maxima.len()];
     let pbar = &progress_bar;
     // this is basically a thread handling function for running the
     // maxima_to_atom function
@@ -83,7 +91,7 @@ pub fn assign_maxima(maxima: &[isize],
                           .enumerate()
                           .map(|(index, chunk)| {
                               s.spawn(move |_| {
-                                  match maxima_to_atom(chunk, atoms, grid, pbar) {
+                                  match maxima_to_atom(chunk, atoms, grid, maximum_distance, pbar) {
                                       Ok(result) => (result, index),
                                       _ => panic!("Failed to match maxima to atom"),
                                   }
@@ -91,7 +99,7 @@ pub fn assign_maxima(maxima: &[isize],
                           })
                           .collect::<Vec<_>>();
                 for thread in spawned_threads {
-                    if let Ok(((ass_atom, min_dist), chunk_index)) =
+                    if let Ok((ass_atom, chunk_index)) =
                         thread.join()
                     {
                         // is this required? is the collection of handles not
@@ -99,8 +107,6 @@ pub fn assign_maxima(maxima: &[isize],
                         // they finish?
                         let i = chunk_index * chunk_size;
                         assigned_atom.splice(i..(i + ass_atom.len()), ass_atom);
-                        minimum_distance.splice(i..(i + min_dist.len()),
-                                                min_dist);
                     } else {
                         panic!("Failed to join thread in assign maxima.")
                     };
@@ -108,13 +114,12 @@ pub fn assign_maxima(maxima: &[isize],
             }).unwrap();
         }
         _ => {
-            let (ass_atom, min_dist) =
-                maxima_to_atom(maxima, atoms, grid, pbar).context("Failed to assign maxima to atom.")?;
+            let ass_atom =
+                maxima_to_atom(maxima, atoms, grid, maximum_distance, pbar).context("Failed to assign maxima to atom.")?;
             assigned_atom = ass_atom;
-            minimum_distance = min_dist;
         }
     }
-    Ok((assigned_atom, minimum_distance))
+    Ok(assigned_atom)
 }
 
 /// Sums the densities of each Bader volume.
@@ -126,8 +131,6 @@ pub fn sum_bader_densities(densities: &[Vec<f64>],
                            progress_bar: Bar)
                            -> ChargeSumResult {
     let pbar = &progress_bar;
-    // Only spawn threads if more than 1 thread is required.
-    // This minimises overhead?
     let mut surface_distance = vec![f64::INFINITY; atoms.positions.len()];
     let mut bader_charge = vec![vec![0.0; densities.len()]; maxima_len];
     let mut bader_volume = vec![0.0; maxima_len];
@@ -262,48 +265,4 @@ pub fn sum_bader_densities(densities: &[Vec<f64>],
                                    }
                                });
     Ok((bader_charge, bader_volume, surface_distance))
-}
-
-/// Sums the densities for each atom.
-pub fn sum_atoms_densities(bader_charge: &[Vec<f64>],
-                           bader_volume: &[f64],
-                           atoms_map: &[usize],
-                           atoms_len: usize)
-                           -> Result<(Vec<Vec<f64>>, Vec<f64>)> {
-    let mut atoms_density = vec![vec![0.0; bader_charge[0].len()]; atoms_len];
-    let mut atoms_volume = vec![0.0; atoms_len];
-    bader_charge.iter()
-                .zip(bader_volume)
-                .zip(atoms_map)
-                .for_each(|((bc, bv), am)| {
-                    atoms_density[*am].iter_mut()
-                                      .zip(bc)
-                                      .for_each(|(ad, d)| *ad += d);
-                    atoms_volume[*am] += bv;
-                });
-    Ok((atoms_density, atoms_volume))
-}
-
-/// Create nearest neighbour matrix from the atoms with shared voxels.
-///
-/// It is important to remember not all atoms have to have an assigned bader maxima.
-/// How to deal with this is often dependant on what you want to do with the information.
-pub fn nearest_neighbours(voxel_map: &dyn VoxelMap,
-                          n_atoms: usize)
-                          -> Result<Vec<Vec<bool>>> {
-    let mut m_nn = vec![vec![false; n_atoms]; n_atoms];
-    voxel_map.boundary_iter().for_each(|weights| {
-        let mut atom_set = weights.iter()
-                                  .map(|w| voxel_map.maxima_to_atom(*w as usize))
-                                  .collect::<FxHashSet<usize>>();
-        let atoms = atom_set.clone();
-        atoms.iter().for_each(|atom| {
-            atom_set.remove(atom);
-            atom_set.iter().for_each(|neighbour| {
-                m_nn[*atom][*neighbour] = true;
-                m_nn[*neighbour][*atom] =true;
-            });
-        });
-    });
-    Ok(m_nn)
 }
