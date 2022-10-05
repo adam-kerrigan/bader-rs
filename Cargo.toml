@@ -1,8 +1,9 @@
 [package]
 name = "bader"
-version = "0.4.1"
+version = "0.4.2"
 authors = ["Adam Kerrigan <ak1014@york.ac.uk>"]
-edition = "2018"
+edition = "2021"
+rust-version = "1.57.0"
 description = "Grid based Bader charge partitioning"
 license = "MIT"
 readme = "README.md"

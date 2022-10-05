@@ -1,4 +1,8 @@
 ## v0.5.0
+## v0.4.2
+### Changes
+- Updated dependancies and fixed the breaking changes associated with them.
+- Bumped the minimum rust version required.
 ## v0.4.1
 ### Changes
 - Moving to allow python bindings by separating functions and making structs more streamlined.
