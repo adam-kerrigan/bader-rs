@@ -2,6 +2,7 @@
 ### Changes
 - Removed the option to run at higher verbosities, will instead throw an error if maxima is far from atom.
 - Added flag to pass to bca to control the distance at which the maxima distance error is thrown.
+- Now runs with 1E-6 vacuum tolerance as default.
 ## v0.4.2
 ### Changes
 - Updated dependancies and fixed the breaking changes associated with them.
