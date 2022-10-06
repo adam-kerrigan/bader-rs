@@ -33,8 +33,7 @@ impl<'a> ClapApp {
                 .long_help(
 "Output the Bader atoms in the same file format as the input density.
 This can be used in conjunction with the index flag to specify a
-specific atom. Without the index flag it will print all the atoms or
-volumes."))
+specific atom. Without the index flag it will print all the atoms."))
             .arg(Arg::new("index")
                 .short('i')
                 .long("index")
@@ -45,7 +44,7 @@ volumes."))
                 .long_help(
 "An index of a Bader atom to be written out, starting at 1. This flag
 requires the output flag to be set. Multiple atoms can be written by
-repeating the flag ie. bca CHGCAR -o atoms -i 1 -i 2."))
+repeating the flag ie. bca CHGCAR -oi 1 -i 2."))
             .arg(Arg::new("file type")
                 .short('t')
                 .long("type")
@@ -181,27 +180,6 @@ impl Args {
                     None => Vec::with_capacity(0),
                 };
                 WriteType::Atom(atoms)
-            }
-            Some("volumes") => {
-                let volumes = match arguments.values_of("index") {
-                    Some(vec) => {
-                        vec.map(|s| match s.parse::<usize>() {
-                            Ok(u) => match u.checked_sub(1) {
-                                Some(u) => u as isize,
-                                None => {
-                                    panic!("Counting for index starts at 1.")
-                                }
-                            },
-                            Err(_) => {
-                                panic!("Unable to parse index, ({}) to usize.",
-                                       s)
-                            }
-                        })
-                        .collect::<Vec<isize>>()
-                    }
-                    None => Vec::with_capacity(0),
-                };
-                WriteType::Volume(volumes)
             }
             _ => WriteType::None,
         };
