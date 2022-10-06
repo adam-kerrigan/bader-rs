@@ -23,8 +23,6 @@ pub enum FileType {
 pub enum WriteType {
     /// Write a Bader Atom.
     Atom(Vec<isize>),
-    /// Write a Bader Volume.
-    Volume(Vec<isize>),
     /// Don't write anything.
     None,
 }

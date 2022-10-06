@@ -41,7 +41,7 @@ For a detailed list of usage options run
 $ bca --help
 ```
 ## Output
-The program outputs two files, ACF.dat & BCF.dat. The Atomic Charge File (ACF.dat) contians the charge (and spin) information for each atom and the Bader Charge File (BCF.dat) contains the information about each Bader volume. The BCF file also includes the atom number in the number column formatted as 'atom number: bader volume'.
+The program outputs the Atomic Charge File (ACF.dat) which contians the charge (and spin) information for each atom.
 ## License
 MIT
 

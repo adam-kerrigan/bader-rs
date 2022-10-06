@@ -12,16 +12,6 @@ pub enum Reference {
     None,
 }
 
-/// Levels of verbosity for the program.
-pub enum Verbosity {
-    /// Just run the calculation calculating the weights of atomic volumes.
-    Atoms,
-    /// Run the calculation calculating the weights of all bader volumes.
-    Bader,
-    /// Add extra information to the output files.
-    Full,
-}
-
 /// Create a container for dealing with clap and being able to test arg parsing.
 pub enum ClapApp {}
 
@@ -38,27 +28,23 @@ impl<'a> ClapApp {
             .arg(Arg::new("output")
                 .short('o')
                 .long("output")
-                .takes_value(true)
-                .possible_value("atoms")
-                .possible_value("volumes")
-                .ignore_case(false)
-                .help("Output the Bader atoms or volumes.")
+                .takes_value(false)
+                .help("Output the Bader atoms.")
                 .long_help(
-"Output the Bader atoms or the Bader volumes in the same file formtat as the
-input density. This can be used in conjunction with the index flag to specify a
-specific atoms or volumes. Without the index flag it will print all the atoms or
-volumes."))
+"Output the Bader atoms in the same file format as the input density.
+This can be used in conjunction with the index flag to specify a
+specific atom. Without the index flag it will print all the atoms."))
             .arg(Arg::new("index")
                 .short('i')
                 .long("index")
                 .multiple_occurrences(true)
                 .number_of_values(1)
                 .requires("output")
-                .help("Index of Bader atoms or volumes to be written out.")
+                .help("Index of Bader atoms to be written out.")
                 .long_help(
-"An index of a Bader atom or volume to be written out, starting at 1. This flag
-requires the output flag to be set. Multiple atoms or volumes can be written by
-repeating the flag ie. bca CHGCAR -o atoms -i 1 -i 2."))
+"An index of a Bader atom to be written out, starting at 1. This flag
+requires the output flag to be set. Multiple atoms can be written by
+repeating the flag ie. bca CHGCAR -oi 1 -i 2."))
             .arg(Arg::new("file type")
                 .short('t')
                 .long("type")
@@ -98,30 +84,36 @@ contain a single density (ie. the original file has been split)."))
                 .takes_value(false)
                 .conflicts_with("reference"))
             .arg(Arg::new("vacuum tolerance")
+                .short('v')
                 .long("vac")
+                .default_value("1E-6")
                 .takes_value(true)
                 .help("Cut-off at which charge is considered vacuum.")
                 .long_help(
 "Values of density below the supplied value are considered vacuum and are not
-included in the calculation. A value of \"auto\" can be passed to use 1E-6 C*m^-3."))
-            .arg(Arg::new("maxima tolerance")
-                .short('m')
-                .long("maxima")
-                .takes_value(true)
-                .help("Cut-off for charge at which a maxima is not printed.")
-                .long_help(
-"Values of charge for the Bader maxima below the supplied value are not written
-to the Bader charge file (BCF.dat). A default value of 1E-6 is used."))
+included in the calculation."))
             .arg(Arg::new("weight tolerance")
                 .short('w')
                 .long("weight")
+                .default_value("1E-8")
                 .takes_value(true)
                 .help("Cut-off at which contributions to the weighting will be ignored.")
                 .long_help(
 "Values of density below the supplied value are ignored from the weighting and
-included in the calculation. A default vaule of 1E-6 is used. By raising the
-tolerance the calculation speed can be increased but every ignored weight is
-unaccounted for in the final partitions. Be sure to test this!"))
+included in the calculation. By raising the tolerance the calculation speed can
+be increased but every ignored weight is unaccounted for in the final partitions.
+Be sure to test this!"))
+            .arg(Arg::new("maximum distance")
+                .short('m')
+                .long("max_dist")
+                .default_value("0.1")
+                .takes_value(true)
+                .help("Cut-off after which an error will be thrown for distance of Bader maximum to atom.")
+                .long_help(
+"The distance allowed between Bader maximum and its associated atom, in angstrom, before
+an error is thrown. This will cause a hard crash of the program, consider whether
+increasing the cut-off or adding a \"ghost atom\" at the location of the Bader
+maximum is more appropriate."))
             .arg(Arg::new("threads")
                 .short('J')
                 .long("threads")
@@ -132,17 +124,6 @@ unaccounted for in the final partitions. Be sure to test this!"))
 "The number of threads to be used by the program. A default value of 0 is used
 to allow the program to best decide how to use the available hardware. It does
 this by using the minimum value out of the number cores available and 12."))
-            .arg(Arg::new("verbosity")
-                .short('v')
-                .takes_value(false)
-                .multiple_occurrences(true)
-                .max_occurrences(2)
-                .help("Sets the program output verbosity.")
-                .long_help(
-"Sets the output verbosity of the program. By defualt only the atomic charges
-will be saved to file, one level of verbosity the bader volumes are also written
-to file. A thrid level of verbosity will print aditional information to the
-footer of the the atomic charges file."))
     }
 }
 
@@ -155,7 +136,7 @@ pub struct Args {
     /// Tolerance to disregard weights at.
     pub weight_tolerance: f64,
     /// Tolerance to disregard maxima at.
-    pub maxima_tolerance: f64,
+    pub maximum_distance: f64,
     /// Output Writing
     pub output: WriteType,
     /// Is there a reference file.
@@ -166,7 +147,6 @@ pub struct Args {
     pub threads: usize,
     /// Is there a tolerance to consider a density vacuum.
     pub vacuum_tolerance: Option<f64>,
-    pub verbosity: Verbosity,
 }
 
 impl Args {
@@ -179,50 +159,28 @@ impl Args {
         };
 
         // Collect write charge info
-        let output = match arguments.value_of("output") {
-            Some("atoms") => {
-                let atoms = match arguments.values_of("index") {
-                    Some(vec) => {
-                        vec.map(|s| match s.parse::<usize>() {
-                            Ok(u) => match u.checked_sub(1) {
-                                Some(u) => u as isize,
-                                None => {
-                                    panic!("Counting for index starts at 1.")
-                                }
-                            },
-                            Err(_) => {
-                                panic!("Unable to parse index, ({}) to usize.",
-                                       s)
-                            }
-                        })
-                        .collect::<Vec<isize>>()
-                    }
-                    None => Vec::with_capacity(0),
-                };
-                WriteType::Atom(atoms)
-            }
-            Some("volumes") => {
-                let volumes = match arguments.values_of("index") {
-                    Some(vec) => {
-                        vec.map(|s| match s.parse::<usize>() {
-                            Ok(u) => match u.checked_sub(1) {
-                                Some(u) => u as isize,
-                                None => {
-                                    panic!("Counting for index starts at 1.")
-                                }
-                            },
-                            Err(_) => {
-                                panic!("Unable to parse index, ({}) to usize.",
-                                       s)
-                            }
-                        })
-                        .collect::<Vec<isize>>()
-                    }
-                    None => Vec::with_capacity(0),
-                };
-                WriteType::Volume(volumes)
-            }
-            _ => WriteType::None,
+        let output = if arguments.is_present("output") {
+            let atoms = match arguments.values_of("index") {
+                Some(vec) => {
+                    vec.map(|s| match s.parse::<usize>() {
+                           Ok(u) => match u.checked_sub(1) {
+                               Some(u) => u as isize,
+                               None => {
+                                   panic!("Counting for index starts at 1.")
+                               }
+                           },
+                           Err(_) => {
+                               panic!("Unable to parse index, ({}) to usize.",
+                                      s)
+                           }
+                       })
+                       .collect::<Vec<isize>>()
+                }
+                None => Vec::with_capacity(0),
+            };
+            WriteType::Atom(atoms)
+        } else {
+            WriteType::None
         };
 
         // Collect file type
@@ -247,24 +205,26 @@ impl Args {
             }
         };
         // Collect weight tolerance
-        let weight_tolerance = match arguments.value_of("weight tolerance") {
-            Some(x) => match x.parse::<f64>() {
-                Ok(x) => x.max(1E-13),
-                Err(e) => {
-                    panic!("Couldn't parse weight tolerance into float:\n{}", e)
-                }
-            },
-            _ => 1E-8,
+        // safe to unwrap as threads has a default value of 1E-8
+        let weight_tolerance = match arguments.value_of("weight tolerance")
+                                              .unwrap()
+                                              .parse::<f64>()
+        {
+            Ok(x) => x.max(1E-13),
+            Err(e) => {
+                panic!("Couldn't parse weight tolerance into float:\n{}", e)
+            }
         };
         // Collect maxima tolerance
-        let maxima_tolerance = match arguments.value_of("maxima tolerance") {
-            Some(x) => match x.parse::<f64>() {
-                Ok(x) => x,
-                Err(e) => {
-                    panic!("Couldn't parse maxima tolerance into float:\n{}", e)
-                }
-            },
-            _ => 1E-6,
+        // safe to unwrap as threads has a default value of 0.1
+        let maximum_distance = match arguments.value_of("maximum distance")
+                                              .unwrap()
+                                              .parse::<f64>()
+        {
+            Ok(x) => x,
+            Err(e) => {
+                panic!("Couldn't parse maxima tolerance into float:\n{}", e)
+            }
         };
         // Collect threads
         // safe to unwrap as threads has a default value of 0
@@ -277,19 +237,12 @@ impl Args {
         };
         // Collect vacuum tolerance
         let vacuum_tolerance = match arguments.value_of("vacuum tolerance") {
-            Some(s) => {
-                if s.eq("auto") {
-                    Some(1E-6)
-                } else {
-                    match s.parse::<f64>() {
-                        Ok(x) => Some(x),
-                        Err(e) => panic!(
-                            "Couldn't parse vacuum tolerance into float:\n{}",
-                            e
-                        ),
-                    }
+            Some(s) => match s.parse::<f64>() {
+                Ok(x) => Some(x),
+                Err(e) => {
+                    panic!("Couldn't parse vacuum tolerance into float:\n{}", e)
                 }
-            }
+            },
             None => None,
         };
         // Collect reference files
@@ -312,21 +265,15 @@ impl Args {
             _ => Reference::None,
         };
         let spin = arguments.value_of("spin").map(String::from);
-        let verbosity = match arguments.occurrences_of("verbosity") {
-            0 => Verbosity::Atoms,
-            1 => Verbosity::Bader,
-            _ => Verbosity::Full,
-        };
         Self { file,
                file_type,
                weight_tolerance,
-               maxima_tolerance,
+               maximum_distance,
                output,
                reference,
                spin,
                threads,
-               vacuum_tolerance,
-               verbosity }
+               vacuum_tolerance }
     }
 }
 
@@ -413,8 +360,7 @@ mod tests {
     #[test]
     fn argument_output_atoms() {
         let app = ClapApp::get();
-        let matches =
-            app.get_matches_from(vec!["bca", "CHGCAR", "-o", "atoms"]);
+        let matches = app.get_matches_from(vec!["bca", "CHGCAR", "-o"]);
         let args = Args::new(matches);
         match args.output {
             WriteType::Atom(v) => assert!(v.is_empty()),
@@ -423,33 +369,13 @@ mod tests {
     }
 
     #[test]
-    fn argument_output_volumes() {
-        let app = ClapApp::get();
-        let matches =
-            app.get_matches_from(vec!["bca", "CHGCAR", "-o", "volumes"]);
-        let args = Args::new(matches);
-        match args.output {
-            WriteType::Volume(v) => assert!(v.is_empty()),
-            _ => panic!(),
-        }
-    }
-
-    #[test]
-    #[should_panic]
-    fn argument_output_not_output() {
-        let app = ClapApp::get();
-        let _ = app.try_get_matches_from(vec!["bca", "CHGCAR", "-o", "Atoms"])
-                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
-    }
-
-    #[test]
     fn argument_output_index() {
         let app = ClapApp::get();
-        let matches = app.get_matches_from(vec!["bca", "CHGCAR", "-o",
-                                                "volumes", "-i", "1",]);
+        let matches =
+            app.get_matches_from(vec!["bca", "CHGCAR", "-o", "-i", "1",]);
         let args = Args::new(matches);
         match args.output {
-            WriteType::Volume(v) => assert_eq!(v, vec![0]),
+            WriteType::Atom(v) => assert_eq!(v, vec![0]),
             _ => panic!(),
         }
     }
@@ -458,8 +384,7 @@ mod tests {
     fn argument_output_mult_index() {
         let app = ClapApp::get();
         let matches = app.get_matches_from(vec!["bca", "CHGCAR", "-o",
-                                                "atoms", "--index", "1",
-                                                "-i", "3",]);
+                                                "--index", "1", "-i", "3",]);
         let args = Args::new(matches);
         match args.output {
             WriteType::Atom(v) => assert_eq!(v, vec![0, 2]),
@@ -471,8 +396,8 @@ mod tests {
     #[should_panic]
     fn argument_index_zero() {
         let app = ClapApp::get();
-        let matches = app.get_matches_from(vec!["bca", "CHGCAR", "-o",
-                                                "atoms", "-i", "0"]);
+        let matches =
+            app.get_matches_from(vec!["bca", "CHGCAR", "-o", "-i", "0"]);
         let _ = Args::new(matches);
     }
 
@@ -556,15 +481,6 @@ mod tests {
     }
 
     #[test]
-    fn argument_vacuum_tolerance_auto() {
-        let app = ClapApp::get();
-        let v = vec!["bca", "CHGCAR", "--vac", "auto"];
-        let matches = app.get_matches_from(v);
-        let args = Args::new(matches);
-        assert_eq!(args.vacuum_tolerance, Some(1E-6))
-    }
-
-    #[test]
     fn argument_vacuum_tolerance_float() {
         let app = ClapApp::get();
         let v = vec!["bca", "CHGCAR", "--vac", "1E-4"];
@@ -601,17 +517,17 @@ mod tests {
     }
 
     #[test]
-    fn argument_maxima_tolerance_float() {
+    fn argument_maximum_distance_float() {
         let app = ClapApp::get();
-        let v = vec!["bca", "CHGCAR", "--maxima", "1E-4"];
+        let v = vec!["bca", "CHGCAR", "--max_dist", "1E-4"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
-        assert_eq!(args.maxima_tolerance, 1E-4)
+        assert_eq!(args.maximum_distance, 1E-4)
     }
 
     #[test]
     #[should_panic]
-    fn argument_maxima_tolerance_not_float() {
+    fn argument_maximum_distance_not_float() {
         let app = ClapApp::get();
         let v = vec!["bca", "CHGCAR", "-m", "0.00.1"];
         let matches = app.get_matches_from(v);
