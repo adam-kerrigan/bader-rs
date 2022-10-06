@@ -28,7 +28,7 @@ impl<'a> ClapApp {
             .arg(Arg::new("output")
                 .short('o')
                 .long("output")
-                .takes_value(true)
+                .takes_value(false)
                 .help("Output the Bader atoms.")
                 .long_help(
 "Output the Bader atoms in the same file format as the input density.
@@ -159,29 +159,28 @@ impl Args {
         };
 
         // Collect write charge info
-        let output = match arguments.value_of("output") {
-            Some("atoms") => {
-                let atoms = match arguments.values_of("index") {
-                    Some(vec) => {
-                        vec.map(|s| match s.parse::<usize>() {
-                            Ok(u) => match u.checked_sub(1) {
-                                Some(u) => u as isize,
-                                None => {
-                                    panic!("Counting for index starts at 1.")
-                                }
-                            },
-                            Err(_) => {
-                                panic!("Unable to parse index, ({}) to usize.",
-                                       s)
-                            }
-                        })
-                        .collect::<Vec<isize>>()
-                    }
-                    None => Vec::with_capacity(0),
-                };
-                WriteType::Atom(atoms)
-            }
-            _ => WriteType::None,
+        let output = if arguments.is_present("output") {
+            let atoms = match arguments.values_of("index") {
+                Some(vec) => {
+                    vec.map(|s| match s.parse::<usize>() {
+                           Ok(u) => match u.checked_sub(1) {
+                               Some(u) => u as isize,
+                               None => {
+                                   panic!("Counting for index starts at 1.")
+                               }
+                           },
+                           Err(_) => {
+                               panic!("Unable to parse index, ({}) to usize.",
+                                      s)
+                           }
+                       })
+                       .collect::<Vec<isize>>()
+                }
+                None => Vec::with_capacity(0),
+            };
+            WriteType::Atom(atoms)
+        } else {
+            WriteType::None
         };
 
         // Collect file type
@@ -361,8 +360,7 @@ mod tests {
     #[test]
     fn argument_output_atoms() {
         let app = ClapApp::get();
-        let matches =
-            app.get_matches_from(vec!["bca", "CHGCAR", "-o", "atoms"]);
+        let matches = app.get_matches_from(vec!["bca", "CHGCAR", "-o"]);
         let args = Args::new(matches);
         match args.output {
             WriteType::Atom(v) => assert!(v.is_empty()),
@@ -371,33 +369,13 @@ mod tests {
     }
 
     #[test]
-    fn argument_output_volumes() {
-        let app = ClapApp::get();
-        let matches =
-            app.get_matches_from(vec!["bca", "CHGCAR", "-o", "volumes"]);
-        let args = Args::new(matches);
-        match args.output {
-            WriteType::Volume(v) => assert!(v.is_empty()),
-            _ => panic!(),
-        }
-    }
-
-    #[test]
-    #[should_panic]
-    fn argument_output_not_output() {
-        let app = ClapApp::get();
-        let _ = app.try_get_matches_from(vec!["bca", "CHGCAR", "-o", "Atoms"])
-                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
-    }
-
-    #[test]
     fn argument_output_index() {
         let app = ClapApp::get();
-        let matches = app.get_matches_from(vec!["bca", "CHGCAR", "-o",
-                                                "volumes", "-i", "1",]);
+        let matches =
+            app.get_matches_from(vec!["bca", "CHGCAR", "-o", "-i", "1",]);
         let args = Args::new(matches);
         match args.output {
-            WriteType::Volume(v) => assert_eq!(v, vec![0]),
+            WriteType::Atom(v) => assert_eq!(v, vec![0]),
             _ => panic!(),
         }
     }
@@ -406,8 +384,7 @@ mod tests {
     fn argument_output_mult_index() {
         let app = ClapApp::get();
         let matches = app.get_matches_from(vec!["bca", "CHGCAR", "-o",
-                                                "atoms", "--index", "1",
-                                                "-i", "3",]);
+                                                "--index", "1", "-i", "3",]);
         let args = Args::new(matches);
         match args.output {
             WriteType::Atom(v) => assert_eq!(v, vec![0, 2]),
@@ -419,8 +396,8 @@ mod tests {
     #[should_panic]
     fn argument_index_zero() {
         let app = ClapApp::get();
-        let matches = app.get_matches_from(vec!["bca", "CHGCAR", "-o",
-                                                "atoms", "-i", "0"]);
+        let matches =
+            app.get_matches_from(vec!["bca", "CHGCAR", "-o", "-i", "0"]);
         let _ = Args::new(matches);
     }
 
@@ -504,15 +481,6 @@ mod tests {
     }
 
     #[test]
-    fn argument_vacuum_tolerance_auto() {
-        let app = ClapApp::get();
-        let v = vec!["bca", "CHGCAR", "--vac", "auto"];
-        let matches = app.get_matches_from(v);
-        let args = Args::new(matches);
-        assert_eq!(args.vacuum_tolerance, Some(1E-6))
-    }
-
-    #[test]
     fn argument_vacuum_tolerance_float() {
         let app = ClapApp::get();
         let v = vec!["bca", "CHGCAR", "--vac", "1E-4"];
@@ -549,17 +517,17 @@ mod tests {
     }
 
     #[test]
-    fn argument_maxima_tolerance_float() {
+    fn argument_maximum_distance_float() {
         let app = ClapApp::get();
-        let v = vec!["bca", "CHGCAR", "--maxima", "1E-4"];
+        let v = vec!["bca", "CHGCAR", "--max_dist", "1E-4"];
         let matches = app.get_matches_from(v);
         let args = Args::new(matches);
-        assert_eq!(args.maxima_tolerance, 1E-4)
+        assert_eq!(args.maximum_distance, 1E-4)
     }
 
     #[test]
     #[should_panic]
-    fn argument_maxima_tolerance_not_float() {
+    fn argument_maximum_distance_not_float() {
         let app = ClapApp::get();
         let v = vec!["bca", "CHGCAR", "-m", "0.00.1"];
         let matches = app.get_matches_from(v);
