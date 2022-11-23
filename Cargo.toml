@@ -19,6 +19,6 @@ clap = {version = "3.2.2", features = ["cargo"]}
 indicatif = "0.17.1"
 atomic-counter = "1.0.1"
 num_cpus = "1.13.0"
-crossbeam-utils = "0.8.12"
+crossbeam-utils = "0.8.14"
 rustc-hash = "1.1.0"
 anyhow = "1.0.65"
