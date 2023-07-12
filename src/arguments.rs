@@ -1,5 +1,5 @@
 use crate::io::{FileType, WriteType};
-use clap::{crate_authors, App, Arg, ArgMatches};
+use clap::{crate_authors, value_parser, Arg, ArgAction, ArgMatches, Command};
 
 /// Indicates how many reference files are passed
 #[derive(Clone)]
@@ -15,10 +15,10 @@ pub enum Reference {
 /// Create a container for dealing with clap and being able to test arg parsing.
 pub enum ClapApp {}
 
-impl<'a> ClapApp {
+impl ClapApp {
     /// Create and return the clap::App
-    pub fn get() -> App<'a> {
-        App::new("Multi-threaded Bader Charge Analysis")
+    pub fn get() -> Command {
+        Command::new("Multi-threaded Bader Charge Analysis")
             .author(crate_authors!())
             .version("0.4.2")
             .arg(Arg::new("file")
@@ -28,7 +28,7 @@ impl<'a> ClapApp {
             .arg(Arg::new("output")
                 .short('o')
                 .long("output")
-                .takes_value(false)
+                .action(ArgAction::SetTrue)
                 .help("Output the Bader atoms.")
                 .long_help(
 "Output the Bader atoms in the same file format as the input density.
@@ -37,9 +37,9 @@ specific atom. Without the index flag it will print all the atoms."))
             .arg(Arg::new("index")
                 .short('i')
                 .long("index")
-                .multiple_occurrences(true)
-                .number_of_values(1)
+                .action(ArgAction::Append)
                 .requires("output")
+                .value_parser(1..)
                 .help("Index of Bader atoms to be written out.")
                 .long_help(
 "An index of a Bader atom to be written out, starting at 1. This flag
@@ -48,9 +48,8 @@ repeating the flag ie. bca CHGCAR -oi 1 -i 2."))
             .arg(Arg::new("file type")
                 .short('t')
                 .long("type")
-                .takes_value(true)
-                .possible_value("cube")
-                .possible_value("vasp")
+                .num_args(1)
+                .value_parser(["cube", "vasp"])
                 .ignore_case(false)
                 .help("The file type of the charge density.")
                 .long_help(
@@ -59,9 +58,9 @@ to be infered from the filename."))
             .arg(Arg::new("reference")
                 .short('r')
                 .long("ref")
-                .multiple_occurrences(true)
-                .max_values(2)
-                .number_of_values(1)
+                .action(ArgAction::Append)
+                .num_args(1)
+                .value_parser(value_parser!(String))
                 .help("File(s) containing reference charge.")
                 .long_help(
 "A reference charge to do the partitioning upon. Two files can be passed
@@ -70,7 +69,8 @@ passed they are summed together."))
             .arg(Arg::new("spin")
                 .short('s')
                 .long("spin")
-                .number_of_values(1)
+                .num_args(1)
+                .value_parser(value_parser!(String))
                 .help("File containing spin density.")
                 .long_help(
 "A path to the spin density associated with the original file. This is primarily
@@ -81,13 +81,14 @@ contain a single density (ie. the original file has been split)."))
                 .short('a')
                 .long("aec")
                 .help("Convience flag for reading both aeccars.")
-                .takes_value(false)
+                .action(ArgAction::SetTrue)
                 .conflicts_with("reference"))
             .arg(Arg::new("vacuum tolerance")
                 .short('v')
                 .long("vac")
                 .default_value("1E-6")
-                .takes_value(true)
+                .value_parser(value_parser!(f64))
+                .num_args(1)
                 .help("Cut-off at which charge is considered vacuum.")
                 .long_help(
 "Values of density below the supplied value are considered vacuum and are not
@@ -96,7 +97,8 @@ included in the calculation."))
                 .short('w')
                 .long("weight")
                 .default_value("1E-8")
-                .takes_value(true)
+                .value_parser(value_parser!(f64))
+                .num_args(1)
                 .help("Cut-off at which contributions to the weighting will be ignored.")
                 .long_help(
 "Values of density below the supplied value are ignored from the weighting and
@@ -107,7 +109,8 @@ Be sure to test this!"))
                 .short('m')
                 .long("max_dist")
                 .default_value("0.1")
-                .takes_value(true)
+                .value_parser(value_parser!(f64))
+                .num_args(1)
                 .help("Cut-off after which an error will be thrown for distance of Bader maximum to atom.")
                 .long_help(
 "The distance allowed between Bader maximum and its associated atom, in angstrom, before
@@ -117,8 +120,9 @@ maximum is more appropriate."))
             .arg(Arg::new("threads")
                 .short('J')
                 .long("threads")
-                .takes_value(true)
+                .num_args(1)
                 .default_value("0")
+                .value_parser(value_parser!(usize))
                 .help("Number of threads to distribute the calculation over.")
                 .long_help(
 "The number of threads to be used by the program. A default value of 0 is used
@@ -153,29 +157,11 @@ impl Args {
     /// Initialises the structure from the command-line arguments.
     pub fn new(arguments: ArgMatches) -> Self {
         // Collect file
-        let file = match arguments.value_of("file") {
-            Some(f) => String::from(f),
-            None => String::new(),
-        };
-
+        let file = arguments.get_one::<String>("file").unwrap().to_string();
         // Collect write charge info
-        let output = if arguments.is_present("output") {
-            let atoms = match arguments.values_of("index") {
-                Some(vec) => {
-                    vec.map(|s| match s.parse::<usize>() {
-                           Ok(u) => match u.checked_sub(1) {
-                               Some(u) => u as isize,
-                               None => {
-                                   panic!("Counting for index starts at 1.")
-                               }
-                           },
-                           Err(_) => {
-                               panic!("Unable to parse index, ({}) to usize.",
-                                      s)
-                           }
-                       })
-                       .collect::<Vec<isize>>()
-                }
+        let output = if arguments.get_flag("output") {
+            let atoms: Vec<isize> = match arguments.get_many::<i64>("index") {
+                Some(vec) => vec.into_iter().map(|i| *i as isize - 1).collect(),
                 None => Vec::with_capacity(0),
             };
             WriteType::Atom(atoms)
@@ -184,7 +170,7 @@ impl Args {
         };
 
         // Collect file type
-        let file_type = arguments.value_of("file type").map(String::from);
+        let file_type = arguments.get_one::<String>("file type");
         let file_type = match file_type {
             Some(ftype) => {
                 if ftype.eq("cube") {
@@ -206,55 +192,32 @@ impl Args {
         };
         // Collect weight tolerance
         // safe to unwrap as threads has a default value of 1E-8
-        let weight_tolerance = match arguments.value_of("weight tolerance")
-                                              .unwrap()
-                                              .parse::<f64>()
-        {
-            Ok(x) => x.max(1E-13),
-            Err(e) => {
-                panic!("Couldn't parse weight tolerance into float:\n{}", e)
-            }
-        };
+        let weight_tolerance = arguments.get_one::<f64>("weight tolerance")
+                                        .unwrap()
+                                        .max(1E-13);
         // Collect maxima tolerance
         // safe to unwrap as threads has a default value of 0.1
-        let maximum_distance = match arguments.value_of("maximum distance")
-                                              .unwrap()
-                                              .parse::<f64>()
-        {
-            Ok(x) => x,
-            Err(e) => {
-                panic!("Couldn't parse maxima tolerance into float:\n{}", e)
-            }
-        };
+        let maximum_distance =
+            *arguments.get_one::<f64>("maximum distance").unwrap();
         // Collect threads
         // safe to unwrap as threads has a default value of 0
-        let threads = {
-            match arguments.value_of("threads").unwrap().parse::<usize>() {
-                Ok(0) => num_cpus::get().min(12),
-                Ok(x) => x,
-                Err(e) => panic!("Couldn't parse threads into integer:\n{}", e),
-            }
+        let threads = match *arguments.get_one::<usize>("threads").unwrap() {
+            0 => num_cpus::get().min(12),
+            x => x,
         };
         // Collect vacuum tolerance
-        let vacuum_tolerance = match arguments.value_of("vacuum tolerance") {
-            Some(s) => match s.parse::<f64>() {
-                Ok(x) => Some(x),
-                Err(e) => {
-                    panic!("Couldn't parse vacuum tolerance into float:\n{}", e)
-                }
-            },
-            None => None,
-        };
+        let vacuum_tolerance =
+            arguments.get_one::<f64>("vacuum tolerance").copied();
         // Collect reference files
-        let references: Vec<_> = if arguments.is_present("all electron") {
+        let references: Vec<_> = if arguments.get_flag("all electron") {
             if let FileType::Vasp = file_type {
                 vec!["AECCAR0", "AECCAR2"]
             } else {
                 panic!("Error: Cannot use AECCAR flag for non VASP file-types.")
             }
         } else {
-            match arguments.values_of("reference") {
-                Some(x) => x.collect(),
+            match arguments.get_many::<String>("reference") {
+                Some(x) => x.map(|s| s.as_str()).collect(),
                 None => Vec::with_capacity(0),
             }
         };
@@ -264,7 +227,8 @@ impl Args {
             1 => Reference::One(String::from(references[0])),
             _ => Reference::None,
         };
-        let spin = arguments.value_of("spin").map(String::from);
+        let spin = arguments.get_one::<String>("spin")
+                            .map(|x| String::from(x.as_str()));
         Self { file,
                file_type,
                weight_tolerance,
@@ -396,9 +360,9 @@ mod tests {
     #[should_panic]
     fn argument_index_zero() {
         let app = ClapApp::get();
-        let matches =
-            app.get_matches_from(vec!["bca", "CHGCAR", "-o", "-i", "0"]);
-        let _ = Args::new(matches);
+        let _ = app.try_get_matches_from(vec!["bca", "CHGCAR", "-o", "-i",
+                                              "0"])
+                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
@@ -494,8 +458,8 @@ mod tests {
     fn argument_vacuum_tolerance_not_float() {
         let app = ClapApp::get();
         let v = vec!["bca", "CHGCAR", "--vac", "0.00.1"];
-        let matches = app.get_matches_from(v);
-        let _ = Args::new(matches);
+        let _ = app.try_get_matches_from(v)
+                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
@@ -512,8 +476,8 @@ mod tests {
     fn argument_weight_tolerance_not_float() {
         let app = ClapApp::get();
         let v = vec!["bca", "CHGCAR", "-w", "0.00.1"];
-        let matches = app.get_matches_from(v);
-        let _ = Args::new(matches);
+        let _ = app.try_get_matches_from(v)
+                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
@@ -530,8 +494,8 @@ mod tests {
     fn argument_maximum_distance_not_float() {
         let app = ClapApp::get();
         let v = vec!["bca", "CHGCAR", "-m", "0.00.1"];
-        let matches = app.get_matches_from(v);
-        let _ = Args::new(matches);
+        let _ = app.try_get_matches_from(v)
+                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
@@ -558,7 +522,7 @@ mod tests {
     fn argument_threads_not_int() {
         let app = ClapApp::get();
         let v = vec!["bca", "CHGCAR", "-J", "0.1"];
-        let matches = app.get_matches_from(v);
-        let _ = Args::new(matches);
+        let _ = app.try_get_matches_from(v)
+                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 }

@@ -310,7 +310,7 @@ impl Table {
 
 /// Write a string to filename. Creates a new file regardless of what exists.
 pub fn write(string: String, filename: String) -> std::io::Result<()> {
-    let mut bader_file = File::create(&filename)?;
+    let mut bader_file = File::create(filename)?;
     bader_file.write_all(string.as_bytes())?;
     Ok(())
 }

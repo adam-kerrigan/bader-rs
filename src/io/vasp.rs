@@ -34,7 +34,7 @@ impl FileFormat for Vasp {
             let mut aug: Vec<usize> = vec![];
             let mut pos = 0;
             // search for the grid lines or augmentation that bound the densities
-            let regex = RegexSet::new(&[r"^\s*\d+\s+\d+\s+\d+\s*$",
+            let regex = RegexSet::new([r"^\s*\d+\s+\d+\s+\d+\s*$",
                                         r"^\s*aug"]).unwrap();
             // the first 7 lines are useless to us
             for _ in 0..8 {
@@ -98,8 +98,7 @@ impl FileFormat for Vasp {
         // read the poscar information poscar_b
         let _ = <File as Read>::by_ref(&mut file).take(grid[0][1] as u64)
                                                  .read_to_end(&mut poscar_b)?;
-        file.seek(SeekFrom::Current((grid[0][0] as i64 - grid[0][1] as i64)
-                                    as i64))?;
+        file.seek(SeekFrom::Current(grid[0][0] as i64 - grid[0][1] as i64))?;
         // read the grid line into grid_pts_b
         let _ =
             <File as Read>::by_ref(&mut file).take((grid[0][1] - grid[0][0])
