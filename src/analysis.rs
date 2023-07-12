@@ -23,7 +23,7 @@ fn maxima_to_atom(chunk: &[isize],
     let mut ass_atom = Vec::with_capacity(chunk_size);
     for m in chunk.iter() {
         // convert the point first to cartesian, then to the reduced basis
-        let m_cartesian = grid.to_cartesian(*m as isize);
+        let m_cartesian = grid.to_cartesian(*m);
         let m_reduced_cartesian = atoms.reduced_lattice.to_reduced(m_cartesian);
         let mut atom_num = 0;
         let mut min_distance = f64::INFINITY;
