@@ -32,8 +32,7 @@
 //! `bader = "0.4.2"`
 //!
 //! ### Minimum Supported Rust Version (MSRV)
-//! This crate is guaranteed to compile on stable Rust 1.57.0 and up. It *might*
-//! compile with older versions but that may change in any new patch release.
+//! This crate is guaranteed to compile on stable Rust 1.64.0 and up.
 //! ## Usage
 //! The program takes a charge density file as input and performs Bader analysis
 //! of the data. Currently it supports density in [VASP] or [cube] formats. It

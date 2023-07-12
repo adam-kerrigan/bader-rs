@@ -36,7 +36,7 @@ jobs:
   test-non-stable:
     strategy:
       matrix:
-        version: [beta, nightly, 1.57.0]
+        version: [beta, nightly, 1.64.0]
     name: Test (linux, ${{ matrix.version }})
     runs-on: ubuntu-latest
     steps:
