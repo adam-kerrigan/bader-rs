@@ -11,7 +11,6 @@ pub enum Voxel<'a> {
     /// Contians a vector of the maxima the current voxel contributes to and
     /// their weights.
     Boundary(&'a Vec<f64>),
-    AtomBoundary(&'a Vec<f64>),
     /// A voxel beneath the vacuum tolerance and not contributing to any maxima.
     Vacuum,
 }
@@ -295,7 +294,7 @@ impl VoxelMap for AtomVoxelMap {
             std::cmp::Ordering::Equal => Voxel::Vacuum,
             std::cmp::Ordering::Greater => Voxel::Maxima(maxima as usize),
             std::cmp::Ordering::Less => {
-                Voxel::AtomBoundary(self.maxima_to_weight(maxima))
+                Voxel::Boundary(self.maxima_to_weight(maxima))
             }
         }
     }

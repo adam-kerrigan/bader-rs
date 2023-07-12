@@ -160,18 +160,6 @@ pub fn sum_bader_densities(densities: &[Vec<f64>],
                                           bv[m] += 1.0;
                                       },
                                       Voxel::Boundary(weights) => {
-                                        for weight in weights {
-                                            let m = *weight as usize;
-                                            let w = weight - (m as f64);
-                                            bc[m].iter_mut()
-                                                .zip(densities)
-                                                .for_each(|(c, density)| {
-                                                    *c += density[p] * w;
-                                                });
-                                            bv[m] += w;
-                                        }
-                                      },
-                                      Voxel::AtomBoundary(weights) => {
                                           for weight in weights {
                                               let m = *weight as usize;
                                               let w = weight - (m as f64);
