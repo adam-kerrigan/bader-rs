@@ -10,7 +10,7 @@ pub enum Voxel<'a> {
     Maxima(usize),
     /// Contians a vector of the maxima the current voxel contributes to and
     /// their weights.
-    Boundary(&'a Box<[f64]>),
+    Boundary(&'a [f64]),
     /// A voxel beneath the vacuum tolerance and not contributing to any maxima.
     Vacuum,
 }
@@ -105,7 +105,7 @@ impl BlockingVoxelMap {
     /// in the VoxelMap and then return either a `Voxel::Maxima` or `Voxel::Weight`.
     /// Calling this on a voxel, p, that is below the vacuum_tolerance will deadlock
     /// as a voxel is considered stored once voxel_map\[p\] > -1.
-    pub fn weight_get(&self, i: isize) -> &Box<[f64]> {
+    pub fn weight_get(&self, i: isize) -> &[f64] {
         let i = -2 - i;
         &(unsafe { &*self.weight_map.get() })[i as usize]
     }
@@ -160,7 +160,7 @@ impl<V: VoxelMap + ?Sized> VoxelMap for Box<V> {
     fn maxima_to_voxel(&self, maxima: isize) -> Voxel {
         (**self).maxima_to_voxel(maxima)
     }
-    fn maxima_to_weight(&self, maxima: isize) -> &Box<[f64]> {
+    fn maxima_to_weight(&self, maxima: isize) -> &[f64] {
         (**self).maxima_to_weight(maxima)
     }
     fn maxima_iter(&self) -> std::slice::Iter<'_, isize> {
@@ -200,7 +200,7 @@ pub trait VoxelMap: Sync + Send {
     /// Return the Voxel associated with the logged maxima.
     fn maxima_to_voxel(&self, maxima: isize) -> Voxel;
     /// Return the Vec of the weights for the supplied maxima. Here the maxima must be less than -1.
-    fn maxima_to_weight(&self, maxima: isize) -> &Box<[f64]>;
+    fn maxima_to_weight(&self, maxima: isize) -> &[f64];
     /// Return an Iter over the maxima stored in the VoxelMap.
     fn maxima_iter(&self) -> std::slice::Iter<'_, isize>;
     /// Return Chunks over the maxima stored in the VoxelMap.
@@ -301,7 +301,7 @@ impl VoxelMap for AtomVoxelMap {
     }
 
     /// Return a reference to the weights from the given maxima, Note: maxima here must be < -1.
-    fn maxima_to_weight(&self, maxima: isize) -> &Box<[f64]> {
+    fn maxima_to_weight(&self, maxima: isize) -> &[f64] {
         &self.weight_map[(-2 - maxima) as usize]
     }
 
