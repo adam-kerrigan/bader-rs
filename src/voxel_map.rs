@@ -10,7 +10,7 @@ pub enum Voxel<'a> {
     Maxima(usize),
     /// Contians a vector of the maxima the current voxel contributes to and
     /// their weights.
-    Boundary(&'a Vec<f64>),
+    Boundary(&'a Box<[f64]>),
     /// A voxel beneath the vacuum tolerance and not contributing to any maxima.
     Vacuum,
 }
@@ -24,15 +24,15 @@ unsafe impl<'a> Sync for Lock<'a> {}
 
 /// Deref only exposes the weight_map field of a [`VoxelMap`].
 impl<'a> Deref for Lock<'a> {
-    type Target = Vec<Vec<f64>>;
-    fn deref(&self) -> &Vec<Vec<f64>> {
+    type Target = Vec<Box<[f64]>>;
+    fn deref(&self) -> &Vec<Box<[f64]>> {
         unsafe { &*self.data.weight_map.get() }
     }
 }
 
 /// DerefMut only exposes the weight_map field of a [`VoxelMap`].
 impl<'a> DerefMut for Lock<'a> {
-    fn deref_mut(&mut self) -> &mut Vec<Vec<f64>> {
+    fn deref_mut(&mut self) -> &mut Vec<Box<[f64]>> {
         unsafe { &mut *self.data.weight_map.get() }
     }
 }
@@ -71,7 +71,7 @@ impl<'a> Drop for Lock<'a> {
 /// }
 /// ```
 pub struct BlockingVoxelMap {
-    weight_map: UnsafeCell<Vec<Vec<f64>>>,
+    weight_map: UnsafeCell<Vec<Box<[f64]>>>,
     voxel_map: Vec<AtomicIsize>,
     pub grid: Grid,
     lock: AtomicBool,
@@ -89,7 +89,8 @@ impl BlockingVoxelMap {
         let grid = Grid::new(grid, lattice, voxel_origin);
         let size = grid.size.total;
         // For mapping the the voxels
-        let weight_map = UnsafeCell::new(Vec::<Vec<f64>>::with_capacity(size));
+        let weight_map =
+            UnsafeCell::new(Vec::<Box<[f64]>>::with_capacity(size));
         let mut voxel_map = Vec::with_capacity(size);
         voxel_map.resize_with(size, || AtomicIsize::new(-1));
         let lock = AtomicBool::new(false);
@@ -104,7 +105,7 @@ impl BlockingVoxelMap {
     /// in the VoxelMap and then return either a `Voxel::Maxima` or `Voxel::Weight`.
     /// Calling this on a voxel, p, that is below the vacuum_tolerance will deadlock
     /// as a voxel is considered stored once voxel_map\[p\] > -1.
-    pub fn weight_get(&self, i: isize) -> &Vec<f64> {
+    pub fn weight_get(&self, i: isize) -> &Box<[f64]> {
         let i = -2 - i;
         &(unsafe { &*self.weight_map.get() })[i as usize]
     }
@@ -138,7 +139,7 @@ impl BlockingVoxelMap {
     }
 
     /// Extract the voxel map data.
-    pub fn into_inner(self) -> (Vec<isize>, Vec<Vec<f64>>, Grid) {
+    pub fn into_inner(self) -> (Vec<isize>, Vec<Box<[f64]>>, Grid) {
         (self.voxel_map.into_iter().map(|x| x.into_inner()).collect(),
          self.weight_map.into_inner(),
          self.grid)
@@ -147,7 +148,7 @@ impl BlockingVoxelMap {
 
 // This feels ridiculous. Does this need ** or *?
 impl<V: VoxelMap + ?Sized> VoxelMap for Box<V> {
-    fn boundary_iter(&self) -> std::slice::Iter<'_, Vec<f64>> {
+    fn boundary_iter(&self) -> std::slice::Iter<'_, Box<[f64]>> {
         (**self).boundary_iter()
     }
     fn atom_map(&self) -> Option<&[usize]> {
@@ -159,7 +160,7 @@ impl<V: VoxelMap + ?Sized> VoxelMap for Box<V> {
     fn maxima_to_voxel(&self, maxima: isize) -> Voxel {
         (**self).maxima_to_voxel(maxima)
     }
-    fn maxima_to_weight(&self, maxima: isize) -> &Vec<f64> {
+    fn maxima_to_weight(&self, maxima: isize) -> &Box<[f64]> {
         (**self).maxima_to_weight(maxima)
     }
     fn maxima_iter(&self) -> std::slice::Iter<'_, isize> {
@@ -193,13 +194,13 @@ impl<V: VoxelMap + ?Sized> VoxelMap for Box<V> {
 /// Trait for accessing the VoxelMap regardless of whether only atomic volumes or full Bader volumes.
 pub trait VoxelMap: Sync + Send {
     /// Produce an Iter over the boundary voxels.
-    fn boundary_iter(&self) -> std::slice::Iter<'_, Vec<f64>>;
+    fn boundary_iter(&self) -> std::slice::Iter<'_, Box<[f64]>>;
     /// Return the atom number associated to the maxima.
     fn maxima_to_atom(&self, maxima: usize) -> usize;
     /// Return the Voxel associated with the logged maxima.
     fn maxima_to_voxel(&self, maxima: isize) -> Voxel;
     /// Return the Vec of the weights for the supplied maxima. Here the maxima must be less than -1.
-    fn maxima_to_weight(&self, maxima: isize) -> &Vec<f64>;
+    fn maxima_to_weight(&self, maxima: isize) -> &Box<[f64]>;
     /// Return an Iter over the maxima stored in the VoxelMap.
     fn maxima_iter(&self) -> std::slice::Iter<'_, isize>;
     /// Return Chunks over the maxima stored in the VoxelMap.
@@ -225,7 +226,7 @@ pub trait VoxelMap: Sync + Send {
                     Some(1.0)
                 } else if *maxima < -1 {
                     let mut w = None;
-                    for weight in self.maxima_to_weight(*maxima) {
+                    for weight in self.maxima_to_weight(*maxima).iter() {
                         let m = *weight as isize;
                         if m == volume_number {
                             w = Some(weight - m as f64);
@@ -249,7 +250,7 @@ pub trait VoxelMap: Sync + Send {
                     Some(1.0)
                 } else if *maxima < -1 {
                     let mut w = 0.0;
-                    for weight in self.maxima_to_weight(*maxima) {
+                    for weight in self.maxima_to_weight(*maxima).iter() {
                         let m = *weight as isize;
                         if volume_numbers.contains(&m) {
                             w += weight - m as f64;
@@ -269,14 +270,14 @@ pub struct AtomVoxelMap {
     /// The vector mapping the voxel to a maxima.
     pub voxel_map: Vec<isize>,
     /// The vector containing the weights for boundary voxels.
-    pub weight_map: Vec<Vec<f64>>,
+    pub weight_map: Vec<Box<[f64]>>,
     /// The Grid used to navigate the VoxelMap.
     pub grid: Grid,
 }
 
 impl VoxelMap for AtomVoxelMap {
     /// Produce an Iter over the boundary voxels.
-    fn boundary_iter(&self) -> std::slice::Iter<'_, Vec<f64>> {
+    fn boundary_iter(&self) -> std::slice::Iter<'_, Box<[f64]>> {
         self.weight_map.iter()
     }
     /// Get a refernce to the grid used by the VoxelMap.
@@ -300,7 +301,7 @@ impl VoxelMap for AtomVoxelMap {
     }
 
     /// Return a reference to the weights from the given maxima, Note: maxima here must be < -1.
-    fn maxima_to_weight(&self, maxima: isize) -> &Vec<f64> {
+    fn maxima_to_weight(&self, maxima: isize) -> &Box<[f64]> {
         &self.weight_map[(-2 - maxima) as usize]
     }
 
@@ -324,7 +325,7 @@ impl VoxelMap for AtomVoxelMap {
 
 impl AtomVoxelMap {
     pub fn new(voxel_map: Vec<isize>,
-               weight_map: Vec<Vec<f64>>,
+               weight_map: Vec<Box<[f64]>>,
                grid: Grid)
                -> Self {
         Self { voxel_map,

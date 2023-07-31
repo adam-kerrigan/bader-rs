@@ -51,13 +51,16 @@ fn maxima_to_atom(chunk: &[isize],
             }
         }
         if min_distance.powf(0.5) > *maximum_distance {
+            let x = (m / (grid.size.y * grid.size.z)) as f64;
+            let y = (m / grid.size.z).rem_euclid(grid.size.y) as f64;
+            let z = m.rem_euclid(grid.size.z) as f64;
             bail!(
                 "Bader maximum ({}, {}, {}) is too far from nearest atom ({}): {} Ang",
                 m_cartesian[0],
                 m_cartesian[1],
                 m_cartesian[2],
-                atom_num,
-                min_distance,
+                atom_num + 1,
+                min_distance.powf(0.5),
             )
         }
         // remember to square root the distance
@@ -160,7 +163,7 @@ pub fn sum_bader_densities(densities: &[Vec<f64>],
                                           bv[m] += 1.0;
                                       },
                                       Voxel::Boundary(weights) => {
-                                          for weight in weights {
+                                          for weight in weights.iter() {
                                               let m = *weight as usize;
                                               let w = weight - (m as f64);
                                               bc[m].iter_mut()
