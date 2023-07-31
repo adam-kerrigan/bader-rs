@@ -8,7 +8,7 @@ use rustc_hash::FxHashMap;
 pub enum WeightResult {
     Maxima,
     Interier(usize),
-    Boundary(Vec<f64>),
+    Boundary(Box<[f64]>),
 }
 
 /// Steps in the density grid, from point p, following the gradient.
@@ -47,9 +47,9 @@ pub enum WeightResult {
 /// }
 /// let weight = match weight_step(33, &density, &voxel_map, 1E-8) {
 ///     WeightResult::Boundary(weights) => weights,
-///     _ => Vec::with_capacity(0),
+///     _ => Vec::with_capacity(0).into(),
 /// };
-/// assert_eq!(weight, vec![62.625, 61.375])
+/// assert_eq!(weight, vec![62.625, 61.375].into())
 /// ```
 pub fn weight_step(p: isize,
                    density: &[f64],
@@ -106,11 +106,10 @@ pub fn weight_step(p: isize,
             if weights.len() > 1 {
                 weights.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
                 // re-adjust the weights
-                let mut weights =
+                let weights =
                     weights.iter()
                            .map(|(maxima, w)| *maxima as f64 + w / total)
-                           .collect::<Vec<f64>>();
-                weights.shrink_to_fit();
+                           .collect::<Box<[f64]>>();
                 WeightResult::Boundary(weights)
             } else {
                 WeightResult::Interier(weights[0].0)

@@ -56,8 +56,8 @@ fn maxima_to_atom(chunk: &[isize],
                 m_cartesian[0],
                 m_cartesian[1],
                 m_cartesian[2],
-                atom_num,
-                min_distance,
+                atom_num + 1,
+                min_distance.powf(0.5),
             )
         }
         // remember to square root the distance
@@ -160,19 +160,7 @@ pub fn sum_bader_densities(densities: &[Vec<f64>],
                                           bv[m] += 1.0;
                                       },
                                       Voxel::Boundary(weights) => {
-                                        for weight in weights {
-                                            let m = *weight as usize;
-                                            let w = weight - (m as f64);
-                                            bc[m].iter_mut()
-                                                .zip(densities)
-                                                .for_each(|(c, density)| {
-                                                    *c += density[p] * w;
-                                                });
-                                            bv[m] += w;
-                                        }
-                                      },
-                                      Voxel::AtomBoundary(weights) => {
-                                          for weight in weights {
+                                          for weight in weights.iter() {
                                               let m = *weight as usize;
                                               let w = weight - (m as f64);
                                               bc[m].iter_mut()
