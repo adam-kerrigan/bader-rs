@@ -51,9 +51,6 @@ fn maxima_to_atom(chunk: &[isize],
             }
         }
         if min_distance.powf(0.5) > *maximum_distance {
-            let x = (m / (grid.size.y * grid.size.z)) as f64;
-            let y = (m / grid.size.z).rem_euclid(grid.size.y) as f64;
-            let z = m.rem_euclid(grid.size.z) as f64;
             bail!(
                 "Bader maximum ({}, {}, {}) is too far from nearest atom ({}): {} Ang",
                 m_cartesian[0],
