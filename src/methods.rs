@@ -47,9 +47,9 @@ pub enum WeightResult {
 /// }
 /// let weight = match weight_step(33, &density, &voxel_map, 1E-8) {
 ///     WeightResult::Boundary(weights) => weights,
-///     _ => Vec::with_capacity(0),
+///     _ => Vec::with_capacity(0).into(),
 /// };
-/// assert_eq!(weight, vec![62.625, 61.375])
+/// assert_eq!(weight, vec![62.625, 61.375].into())
 /// ```
 pub fn weight_step(p: isize,
                    density: &[f64],

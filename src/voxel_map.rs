@@ -64,7 +64,7 @@ impl<'a> Drop for Lock<'a> {
 ///                                   [0.0, 0.0, 0.0]);
 ///     let i = {
 ///         let mut weight = voxel_map.lock();
-///         (*weight).push(Vec::with_capacity(0));
+///         (*weight).push(Vec::with_capacity(0).into());
 ///         weight.len() - 1
 ///     };
 ///     voxel_map.weight_store(p, i)
