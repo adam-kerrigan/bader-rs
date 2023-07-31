@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use bader::analysis::{assign_maxima, sum_bader_densities};
 use bader::arguments::{Args, ClapApp};
 use bader::io::{self, FileFormat, FileType, WriteType};
@@ -33,18 +33,18 @@ fn main() -> Result<()> {
     // create the index list which will tell us in which order to evaluate the
     // voxels
     let mut index: Vec<usize> = (0..voxel_map.grid.size.total).collect();
-    let pbar =
-        Bar::visible(index.len() as u64, 100, String::from("Maxima Finding: "));
-    // find the maxima in the system and store them whilst removing them from
-    // the index list
-    let bader_maxima =
-        maxima_finder(&mut index, reference, &voxel_map, args.threads, pbar)?;
     index.sort_unstable_by(|a, b| {
              reference[*b].partial_cmp(&reference[*a]).unwrap()
          });
     // remove from the indices any voxel that is below the vacuum limit
     index.truncate(vacuum_index(reference, &index, args.vacuum_tolerance)
          .context("Failed to apply vacuum tolerance")?);
+    // find the maxima in the system and store them whilst removing them from
+    // the index list
+    let pbar =
+        Bar::visible(index.len() as u64, 100, String::from("Maxima Finding: "));
+    let bader_maxima =
+        maxima_finder(&mut index, reference, &voxel_map, args.threads, pbar)?;
     // Start a thread-safe progress bar and assign the maxima to atoms
     let pbar = Bar::visible(bader_maxima.len() as u64,
                             100,
@@ -134,7 +134,7 @@ fn main() -> Result<()> {
                          (atom_number, map)
                      }))
         } else {
-            bail!("BADBADNOTGOOD");
+            Box::new(Vec::with_capacity(0).into_iter())
         }
     };
     write_map.for_each(|(id, weight_map)| {
