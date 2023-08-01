@@ -64,14 +64,14 @@ fn main() -> Result<()> {
                                                               atom_map[i]
                                                               as isize);
                                    });
-    // calculate the weights
-    weight(reference,
-           &voxel_map,
-           &index,
-           pbar,
-           args.threads,
-           args.weight_tolerance);
-    // convert into a NonBlockingVoxelMap as the map is filled
+    // calculate the weights leave the saddles for now
+    let _ = weight(reference,
+                   &voxel_map,
+                   &index,
+                   pbar,
+                   args.threads,
+                   args.weight_tolerance);
+    // convert into a AtomVoxelMap as the map is filled and no longer needs to block
     let (maxima_n, voxel_map): (usize, Box<dyn VoxelMap>) = {
         (atoms.positions.len(),
          Box::new(AtomVoxelMap::from_blocking_voxel_map(voxel_map)))

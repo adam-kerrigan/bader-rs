@@ -7,8 +7,9 @@ use rustc_hash::FxHashMap;
 
 pub enum WeightResult {
     Maxima,
-    Interier(usize),
+    Interior(usize),
     Boundary(Box<[f64]>),
+    Saddle(Box<[f64]>),
 }
 
 /// Steps in the density grid, from point p, following the gradient.
@@ -46,7 +47,7 @@ pub enum WeightResult {
 ///     voxel_map.maxima_store(*p, 62 - (i as isize) % 2);
 /// }
 /// let weight = match weight_step(33, &density, &voxel_map, 1E-8) {
-///     WeightResult::Boundary(weights) => weights,
+///     WeightResult::Saddle(weights) => weights,
 ///     _ => Vec::with_capacity(0).into(),
 /// };
 /// assert_eq!(weight, vec![62.625, 61.375].into())
@@ -60,6 +61,7 @@ pub fn weight_step(p: isize,
     let grid = &voxel_map.grid;
     let mut t_sum = 0.;
     let mut weights = FxHashMap::<usize, f64>::default();
+    let mut saddle_flag = true;
     // colllect the shift and distances and iterate over them.
     for (pt, alpha) in grid.voronoi_shifts(p) {
         let charge_diff = density[pt as usize] - control;
@@ -71,6 +73,7 @@ pub fn weight_step(p: isize,
             let maxima = voxel_map.maxima_get(pt);
             match maxima.cmp(&-1) {
                 std::cmp::Ordering::Less => {
+                    saddle_flag = false;
                     let point_weights = voxel_map.weight_get(maxima);
                     for maxima_weight in point_weights.iter() {
                         let maxima = *maxima_weight as usize;
@@ -110,13 +113,17 @@ pub fn weight_step(p: isize,
                     weights.iter()
                            .map(|(maxima, w)| *maxima as f64 + w / total)
                            .collect::<Box<[f64]>>();
-                WeightResult::Boundary(weights)
+                if saddle_flag {
+                    WeightResult::Saddle(weights)
+                } else {
+                    WeightResult::Boundary(weights)
+                }
             } else {
-                WeightResult::Interier(weights[0].0)
+                WeightResult::Interior(weights[0].0)
             }
         }
         std::cmp::Ordering::Equal => {
-            WeightResult::Interier(*weights.keys().next().unwrap())
+            WeightResult::Interior(*weights.keys().next().unwrap())
         }
         std::cmp::Ordering::Less => WeightResult::Maxima,
     }
@@ -131,44 +138,76 @@ pub fn weight(density: &[f64],
               index: &[usize],
               progress_bar: Bar,
               threads: usize,
-              weight_tolerance: f64) {
+              weight_tolerance: f64)
+              -> FxHashMap<isize, Box<[usize]>> {
     let counter = RelaxedCounter::new(0);
+    let mut saddle_points = FxHashMap::<isize, Box<[usize]>>::default();
     thread::scope(|s| {
         // Assign the remaining voxels to Bader maxima
-        for _ in 0..threads {
-            s.spawn(|_| loop {
-                 let p = {
-                     let i = counter.inc();
-                     if i >= index.len() {
-                         break;
-                     };
-                     index[i] as isize
-                 };
-                 match weight_step(p, density, voxel_map, weight_tolerance) {
-                     WeightResult::Maxima => {
-                         panic!("Found new maxima in voxel assigning.")
-                     }
-                     WeightResult::Interier(maxima) => {
-                         voxel_map.maxima_store(p, maxima as isize);
-                     }
-                     WeightResult::Boundary(weights) => {
-                         let i = {
-                             let mut weight = voxel_map.lock();
-                             let i = weight.len();
-                             (*weight).push(weights);
-                             i
+        let th = (0..threads).map(|_| {
+                                 s.spawn(|_| {
+                     let mut saddles =
+                         FxHashMap::<isize, Box<[usize]>>::default();
+                     loop {
+                         let p = {
+                             let i = counter.inc();
+                             if i >= index.len() {
+                                 break;
+                             };
+                             index[i] as isize
                          };
-                         voxel_map.weight_store(p, i);
+                         match weight_step(p,
+                                           density,
+                                           voxel_map,
+                                           weight_tolerance)
+                         {
+                             WeightResult::Maxima => {
+                                 panic!("Found new maxima in voxel assigning.")
+                             }
+                             WeightResult::Interior(maxima) => {
+                                 voxel_map.maxima_store(p, maxima as isize);
+                             }
+                             WeightResult::Boundary(weights) => {
+                                 let i = {
+                                     let mut weight = voxel_map.lock();
+                                     let i = weight.len();
+                                     (*weight).push(weights);
+                                     i
+                                 };
+                                 voxel_map.weight_store(p, i);
+                             }
+                             WeightResult::Saddle(weights) => {
+                                 saddles.insert(p,
+                                                weights.iter()
+                                                       .map(|f| *f as usize)
+                                                       .collect());
+                                 let i = {
+                                     let mut weight = voxel_map.lock();
+                                     let i = weight.len();
+                                     (*weight).push(weights);
+                                     i
+                                 };
+                                 voxel_map.weight_store(p, i);
+                             }
+                         }
+                         progress_bar.tick();
                      }
-                 }
-                 progress_bar.tick();
-             });
+                     saddles
+                 })
+                             })
+                             .collect::<Vec<_>>();
+        for thread in th {
+            if let Ok(saddles) = thread.join() {
+                saddle_points.extend(saddles);
+            }
         }
     }).unwrap();
     {
         let mut weights = voxel_map.lock();
         weights.shrink_to_fit();
     }
+    saddle_points.shrink_to_fit();
+    saddle_points
 }
 
 /// Find (and remove from a sorted index) the maxima within the charge density
