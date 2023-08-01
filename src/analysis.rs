@@ -6,9 +6,6 @@ use crate::voxel_map::{Voxel, VoxelMap};
 use anyhow::{bail, Context, Result};
 use crossbeam_utils::thread;
 
-/// A type to simplify the result of charge summing functions
-type ChargeSumResult = Result<(Vec<Vec<f64>>, Vec<f64>, Vec<f64>)>;
-
 /// Calculates the distance between a maxima and its nearest atom.
 /// Chunk represents a collection of bader maxima positions withing the density
 /// array.
@@ -123,54 +120,110 @@ pub fn assign_maxima(maxima: &[isize],
 }
 
 /// Sums the densities of each Bader volume.
-pub fn sum_bader_densities(densities: &[Vec<f64>],
-                           voxel_map: &impl VoxelMap,
-                           atoms: &Atoms,
-                           threads: usize,
-                           maxima_len: usize,
-                           progress_bar: Bar)
-                           -> ChargeSumResult {
+pub fn calculate_bader_density(density: &[f64],
+                               voxel_map: &impl VoxelMap,
+                               atoms: &Atoms,
+                               threads: usize,
+                               progress_bar: Bar)
+                               -> Box<[f64]> {
     let pbar = &progress_bar;
-    let mut surface_distance = vec![f64::INFINITY; atoms.positions.len()];
-    let mut bader_charge = vec![vec![0.0; densities.len()]; maxima_len];
-    let mut bader_volume = vec![0.0; maxima_len];
+    let mut bader_density = vec![0.0; atoms.positions.len() + 1];
     let vm = &voxel_map;
     // Calculate the size of the vector to be passed to each thread.
     let chunk_size =
-        (densities[0].len() / threads) + (densities[0].len() % threads).min(1);
+        (density.len() / threads) + (density.len() % threads).min(1);
+    thread::scope(|s| {
+        let spawned_threads =
+            voxel_map.maxima_chunks(chunk_size)
+                     .enumerate()
+                     .map(|(index, chunk)| {
+                         s.spawn(move |_| {
+                              let mut bd = vec![0.0; atoms.positions.len() + 1];
+                              chunk.iter()
+                                   .enumerate()
+                                   .for_each(|(voxel_index, maxima)| {
+                                       let p =
+                                           index * chunk.len() + voxel_index;
+                                       match vm.maxima_to_voxel(*maxima) {
+                                           Voxel::Maxima(m) => {
+                                               bd[m] += density[p];
+                                           }
+                                           Voxel::Boundary(weights) => {
+                                               for weight in weights.iter() {
+                                                   let m = *weight as usize;
+                                                   let w = weight - (m as f64);
+                                                   bd[m] += w * density[p];
+                                               }
+                                           }
+                                           Voxel::Vacuum => {
+                                               bd[atoms.positions.len()] +=
+                                                   density[p]
+                                           }
+                                       };
+                                       pbar.tick();
+                                   });
+                              bd
+                          })
+                     })
+                     .collect::<Vec<_>>();
+        // Join each thread and collect the results.
+        // If one thread terminates before the other this is not operated on first.
+        // Either use the sorted index to remove vacuum from the summation or
+        // find a way to operate on finshed threads first (ideally both).
+        for thread in spawned_threads {
+            if let Ok(tmp_bd) = thread.join() {
+                bader_density.iter_mut()
+                             .zip(tmp_bd.into_iter())
+                             .for_each(|(a, b)| {
+                                 *a += b;
+                             });
+            } else {
+                panic!("Unable to join thread in sum_bader_densities.")
+            };
+        }
+    }).unwrap();
+    // The distance isn't square rooted in the calcation of distance to save time.
+    // As we need to filter out the infinite distances (atoms with no assigned maxima)
+    // we can square root here also.
+    bader_density.iter_mut().for_each(|a| {
+                                *a *= voxel_map.grid_get().voxel_lattice.volume;
+                            });
+    bader_density.into()
+}
+
+/// Calculates the volume and radius of each Bader atom.
+pub fn calculate_bader_volume_radius(density: &[f64],
+                                     voxel_map: &impl VoxelMap,
+                                     atoms: &Atoms,
+                                     threads: usize,
+                                     progress_bar: Bar)
+                                     -> (Box<[f64]>, Box<[f64]>) {
+    let pbar = &progress_bar;
+    let mut bader_radius = vec![f64::INFINITY; atoms.positions.len()];
+    let mut bader_volume = vec![0.0; atoms.positions.len() + 1];
+    let vm = &voxel_map;
+    // Calculate the size of the vector to be passed to each thread.
+    let chunk_size =
+        (density.len() / threads) + (density.len() % threads).min(1);
     thread::scope(|s| {
         let spawned_threads =
             voxel_map.maxima_chunks(chunk_size)
                      .enumerate()
                      .map(|(index, chunk)| s.spawn(move |_| {
-                         let mut bc = vec![vec![0.0; densities.len()]; maxima_len];
-                         let mut bv = vec![0.0; maxima_len];
-                         let mut sd = vec![f64::INFINITY; atoms.positions.len()];
+                         let mut br = vec![f64::INFINITY; atoms.positions.len()];
+                         let mut bv = vec![0.0; atoms.positions.len() + 1];
                          chunk.iter()
                               .enumerate()
                               .for_each(|(voxel_index, maxima)| {
                                   let p = index * chunk.len() + voxel_index;
                                   match vm.maxima_to_voxel(*maxima) {
-                                      Voxel::Maxima(m) => {
-                                          bc[m].iter_mut()
-                                              .zip(densities)
-                                              .for_each(|(c, density)| {
-                                                  *c += density[p];
-                                              });
-                                          bv[m] += 1.0;
-                                      },
                                       Voxel::Boundary(weights) => {
                                           for weight in weights.iter() {
                                               let m = *weight as usize;
                                               let w = weight - (m as f64);
-                                              bc[m].iter_mut()
-                                                  .zip(densities)
-                                                  .for_each(|(c, density)| {
-                                                      *c += density[p] * w;
-                                                  });
                                               bv[m] += w;
                                               let atom_number = vm.maxima_to_atom(m);
-                                              let md = &mut sd[atom_number];
+                                              let mr = &mut br[atom_number];
                                               let p_c = vm.grid_get().to_cartesian(p as isize);
                                               let mut p_lll_f = utils::dot(p_c, atoms.reduced_lattice.to_fractional);
                                               for f in &mut p_lll_f {
@@ -192,17 +245,18 @@ pub fn sum_bader_densities(densities: &[Vec<f64>],
                                                              - (atom[2] + atom_shift[2]))
                                                                                          .powi(2)
                                                   };
-                                                  if distance < *md {
-                                                      *md = distance;
+                                                  if distance < *mr {
+                                                      *mr = distance;
                                                   }
                                               }
                                           }
                                       },
-                                      Voxel::Vacuum => (),
+                                      Voxel::Maxima(m) => {bv[m] += 1.0;},
+                                      Voxel::Vacuum => {bv[atoms.positions.len()] += 1.0;},
                                   };
                                   pbar.tick();
                               });
-                        (bc, bv, sd)
+                        (bv, br)
                      }))
                      .collect::<Vec<_>>();
         // Join each thread and collect the results.
@@ -210,21 +264,14 @@ pub fn sum_bader_densities(densities: &[Vec<f64>],
         // Either use the sorted index to remove vacuum from the summation or
         // find a way to operate on finshed threads first (ideally both).
         for thread in spawned_threads {
-            if let Ok((tmp_bc, tmp_bv, tmp_sd)) = thread.join() {
-                for (bc, density) in
-                    bader_charge.iter_mut().zip(tmp_bc.into_iter())
-                {
-                    bc.iter_mut().zip(density.iter()).for_each(|(a, b)| {
-                                                         *a += b;
-                                                     });
-                }
+            if let Ok((tmp_bv, tmp_br)) = thread.join() {
                 bader_volume.iter_mut()
                             .zip(tmp_bv.into_iter())
                             .for_each(|(a, b)| {
                                 *a += b;
                             });
-                surface_distance.iter_mut()
-                                .zip(tmp_sd.into_iter())
+                bader_radius.iter_mut()
+                                .zip(tmp_br.into_iter())
                                 .for_each(|(a, b)| {
                                     *a = a.min(b);
                                 });
@@ -236,21 +283,13 @@ pub fn sum_bader_densities(densities: &[Vec<f64>],
     // The distance isn't square rooted in the calcation of distance to save time.
     // As we need to filter out the infinite distances (atoms with no assigned maxima)
     // we can square root here also.
-    for bc in bader_charge.iter_mut() {
-        bc.iter_mut().for_each(|a| {
-                         *a *= voxel_map.grid_get().voxel_lattice.volume;
-                     });
-    }
     bader_volume.iter_mut().for_each(|a| {
                                *a *= voxel_map.grid_get().voxel_lattice.volume;
                            });
-    surface_distance.iter_mut().for_each(|d| {
-                                   match (*d).partial_cmp(&f64::INFINITY) {
-                                       Some(std::cmp::Ordering::Less) => {
-                                           *d = d.powf(0.5)
-                                       }
-                                       _ => *d = 0.0,
-                                   }
-                               });
-    Ok((bader_charge, bader_volume, surface_distance))
+    bader_radius.iter_mut()
+                .for_each(|d| match (*d).partial_cmp(&f64::INFINITY) {
+                    Some(std::cmp::Ordering::Less) => *d = d.powf(0.5),
+                    _ => *d = 0.0,
+                });
+    (bader_volume.into(), bader_radius.into())
 }

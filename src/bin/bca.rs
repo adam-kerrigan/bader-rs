@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
-use bader::analysis::{assign_maxima, sum_bader_densities};
+use bader::analysis::{
+    assign_maxima, calculate_bader_density, calculate_bader_volume_radius,
+};
 use bader::arguments::{Args, ClapApp};
 use bader::io::{self, FileFormat, FileType, WriteType};
 use bader::methods::{maxima_finder, weight};
@@ -24,12 +26,6 @@ fn main() -> Result<()> {
     let reference = if rho.is_empty() { &densities[0] } else { &rho };
     let voxel_map =
         BlockingVoxelMap::new(grid, atoms.lattice.to_cartesian, voxel_origin);
-    let total_density = densities.iter()
-                                 .map(|d| {
-                                     d.iter().sum::<f64>()
-                                     * voxel_map.grid.voxel_lattice.volume
-                                 })
-                                 .collect::<Vec<f64>>();
     // create the index list which will tell us in which order to evaluate the
     // voxels
     let mut index: Vec<usize> = (0..voxel_map.grid.size.total).collect();
@@ -72,21 +68,29 @@ fn main() -> Result<()> {
                    args.threads,
                    args.weight_tolerance);
     // convert into a AtomVoxelMap as the map is filled and no longer needs to block
-    let (maxima_n, voxel_map): (usize, Box<dyn VoxelMap>) = {
-        (atoms.positions.len(),
-         Box::new(AtomVoxelMap::from_blocking_voxel_map(voxel_map)))
-    };
+    let voxel_map = Box::new(AtomVoxelMap::from_blocking_voxel_map(voxel_map));
     let pbar = Bar::visible(index.len() as u64,
                             100,
-                            String::from("Summing Densities: "));
+                            String::from("Calculating Volumes: "));
     // sum the densities and then write the charge partition files
-    let (atoms_density, atoms_volume, min_surf_dist) =
-        sum_bader_densities(&densities,
-                            &voxel_map,
-                            &atoms,
-                            args.threads,
-                            maxima_n,
-                            pbar)?;
+    let (atoms_volume, atoms_radius) =
+        calculate_bader_volume_radius(reference,
+                                      &voxel_map,
+                                      &atoms,
+                                      args.threads,
+                                      pbar);
+    let mut atoms_density =
+        vec![vec![0.0; densities.len()]; atoms_volume.len()];
+    densities.iter().enumerate().for_each(|(i, density)| {
+                                     let pbar = Bar::visible(index.len() as u64,
+                            100,
+                            String::from("Summing Densities: "));
+                                     atoms_density.iter_mut().zip(calculate_bader_density(density,
+                                                             &voxel_map,
+                                                             &atoms,
+                                                             args.threads,
+                                                             pbar).iter()).for_each(|(ad, bd)| ad[i] += bd);
+                                 });
     // prepare the positions for writing out
     let positions = atoms.positions
                          .iter()
@@ -96,11 +100,7 @@ fn main() -> Result<()> {
     let mut atoms_charge_file = io::output::partitions_file(positions,
                                                             &atoms_density,
                                                             &atoms_volume,
-                                                            &total_density,
-                                                            atoms.lattice
-                                                                 .volume,
-                                                            &min_surf_dist,
-                                                            None)?;
+                                                            &atoms_radius)?;
     atoms_charge_file.push_str(&format!("\n  Bader Maxima: {}\n  Boundary Voxels: {}\n  Total Voxels: {}",
                                             bader_maxima.len(),
                                             voxel_map.boundary_iter().len(),
