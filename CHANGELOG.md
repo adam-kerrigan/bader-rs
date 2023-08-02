@@ -1,4 +1,5 @@
 ## v0.5.0
+## v0.4.4
 ### Bug fix
 - Removed index deletion in maxima finding 
 ## v0.4.3
