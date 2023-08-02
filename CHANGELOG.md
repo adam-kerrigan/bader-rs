@@ -1,4 +1,6 @@
 ## v0.5.0
+### Bug fix
+- Removed index deletion in maxima finding 
 ## v0.4.3
 ### Changes
 - Removed the option to run at higher verbosities, will instead throw an error if maxima is far from atom.

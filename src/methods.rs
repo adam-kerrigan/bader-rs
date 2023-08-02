@@ -161,8 +161,11 @@ pub fn weight(density: &[f64],
                                            voxel_map,
                                            weight_tolerance)
                          {
+                             // Maxima should already be stored
                              WeightResult::Maxima => {
-                                 panic!("Found new maxima in voxel assigning.")
+                                 if voxel_map.maxima_check(p).is_none() {
+                                     panic!("Found new maxima in voxel assigning.")
+                                 }
                              }
                              WeightResult::Interior(maxima) => {
                                  voxel_map.maxima_store(p, maxima as isize);
@@ -211,7 +214,7 @@ pub fn weight(density: &[f64],
 }
 
 /// Find (and remove from a sorted index) the maxima within the charge density
-pub fn maxima_finder(index: &mut Vec<usize>,
+pub fn maxima_finder(index: &[usize],
                      density: &[f64],
                      voxel_map: &VoxelMap,
                      threads: usize,
@@ -223,10 +226,10 @@ pub fn maxima_finder(index: &mut Vec<usize>,
     let chunk_size = (index_len / threads) + (index_len % threads).min(1);
     thread::scope(|s| {
         // Identify all the maxima
-        let th = index.chunks_mut(chunk_size)
+        let th = index.chunks(chunk_size)
                       .map(|chunk| {
-                          s.spawn(move |_| {
-                               chunk.iter_mut()
+                          s.spawn(|_| {
+                               chunk.iter()
                                     .filter_map(|p| {
                                         // we have to tick first due to early return
                                         pbar.tick();
@@ -243,9 +246,7 @@ pub fn maxima_finder(index: &mut Vec<usize>,
                                         // if we made it this far we have a maxima
                                         // change this index to a value it could
                                         // never be and return it
-                                        let maxima = Some(*p as isize);
-                                        *p = index_len;
-                                        maxima
+                                        Some(*p as isize)
                                     })
                                     .collect::<Vec<isize>>()
                            })
@@ -259,7 +260,5 @@ pub fn maxima_finder(index: &mut Vec<usize>,
             };
         }
     }).unwrap();
-    // remove the index of the maxima
-    index.retain(|&i| i != index_len);
     Ok(bader_maxima)
 }
