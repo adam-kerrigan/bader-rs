@@ -40,7 +40,7 @@ fn main() -> Result<()> {
     let pbar =
         Bar::visible(index.len() as u64, 100, String::from("Maxima Finding: "));
     let bader_maxima =
-        maxima_finder(&mut index, reference, &voxel_map, args.threads, pbar)?;
+        maxima_finder(&index, reference, &voxel_map, args.threads, pbar)?;
     // Start a thread-safe progress bar and assign the maxima to atoms
     let pbar = Bar::visible(bader_maxima.len() as u64,
                             100,

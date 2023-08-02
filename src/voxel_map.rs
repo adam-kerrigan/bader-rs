@@ -120,6 +120,14 @@ impl BlockingVoxelMap {
         }
     }
 
+    /// Check if a maxima is stored
+    pub fn maxima_check(&self, p: isize) -> Option<isize> {
+        match self.voxel_map[p as usize].load(Ordering::Relaxed) {
+            -1 => None,
+            x => Some(x),
+        }
+    }
+
     /// Stores the maxima of voxel, p, in the voxel_map.
     pub fn maxima_store(&self, p: isize, maxima: isize) {
         self.voxel_map[p as usize].store(maxima, Ordering::Relaxed);
