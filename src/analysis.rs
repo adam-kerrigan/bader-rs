@@ -31,15 +31,9 @@ fn maxima_to_atom(chunk: &[isize],
                 atoms.reduced_lattice.cartesian_shift_matrix.iter()
             {
                 let distance = {
-                    (m_reduced_cartesian[0]
-                                        - (atom[0] + atom_shift[0]))
-                                                                    .powi(2)
-                                       + (m_reduced_cartesian[1]
-                                          - (atom[1] + atom_shift[1]))
-                                                                      .powi(2)
-                                       + (m_reduced_cartesian[2]
-                                          - (atom[2] + atom_shift[2]))
-                                                                      .powi(2)
+                    (m_reduced_cartesian[0] - (atom[0] + atom_shift[0])).powi(2)
+                        + (m_reduced_cartesian[1] - (atom[1] + atom_shift[1])).powi(2)
+                        + (m_reduced_cartesian[2] - (atom[2] + atom_shift[2])).powi(2)
                 };
                 if distance < min_distance {
                     min_distance = distance;
@@ -83,22 +77,20 @@ pub fn assign_maxima(maxima: &[isize],
             let chunk_size =
                 (maxima.len() / threads) + (maxima.len() % threads).min(1);
             thread::scope(|s| {
-                let spawned_threads =
-                    maxima.chunks(chunk_size)
-                          .enumerate()
-                          .map(|(index, chunk)| {
-                              s.spawn(move |_| {
-                                  match maxima_to_atom(chunk, atoms, grid, maximum_distance, pbar) {
-                                      Ok(result) => (result, index),
-                                      _ => panic!("Failed to match maxima to atom"),
-                                  }
-                               })
-                          })
-                          .collect::<Vec<_>>();
+                let spawned_threads = maxima
+                    .chunks(chunk_size)
+                    .enumerate()
+                    .map(|(index, chunk)| {
+                        s.spawn(move |_| {
+                            match maxima_to_atom(chunk, atoms, grid, maximum_distance, pbar) {
+                                Ok(result) => (result, index),
+                                _ => panic!("Failed to match maxima to atom"),
+                            }
+                        })
+                    })
+                    .collect::<Vec<_>>();
                 for thread in spawned_threads {
-                    if let Ok((ass_atom, chunk_index)) =
-                        thread.join()
-                    {
+                    if let Ok((ass_atom, chunk_index)) = thread.join() {
                         // is this required? is the collection of handles not
                         // already sorted like this, is it possible to join as
                         // they finish?
@@ -108,11 +100,12 @@ pub fn assign_maxima(maxima: &[isize],
                         panic!("Failed to join thread in assign maxima.")
                     };
                 }
-            }).unwrap();
+            })
+            .unwrap();
         }
         _ => {
-            let ass_atom =
-                maxima_to_atom(maxima, atoms, grid, maximum_distance, pbar).context("Failed to assign maxima to atom.")?;
+            let ass_atom = maxima_to_atom(maxima, atoms, grid, maximum_distance, pbar)
+                .context("Failed to assign maxima to atom.")?;
             assigned_atom = ass_atom;
         }
     }
@@ -121,7 +114,7 @@ pub fn assign_maxima(maxima: &[isize],
 
 /// Sums the densities of each Bader volume.
 pub fn calculate_bader_density(density: &[f64],
-                               voxel_map: &impl VoxelMap,
+                               voxel_map: &VoxelMap,
                                atoms: &Atoms,
                                threads: usize,
                                progress_bar: Bar)
@@ -192,94 +185,96 @@ pub fn calculate_bader_density(density: &[f64],
 }
 
 /// Calculates the volume and radius of each Bader atom.
-pub fn calculate_bader_volume_radius(density: &[f64],
-                                     voxel_map: &impl VoxelMap,
-                                     atoms: &Atoms,
-                                     threads: usize,
-                                     progress_bar: Bar)
-                                     -> (Box<[f64]>, Box<[f64]>) {
+pub fn calculate_bader_volumes_and_radii(voxel_map: &VoxelMap,
+                                         atoms: &Atoms,
+                                         threads: usize,
+                                         progress_bar: Bar)
+                                         -> (Box<[f64]>, Box<[f64]>) {
     let pbar = &progress_bar;
     let mut bader_radius = vec![f64::INFINITY; atoms.positions.len()];
     let mut bader_volume = vec![0.0; atoms.positions.len() + 1];
     let vm = &voxel_map;
     // Calculate the size of the vector to be passed to each thread.
-    let chunk_size =
-        (density.len() / threads) + (density.len() % threads).min(1);
+    let chunk_size = (voxel_map.maxima_len() / threads)
+                     + (voxel_map.maxima_len() % threads).min(1);
     thread::scope(|s| {
-        let spawned_threads =
-            voxel_map.maxima_chunks(chunk_size)
-                     .enumerate()
-                     .map(|(index, chunk)| s.spawn(move |_| {
-                         let mut br = vec![f64::INFINITY; atoms.positions.len()];
-                         let mut bv = vec![0.0; atoms.positions.len() + 1];
-                         chunk.iter()
-                              .enumerate()
-                              .for_each(|(voxel_index, maxima)| {
-                                  let p = index * chunk.len() + voxel_index;
-                                  match vm.maxima_to_voxel(*maxima) {
-                                      Voxel::Boundary(weights) => {
-                                          for weight in weights.iter() {
-                                              let m = *weight as usize;
-                                              let w = weight - (m as f64);
-                                              bv[m] += w;
-                                              let atom_number = vm.maxima_to_atom(m);
-                                              let mr = &mut br[atom_number];
-                                              let p_c = vm.grid_get().to_cartesian(p as isize);
-                                              let mut p_lll_f = utils::dot(p_c, atoms.reduced_lattice.to_fractional);
-                                              for f in &mut p_lll_f {
-                                                  *f = f.rem_euclid(1.);
-                                              }
-                                              let p_lll_c = utils::dot(p_lll_f, atoms.reduced_lattice.to_cartesian);
-                                              let atom = atoms.reduced_positions[atom_number];
-                                              for atom_shift in
-                                                  atoms.reduced_lattice.cartesian_shift_matrix.iter()
-                                              {
-                                                  let distance = {
-                                                      (p_lll_c[0]
-                                                           - (atom[0] + atom_shift[0]))
-                                                                                       .powi(2)
-                                                          + (p_lll_c[1]
-                                                             - (atom[1] + atom_shift[1]))
-                                                                                         .powi(2)
-                                                          + (p_lll_c[2]
-                                                             - (atom[2] + atom_shift[2]))
-                                                                                         .powi(2)
-                                                  };
-                                                  if distance < *mr {
-                                                      *mr = distance;
-                                                  }
-                                              }
-                                          }
-                                      },
-                                      Voxel::Maxima(m) => {bv[m] += 1.0;},
-                                      Voxel::Vacuum => {bv[atoms.positions.len()] += 1.0;},
-                                  };
-                                  pbar.tick();
-                              });
-                        (bv, br)
-                     }))
-                     .collect::<Vec<_>>();
+        let spawned_threads = voxel_map
+            .maxima_chunks(chunk_size)
+            .enumerate()
+            .map(|(index, chunk)| {
+                s.spawn(move |_| {
+                    let mut br = vec![f64::INFINITY; atoms.positions.len()];
+                    let mut bv = vec![0.0; atoms.positions.len() + 1];
+                    chunk.iter().enumerate().for_each(|(voxel_index, maxima)| {
+                        let p = index * chunk.len() + voxel_index;
+                        match vm.maxima_to_voxel(*maxima) {
+                            Voxel::Boundary(weights) => {
+                                for weight in weights.iter() {
+                                    let m = *weight as usize;
+                                    let w = weight - (m as f64);
+                                    bv[m] += w;
+                                    let atom_number = vm.maxima_to_atom(m);
+                                    let mr = &mut br[atom_number];
+                                    let p_c = vm.grid_get().to_cartesian(p as isize);
+                                    let mut p_lll_f =
+                                        utils::dot(p_c, atoms.reduced_lattice.to_fractional);
+                                    for f in &mut p_lll_f {
+                                        *f = f.rem_euclid(1.);
+                                    }
+                                    let p_lll_c =
+                                        utils::dot(p_lll_f, atoms.reduced_lattice.to_cartesian);
+                                    let atom = atoms.reduced_positions[atom_number];
+                                    for atom_shift in
+                                        atoms.reduced_lattice.cartesian_shift_matrix.iter()
+                                    {
+                                        let distance = {
+                                            (p_lll_c[0] - (atom[0] + atom_shift[0])).powi(2)
+                                                + (p_lll_c[1] - (atom[1] + atom_shift[1])).powi(2)
+                                                + (p_lll_c[2] - (atom[2] + atom_shift[2])).powi(2)
+                                        };
+                                        if distance < *mr {
+                                            *mr = distance;
+                                        }
+                                    }
+                                }
+                            }
+                            Voxel::Maxima(m) => {
+                                bv[m] += 1.0;
+                            }
+                            Voxel::Vacuum => {
+                                bv[atoms.positions.len()] += 1.0;
+                            }
+                        };
+                        pbar.tick();
+                    });
+                    (bv, br)
+                })
+            })
+            .collect::<Vec<_>>();
         // Join each thread and collect the results.
         // If one thread terminates before the other this is not operated on first.
         // Either use the sorted index to remove vacuum from the summation or
         // find a way to operate on finshed threads first (ideally both).
         for thread in spawned_threads {
             if let Ok((tmp_bv, tmp_br)) = thread.join() {
-                bader_volume.iter_mut()
-                            .zip(tmp_bv.into_iter())
-                            .for_each(|(a, b)| {
-                                *a += b;
-                            });
-                bader_radius.iter_mut()
-                                .zip(tmp_br.into_iter())
-                                .for_each(|(a, b)| {
-                                    *a = a.min(b);
-                                });
+                bader_volume
+                    .iter_mut()
+                    .zip(tmp_bv.into_iter())
+                    .for_each(|(a, b)| {
+                        *a += b;
+                    });
+                bader_radius
+                    .iter_mut()
+                    .zip(tmp_br.into_iter())
+                    .for_each(|(a, b)| {
+                        *a = a.min(b);
+                    });
             } else {
-                panic!("Unable to join thread in sum_bader_densities.")
+                panic!("Unable to join thread in calculate_bader_volumes_and_radii.")
             };
         }
-    }).unwrap();
+    })
+    .unwrap();
     // The distance isn't square rooted in the calcation of distance to save time.
     // As we need to filter out the infinite distances (atoms with no assigned maxima)
     // we can square root here also.
