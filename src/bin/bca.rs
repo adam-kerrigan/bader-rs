@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
 use bader::analysis::{
-    assign_maxima, calculate_bader_density, calculate_bader_volume_radius,
+    assign_maxima, calculate_bader_density, calculate_bader_volumes_and_radii,
 };
 use bader::arguments::{Args, ClapApp};
 use bader::io::{self, FileFormat, FileType, WriteType};
 use bader::methods::{maxima_finder, weight};
 use bader::progress::Bar;
 use bader::utils::vacuum_index;
-use bader::voxel_map::{AtomVoxelMap, BlockingVoxelMap, VoxelMap};
+use bader::voxel_map::{BlockingVoxelMap, VoxelMap};
 
 fn main() -> Result<()> {
     // argument parsing
@@ -67,18 +67,17 @@ fn main() -> Result<()> {
                    pbar,
                    args.threads,
                    args.weight_tolerance);
-    // convert into a AtomVoxelMap as the map is filled and no longer needs to block
-    let voxel_map = Box::new(AtomVoxelMap::from_blocking_voxel_map(voxel_map));
+    // convert into a VoxelMap as the map is filled and no longer needs to block
+    let voxel_map = Box::new(VoxelMap::from_blocking_voxel_map(voxel_map));
     let pbar = Bar::visible(index.len() as u64,
                             100,
                             String::from("Calculating Volumes: "));
     // sum the densities and then write the charge partition files
     let (atoms_volume, atoms_radius) =
-        calculate_bader_volume_radius(reference,
-                                      &voxel_map,
-                                      &atoms,
-                                      args.threads,
-                                      pbar);
+        calculate_bader_volumes_and_radii(&voxel_map,
+                                          &atoms,
+                                          args.threads,
+                                          pbar);
     let mut atoms_density =
         vec![vec![0.0; densities.len()]; atoms_volume.len()];
     densities.iter().enumerate().for_each(|(i, density)| {
@@ -103,7 +102,7 @@ fn main() -> Result<()> {
                                                             &atoms_radius)?;
     atoms_charge_file.push_str(&format!("\n  Bader Maxima: {}\n  Boundary Voxels: {}\n  Total Voxels: {}",
                                             bader_maxima.len(),
-                                            voxel_map.boundary_iter().len(),
+                                            voxel_map.weight_len(),
                                             reference.len()));
     // check that the write was successfull
     io::output::write(atoms_charge_file, String::from("ACF.dat"))?;
