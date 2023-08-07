@@ -1,4 +1,3 @@
-use anyhow::{Context, Result};
 use bader::analysis::{
     assign_maxima, calculate_bader_density, calculate_bader_volumes_and_radii,
 };
@@ -9,7 +8,7 @@ use bader::progress::Bar;
 use bader::utils::vacuum_index;
 use bader::voxel_map::{BlockingVoxelMap, VoxelMap};
 
-fn main() -> Result<()> {
+fn main() {
     // argument parsing
     let app = ClapApp::get();
     let args = Args::new(app.get_matches());
@@ -33,24 +32,37 @@ fn main() -> Result<()> {
              reference[*b].partial_cmp(&reference[*a]).unwrap()
          });
     // remove from the indices any voxel that is below the vacuum limit
-    index.truncate(vacuum_index(reference, &index, args.vacuum_tolerance)
-         .context("Failed to apply vacuum tolerance")?);
+    let vacuum_i = match vacuum_index(reference, &index, args.vacuum_tolerance)
+    {
+        Ok(i) => i,
+        Err(e) => panic!("{}", e),
+    };
+    index.truncate(vacuum_i);
     // find the maxima in the system and store them whilst removing them from
     // the index list
     let pbar =
         Bar::visible(index.len() as u64, 100, String::from("Maxima Finding: "));
     let bader_maxima =
-        maxima_finder(&index, reference, &voxel_map, args.threads, pbar)?;
+        maxima_finder(&index, reference, &voxel_map, args.threads, pbar);
     // Start a thread-safe progress bar and assign the maxima to atoms
     let pbar = Bar::visible(bader_maxima.len() as u64,
                             100,
                             String::from("Assigning to Atoms: "));
-    let atom_map = assign_maxima(&bader_maxima,
-                                 &atoms,
-                                 &voxel_map.grid,
-                                 &args.maximum_distance,
-                                 args.threads,
-                                 pbar)?;
+    let atom_map = match assign_maxima(&bader_maxima,
+                                       &atoms,
+                                       &voxel_map.grid,
+                                       &args.maximum_distance,
+                                       args.threads,
+                                       pbar)
+    {
+        Ok(v) => v,
+        Err(e) => panic!(
+            "\nBader maximum at {:#?}\n is too far away from nearest atom: {} with a distance of {} Ang.",
+            file_type.coordinate_format(e.maximum),
+            e.atom + 1,
+            e.distance,
+        )
+    };
     let pbar = Bar::visible(index.len() as u64,
                             100,
                             String::from("Bader Partitioning: "));
@@ -99,13 +111,15 @@ fn main() -> Result<()> {
     let mut atoms_charge_file = io::output::partitions_file(positions,
                                                             &atoms_density,
                                                             &atoms_volume,
-                                                            &atoms_radius)?;
+                                                            &atoms_radius);
     atoms_charge_file.push_str(&format!("\n  Bader Maxima: {}\n  Boundary Voxels: {}\n  Total Voxels: {}",
                                             bader_maxima.len(),
                                             voxel_map.weight_len(),
                                             reference.len()));
     // check that the write was successfull
-    io::output::write(atoms_charge_file, String::from("ACF.dat"))?;
+    if io::output::write(atoms_charge_file, String::from("ACF.dat")).is_err() {
+        panic!("Error in writing ACF.dat")
+    }
     // Prepare to write any densities that have been requested.
     let filename = match densities.len().cmp(&2) {
         std::cmp::Ordering::Less => vec![String::from("charge")],
@@ -156,5 +170,4 @@ fn main() -> Result<()> {
                      }
                  });
     });
-    Ok(())
 }

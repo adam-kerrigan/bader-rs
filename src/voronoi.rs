@@ -23,6 +23,8 @@ impl Voronoi {
     }
 
     /// Calculates the Voronoi vectors and their alphas from a reduced basis.
+    /// As the volume is identical for each cell alpha is effectively the area of the facet divided
+    /// by the length of the vector.
     fn voronoi_vectors(lll: &ReducedLattice) -> (Vec<Vec<usize>>, Vec<f64>) {
         // allocate the storage for voronoi vectors and flux coefficients
         let mut vectors = Vec::<Vec<usize>>::with_capacity(14);
@@ -33,7 +35,7 @@ impl Voronoi {
         let mut vector_mag = [0f64; 3];
         // allocate the plane vectors for each voronoi vector
         let mut rx = [0f64; 3];
-        // calculate the reduced lattice
+        // calculate the Voronoi vertices by intersections of 3 planes
         'vector: for vec_i in 0..26 {
             let c_shift = lll.cartesian_shift_matrix[vec_i];
             vector_basis[0][..3].clone_from_slice(&c_shift[..3]);
@@ -46,38 +48,33 @@ impl Voronoi {
                     let c_neigh_b = lll.cartesian_shift_matrix[neigh_b];
                     vector_basis[2][..3].clone_from_slice(&c_neigh_b[..3]);
                     vector_mag[2] = vdot(c_neigh_b, c_neigh_b) * 0.5;
-                    match invert_lattice(&vector_basis) {
-                        Ok(vector_inv) => {
-                            let mut vertex = [0f64; 3];
-                            for i in 0..3 {
-                                vertex[i] = vdot(vector_mag, vector_inv[i])
-                            }
-                            for cell_check in lll.cartesian_shift_matrix.iter()
-                            {
-                                let vector_2 =
-                                    0.5 * vdot(*cell_check, *cell_check);
-                                if vdot(vertex, *cell_check) > vector_2 + 1E-8 {
-                                    continue 'neigh_b;
-                                }
-                            }
-                            let vertex_mag = vdot(vertex, vertex);
-                            if (vertex_mag - 0.25 * vdot(c_shift, c_shift))
-                                .abs()
-                                < 1E-8
-                            {
-                                vertices.clear();
-                                continue 'vector;
-                            } else if vertex_mag > 0. {
-                                vertices.push(vertex);
+                    if let Some(vector_inv) = invert_lattice(&vector_basis) {
+                        let mut vertex = [0f64; 3];
+                        for i in 0..3 {
+                            vertex[i] = vdot(vector_mag, vector_inv[i])
+                        }
+                        for cell_check in lll.cartesian_shift_matrix.iter() {
+                            let vector_2 = 0.5 * vdot(*cell_check, *cell_check);
+                            if vdot(vertex, *cell_check) > vector_2 + 1E-8 {
+                                continue 'neigh_b;
                             }
                         }
-                        Err(_) => continue 'neigh_b,
+                        let vertex_mag = vdot(vertex, vertex);
+                        if (vertex_mag - 0.25 * vdot(c_shift, c_shift)).abs()
+                           < 1E-8
+                        {
+                            vertices.clear();
+                            continue 'vector;
+                        } else if vertex_mag > 0. {
+                            vertices.push(vertex);
+                        }
                     }
                 }
             }
             if vertices.is_empty() {
                 continue 'vector;
             }
+            // order them for calculating the area
             rx[..3].clone_from_slice(&vertices[0][..3]);
             let r_coeff = vdot(rx, c_shift) / vdot(c_shift, c_shift);
             for (i, c_shift) in c_shift.iter().enumerate() {
@@ -100,6 +97,9 @@ impl Voronoi {
                         }
                     });
             let num_vertices = vertices.len();
+            // calculate the area of the facet and divide by the length, this is the same as
+            // summing the triple product of the Voronoi vector and pairs of vertices that make up
+            // the facet to build twice (triangle not parallelogram) total volume
             let alpha = vertices.iter()
                                 .enumerate()
                                 .map(|(i, v)| {
