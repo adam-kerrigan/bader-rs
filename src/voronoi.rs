@@ -58,6 +58,8 @@ impl Voronoi {
                         {
                             vertices.clear();
                             continue 'vector;
+                        } else if vertex_mag < f64::EPSILON {
+                            continue 'neigh_b;
                         }
                         // is this vertex inside the Voronoi volume, project along every lll vector
                         // and compare to vector * vector / 2 if higher then outside Voronoi volume
