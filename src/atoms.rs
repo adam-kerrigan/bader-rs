@@ -127,8 +127,8 @@ impl Lattice {
             distance_matrix[i] = utils::norm(shift_matrix[i]);
         }
         let to_fractional = match utils::invert_lattice(&lattice) {
-            Ok(inv) => inv,
-            Err(e) => panic!("{}", e),
+            Some(inv) => inv,
+            None => panic!("Supplied lattice does not span 3d space."),
         };
         let to_cartesian = lattice;
         let volume = {

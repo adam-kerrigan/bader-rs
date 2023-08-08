@@ -1,4 +1,3 @@
-use anyhow::Result;
 use std::fs::File;
 use std::io::Write;
 
@@ -7,7 +6,7 @@ pub fn partitions_file(positions: Vec<(String, String, String)>,
                        partitioned_density: &[Vec<f64>],
                        partitioned_volume: &[f64],
                        radius: &[f64])
-                       -> Result<String> {
+                       -> String {
     // calculate the total density for each density supplied
     let total_density: Vec<f64> =
         partitioned_density.iter().fold(vec![
@@ -22,6 +21,7 @@ pub fn partitions_file(positions: Vec<(String, String, String)>,
                                                });
                                             sum
                                         });
+    // the last value is is the vacuum and it has definitely been added
     let vacuum_density = partitioned_density.last().unwrap();
     let total_partitioned_density = total_density.iter()
                                                  .zip(vacuum_density)
@@ -29,9 +29,9 @@ pub fn partitions_file(positions: Vec<(String, String, String)>,
                                                  .collect::<Vec<f64>>();
     // the volume is the same for all densities
     let total_volume: f64 = partitioned_volume.iter().sum();
+    // the last value is is the vacuum and it has definitely been added
     let vacuum_volume = *partitioned_volume.last().unwrap();
     let total_partitioned_volume = total_volume - vacuum_volume;
-    // which charge file to write, if there's an atom_map -> BCF
     let mut table = Table::new(partitioned_density[0].len());
     let mut index = 1;
     positions.into_iter()
@@ -42,10 +42,10 @@ pub fn partitions_file(positions: Vec<(String, String, String)>,
                  table.add_row(index, coord, density, *volume, *radius);
                  index += 1;
              });
-    Ok(table.get_string(vacuum_density,
-                        vacuum_volume,
-                        &total_partitioned_density,
-                        total_partitioned_volume))
+    table.get_string(vacuum_density,
+                     vacuum_volume,
+                     &total_partitioned_density,
+                     total_partitioned_volume)
 }
 
 /// Enum of available tables.

@@ -6,6 +6,8 @@
 - removed the VoxelMap triat.
 - Changed the name of VoxelMap.boundary_iter() to VoxelMap.weight_iter().
 - Added VoxelMap.maxima_len() and VoxelMap.weight_len().
+- Removed anyhow for the error management.
+- Changed the return of invert_lattice to Option as there is only one way it can fail.
 ## v0.4.4
 ### Bug fix
 - Removed index deletion in maxima finding.

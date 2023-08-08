@@ -1,6 +1,5 @@
 use crate::progress::Bar;
 use crate::voxel_map::BlockingVoxelMap as VoxelMap;
-use anyhow::Result;
 use atomic_counter::{AtomicCounter, RelaxedCounter};
 use crossbeam_utils::thread;
 use rustc_hash::FxHashMap;
@@ -219,7 +218,7 @@ pub fn maxima_finder(index: &[usize],
                      voxel_map: &VoxelMap,
                      threads: usize,
                      progress_bar: Bar)
-                     -> Result<Vec<isize>> {
+                     -> Vec<isize> {
     let mut bader_maxima = Vec::<isize>::new();
     let pbar = &progress_bar;
     let index_len = index.len();
@@ -259,6 +258,6 @@ pub fn maxima_finder(index: &[usize],
                 panic!("Failed to join thread in maxima finder.")
             };
         }
-    }).unwrap();
-    Ok(bader_maxima)
+    }).unwrap(); // There is no panic option in the threads that isn't covered
+    bader_maxima
 }

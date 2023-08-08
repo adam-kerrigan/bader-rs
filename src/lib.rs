@@ -80,6 +80,8 @@ pub mod arguments;
 /// [ReducedLattice](atoms::ReducedLattice) for storing information about the
 /// cell in which the density is stored.
 pub mod atoms;
+/// Provides custom errors types.
+pub mod errors;
 /// Contains [Grid](grid::Grid) for managing the movement around the grid on
 /// which the density is stored.
 pub mod grid;

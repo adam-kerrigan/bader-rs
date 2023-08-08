@@ -1,6 +1,6 @@
-use anyhow::{bail, Result};
+use crate::errors::VacuumError;
 
-/// compute the dot product between a vector and a matrix
+/// compute the cross product between two vectors
 pub fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [a[1] * b[2] - a[2] * b[1],
      a[2] * b[0] - a[0] * b[2],
@@ -17,16 +17,17 @@ pub fn dot(v: [f64; 3], m: [[f64; 3]; 3]) -> [f64; 3] {
 
 /// compute the dot product between two vectors
 pub fn vdot(a: [f64; 3], b: [f64; 3]) -> f64 {
-    let mut out = 0f64;
-    for i in 0..3 {
-        out += a[i] * b[i]
-    }
-    out
+    a.iter().zip(b.iter()).map(|(a, b)| a * b).sum()
 }
 
 /// compute the norm of a vector
 pub fn norm(a: [f64; 3]) -> f64 {
     a.iter().map(|a| a.powi(2)).sum::<f64>().powf(0.5)
+}
+
+/// compute the sum of two vectors
+pub fn vsum(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 }
 
 /// compute M.T * M
@@ -42,31 +43,38 @@ pub fn transpose_square(m: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
       vdot([m[0][2], m[1][2], m[2][2]], [m[0][2], m[1][2], m[2][2]])]]
 }
 
-/// calculates the inverse of a 3x3 lattice
-pub fn invert_lattice(lattice: &[[f64; 3]; 3]) -> Result<[[f64; 3]; 3]> {
+/// calculates the inverse of a 3x3 lattice if it is invertible
+pub fn invert_lattice(lattice: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
     let minor00 = lattice[1][1] * lattice[2][2] - lattice[1][2] * lattice[2][1];
     let minor01 = lattice[1][0] * lattice[2][2] - lattice[1][2] * lattice[2][0];
     let minor02 = lattice[1][0] * lattice[2][1] - lattice[1][1] * lattice[2][0];
     let determinant = lattice[0][0] * minor00 - lattice[0][1] * minor01
                       + lattice[0][2] * minor02;
-    if determinant.abs() < 1e-16 {
-        bail!("Lattice doesn't span 3D space.")
+    // a determinant of zero is not invertible
+    if determinant.abs() < f64::EPSILON {
+        None
     } else {
-        Ok([[minor00 / determinant,
-             (lattice[0][2] * lattice[2][1] - lattice[2][2] * lattice[0][1])
-             / determinant,
-             (lattice[0][1] * lattice[1][2] - lattice[1][1] * lattice[0][2])
-             / determinant],
-            [-minor01 / determinant,
-             (lattice[0][0] * lattice[2][2] - lattice[2][0] * lattice[0][2])
-             / determinant,
-             (lattice[0][2] * lattice[1][0] - lattice[1][2] * lattice[0][0])
-             / determinant],
-            [minor02 / determinant,
-             (lattice[0][1] * lattice[2][0] - lattice[2][1] * lattice[0][0])
-             / determinant,
-             (lattice[0][0] * lattice[1][1] - lattice[1][0] * lattice[0][1])
-             / determinant]])
+        Some([[minor00 / determinant,
+               (lattice[0][2] * lattice[2][1]
+                - lattice[2][2] * lattice[0][1])
+               / determinant,
+               (lattice[0][1] * lattice[1][2]
+                - lattice[1][1] * lattice[0][2])
+               / determinant],
+              [-minor01 / determinant,
+               (lattice[0][0] * lattice[2][2]
+                - lattice[2][0] * lattice[0][2])
+               / determinant,
+               (lattice[0][2] * lattice[1][0]
+                - lattice[1][2] * lattice[0][0])
+               / determinant],
+              [minor02 / determinant,
+               (lattice[0][1] * lattice[2][0]
+                - lattice[2][1] * lattice[0][0])
+               / determinant,
+               (lattice[0][0] * lattice[1][1]
+                - lattice[1][0] * lattice[0][1])
+               / determinant]])
     }
 }
 
@@ -74,7 +82,7 @@ pub fn invert_lattice(lattice: &[[f64; 3]; 3]) -> Result<[[f64; 3]; 3]> {
 pub fn vacuum_index(density: &[f64],
                     index: &[usize],
                     tolerance: Option<f64>)
-                    -> Result<usize> {
+                    -> Result<usize, VacuumError> {
     match tolerance {
         Some(tol) => {
             for (i, p) in index.iter().rev().enumerate() {
@@ -82,11 +90,8 @@ pub fn vacuum_index(density: &[f64],
                     return Ok(index.len() - i);
                 }
             }
-            bail!(
-                "Vacuum tolerance ({}) is higher than maximum value of density ({}).",
-                tol,
-                density[index[0]]
-            )
+            Err(VacuumError { vacuum_tolerance: tol,
+                              density: density[index[0]] })
         }
         None => Ok(index.len()),
     }
@@ -98,9 +103,9 @@ mod tests {
 
     #[test]
     fn utils_dot() {
-        assert_eq!(dot([1., 2., 3.],
-                       [[1., 0., 0.], [0., 2., 0.], [0., 0., 3.]]),
-                   [1., 4., 9.])
+        assert_eq!(dot([0.5, 0.5, 0.5],
+                       [[1., 0., 0.], [1., 2., 0.], [2., 2., 4.]]),
+                   [2., 2., 2.])
     }
 
     #[test]

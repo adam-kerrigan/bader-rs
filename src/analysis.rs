@@ -1,9 +1,9 @@
 use crate::atoms::Atoms;
+use crate::errors::MaximaError;
 use crate::grid::Grid;
 use crate::progress::Bar;
 use crate::utils;
 use crate::voxel_map::{Voxel, VoxelMap};
-use anyhow::{bail, Context, Result};
 use crossbeam_utils::thread;
 
 /// Calculates the distance between a maxima and its nearest atom.
@@ -14,7 +14,7 @@ fn maxima_to_atom(chunk: &[isize],
                   grid: &Grid,
                   maximum_distance: &f64,
                   progress_bar: &Bar)
-                  -> Result<Vec<usize>> {
+                  -> Result<Vec<usize>, MaximaError> {
     let chunk_size = chunk.len();
     // create vectors for storing the assigned atom and distance for each maxima
     let mut ass_atom = Vec::with_capacity(chunk_size);
@@ -42,14 +42,9 @@ fn maxima_to_atom(chunk: &[isize],
             }
         }
         if min_distance.powf(0.5) > *maximum_distance {
-            bail!(
-                "Bader maximum ({}, {}, {}) is too far from nearest atom ({}): {} Ang",
-                m_cartesian[0],
-                m_cartesian[1],
-                m_cartesian[2],
-                atom_num + 1,
-                min_distance.powf(0.5),
-            )
+            return Err(MaximaError { maximum: m_cartesian,
+                                     atom: atom_num,
+                                     distance: min_distance.powf(0.5) });
         }
         // remember to square root the distance
         ass_atom.push(atom_num);
@@ -67,8 +62,7 @@ pub fn assign_maxima(maxima: &[isize],
                      maximum_distance: &f64,
                      threads: usize,
                      progress_bar: Bar)
-                     -> Result<Vec<usize>> {
-    let mut assigned_atom = vec![0; maxima.len()];
+                     -> Result<Vec<usize>, MaximaError> {
     let pbar = &progress_bar;
     // this is basically a thread handling function for running the
     // maxima_to_atom function
@@ -77,39 +71,39 @@ pub fn assign_maxima(maxima: &[isize],
             let chunk_size =
                 (maxima.len() / threads) + (maxima.len() % threads).min(1);
             thread::scope(|s| {
-                let spawned_threads = maxima
-                    .chunks(chunk_size)
-                    .enumerate()
-                    .map(|(index, chunk)| {
-                        s.spawn(move |_| {
-                            match maxima_to_atom(chunk, atoms, grid, maximum_distance, pbar) {
-                                Ok(result) => (result, index),
-                                _ => panic!("Failed to match maxima to atom"),
-                            }
-                        })
-                    })
-                    .collect::<Vec<_>>();
+                let mut assigned_atom = vec![0; maxima.len()];
+                let spawned_threads = maxima.chunks(chunk_size)
+                                            .enumerate()
+                                            .map(|(index, chunk)| {
+                                                s.spawn(move |_| {
+                                                     (maxima_to_atom(chunk,
+                                                  atoms,
+                                                  grid,
+                                                  maximum_distance,
+                                                  pbar), index)
+                                                 })
+                                            })
+                                            .collect::<Vec<_>>();
                 for thread in spawned_threads {
-                    if let Ok((ass_atom, chunk_index)) = thread.join() {
+                    if let Ok((result, chunk_index)) = thread.join() {
                         // is this required? is the collection of handles not
                         // already sorted like this, is it possible to join as
                         // they finish?
+                        let ass_atom = match result {
+                            Ok(v) => v,
+                            Err(e) => return Err(e),
+                        };
                         let i = chunk_index * chunk_size;
                         assigned_atom.splice(i..(i + ass_atom.len()), ass_atom);
                     } else {
                         panic!("Failed to join thread in assign maxima.")
                     };
                 }
-            })
-            .unwrap();
+                Ok(assigned_atom)
+            }).unwrap()
         }
-        _ => {
-            let ass_atom = maxima_to_atom(maxima, atoms, grid, maximum_distance, pbar)
-                .context("Failed to assign maxima to atom.")?;
-            assigned_atom = ass_atom;
-        }
+        _ => maxima_to_atom(maxima, atoms, grid, maximum_distance, pbar),
     }
-    Ok(assigned_atom)
 }
 
 /// Sums the densities of each Bader volume.
