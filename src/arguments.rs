@@ -20,7 +20,7 @@ impl ClapApp {
     pub fn get() -> Command {
         Command::new("Multi-threaded Bader Charge Analysis")
             .author(crate_authors!())
-            .version("0.4.4")
+            .version("0.4.5")
             .arg(Arg::new("file")
                 .required(true)
                 .index(1)

@@ -68,7 +68,7 @@ checksum = "62f447d68cfa5a9ab0c1c862a703da2a65b5ed1b7ce1153c9eb0169506d56019"
 
 [[package]]
 name = "bader"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "atomic-counter",
  "clap",
