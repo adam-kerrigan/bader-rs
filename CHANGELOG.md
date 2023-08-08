@@ -1,4 +1,5 @@
 ## v0.5.0
+## v0.4.5
 ### Changes
 - Removed the need of passing a density to the calculate_bader_volume_radius function.
 - Changed the name of calculate_bader_volume_radius to calculate_bader_volumes_and_radii.
