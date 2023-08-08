@@ -31,60 +31,62 @@ impl Voronoi {
         let mut alphas = Vec::<f64>::with_capacity(14);
         // allocate the vertex storage and vector/matrix for calculating them
         let mut vertices = Vec::<[f64; 3]>::with_capacity(28);
-        let mut vector_basis = [[0f64; 3]; 3];
         let mut vector_mag = [0f64; 3];
         // allocate the plane vectors for each voronoi vector
         let mut rx = [0f64; 3];
-        // calculate the Voronoi vertices by intersections of 3 planes
+        // find the vertices for each plane by solving 3-way intersections between the plane and
+        // every other plane pair and then checking if it falls within the Voronoi volume
         'vector: for vec_i in 0..26 {
-            let c_shift = lll.cartesian_shift_matrix[vec_i];
-            vector_basis[0][..3].clone_from_slice(&c_shift[..3]);
-            vector_mag[0] = vdot(c_shift, c_shift) * 0.5;
+            let n = lll.cartesian_shift_matrix[vec_i];
+            vector_mag[0] = vdot(n, n) * 0.5;
             for neigh_a in 0..26 {
-                let c_neigh_a = lll.cartesian_shift_matrix[neigh_a];
-                vector_basis[1][..3].clone_from_slice(&c_neigh_a[..3]);
-                vector_mag[1] = vdot(c_neigh_a, c_neigh_a) * 0.5;
+                let r1 = lll.cartesian_shift_matrix[neigh_a];
+                vector_mag[1] = vdot(r1, r1) * 0.5;
                 'neigh_b: for neigh_b in (neigh_a + 1)..26 {
-                    let c_neigh_b = lll.cartesian_shift_matrix[neigh_b];
-                    vector_basis[2][..3].clone_from_slice(&c_neigh_b[..3]);
-                    vector_mag[2] = vdot(c_neigh_b, c_neigh_b) * 0.5;
-                    if let Some(vector_inv) = invert_lattice(&vector_basis) {
+                    let r2 = lll.cartesian_shift_matrix[neigh_b];
+                    vector_mag[2] = vdot(r2, r2) * 0.5;
+                    // If not invertable then no crossing point
+                    if let Some(vector_inv) = invert_lattice(&[n, r1, r2]) {
                         let mut vertex = [0f64; 3];
                         for i in 0..3 {
                             vertex[i] = vdot(vector_mag, vector_inv[i])
                         }
-                        for cell_check in lll.cartesian_shift_matrix.iter() {
-                            let vector_2 = 0.5 * vdot(*cell_check, *cell_check);
-                            if vdot(vertex, *cell_check) > vector_2 + 1E-8 {
-                                continue 'neigh_b;
-                            }
-                        }
+                        // Check that the vertex isn't on the orginal vector which would make all
+                        // vertices apart from this one outside the Voronoi volume
                         let vertex_mag = vdot(vertex, vertex);
-                        if (vertex_mag - 0.25 * vdot(c_shift, c_shift)).abs()
-                           < 1E-8
+                        if (vertex_mag - 0.25 * vdot(n, n)).abs() < f64::EPSILON
                         {
                             vertices.clear();
                             continue 'vector;
-                        } else if vertex_mag > 0. {
-                            vertices.push(vertex);
                         }
+                        // is this vertex inside the Voronoi volume, project along every lll vector
+                        // and compare to vector * vector / 2 if higher then outside Voronoi volume
+                        for s in lll.cartesian_shift_matrix.iter() {
+                            let ss2 = 0.5 * vdot(*s, *s);
+                            if vdot(vertex, *s) > ss2 + f64::EPSILON {
+                                continue 'neigh_b;
+                            }
+                        }
+                        vertices.push(vertex);
                     }
                 }
             }
+            // if the current vector does not form the Voronoi bounding planes then skip
             if vertices.is_empty() {
                 continue 'vector;
             }
-            // order them for calculating the area
+            // order the vertices by projecting on to an orthogonal basis that is itself orthogonal
+            // to n for calculating the area
             rx[..3].clone_from_slice(&vertices[0][..3]);
-            let r_coeff = vdot(rx, c_shift) / vdot(c_shift, c_shift);
-            for (i, c_shift) in c_shift.iter().enumerate() {
-                rx[i] -= c_shift * r_coeff;
+            let r_coeff = vdot(rx, n) / vdot(n, n);
+            for (i, n) in n.iter().enumerate() {
+                rx[i] -= n * r_coeff;
             }
             let r_coeff = vdot(rx, rx).powf(-0.5);
             for rx in &mut rx {
                 *rx *= r_coeff;
             }
-            let mut ry = cross(c_shift, rx);
+            let mut ry = cross(n, rx);
             let r_coeff = vdot(ry, ry).powf(-0.5);
             for ry in &mut ry {
                 *ry *= r_coeff;
@@ -100,17 +102,15 @@ impl Voronoi {
             // calculate the area of the facet and divide by the length, this is the same as
             // summing the triple product of the Voronoi vector and pairs of vertices that make up
             // the facet to build twice (triangle not parallelogram) total volume
-            let alpha = vertices.iter()
-                                .enumerate()
-                                .map(|(i, v)| {
-                                    vdot(*v,
-                                         cross(vertices
-                                                   [(i + 1) % num_vertices],
-                                               c_shift))
-                                })
-                                .sum::<f64>()
-                        / (2. * vdot(c_shift, c_shift));
-            if alpha.abs() < 1E-8 {
+            let alpha =
+                vertices.iter()
+                        .enumerate()
+                        .map(|(i, v)| {
+                            vdot(*v, cross(vertices[(i + 1) % num_vertices], n))
+                        })
+                        .sum::<f64>()
+                / (2. * vdot(n, n));
+            if alpha.abs() < f64::EPSILON {
                 vertices.clear();
                 continue 'vector;
             }
