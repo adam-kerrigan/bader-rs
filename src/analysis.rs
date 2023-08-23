@@ -1,6 +1,7 @@
 use crate::atoms::Atoms;
 use crate::errors::MaximaError;
 use crate::grid::Grid;
+use crate::methods::laplacian;
 use crate::progress::Bar;
 use crate::utils;
 use crate::voxel_map::{Voxel, VoxelMap};
@@ -169,9 +170,7 @@ pub fn calculate_bader_density(density: &[f64],
             };
         }
     }).unwrap();
-    // The distance isn't square rooted in the calcation of distance to save time.
-    // As we need to filter out the infinite distances (atoms with no assigned maxima)
-    // we can square root here also.
+    // The final result needs to be converted to a charge rather than a density.
     bader_density.iter_mut().for_each(|a| {
                                 *a *= voxel_map.grid_get().voxel_lattice.volume;
                             });
@@ -281,4 +280,71 @@ pub fn calculate_bader_volumes_and_radii(voxel_map: &VoxelMap,
                     _ => *d = 0.0,
                 });
     (bader_volume.into(), bader_radius.into())
+}
+
+/// calcuate the error associated with each atom from the Laplacian
+pub fn calculate_bader_error(density: &[f64],
+                             voxel_map: &VoxelMap,
+                             atoms: &Atoms,
+                             threads: usize,
+                             progress_bar: Bar)
+                             -> Box<[f64]> {
+    let pbar = &progress_bar;
+    let mut bader_error = vec![0.0; atoms.positions.len() + 1];
+    let vm = &voxel_map;
+    // Calculate the size of the vector to be passed to each thread.
+    let chunk_size =
+        (density.len() / threads) + (density.len() % threads).min(1);
+    thread::scope(|s| {
+        let spawned_threads =
+            voxel_map.maxima_chunks(chunk_size)
+                     .enumerate()
+                     .map(|(index, chunk)| {
+                         s.spawn(move |_| {
+                              let mut bd = vec![0.0; atoms.positions.len() + 1];
+                              chunk.iter()
+                                   .enumerate()
+                                   .for_each(|(voxel_index, maxima)| {
+                                       let p =
+                                           index * chunk.len() + voxel_index;
+                                       let lapl =
+                                           laplacian(p, density, voxel_map);
+                                       match vm.maxima_to_voxel(*maxima) {
+                                           Voxel::Maxima(m) => {
+                                               bd[m] += lapl;
+                                           }
+                                           Voxel::Boundary(weights) => {
+                                               for weight in weights.iter() {
+                                                   let m = *weight as usize;
+                                                   let w = weight - (m as f64);
+                                                   bd[m] += w * lapl;
+                                               }
+                                           }
+                                           Voxel::Vacuum => {
+                                               bd[atoms.positions.len()] += lapl
+                                           }
+                                       };
+                                       pbar.tick();
+                                   });
+                              bd
+                          })
+                     })
+                     .collect::<Vec<_>>();
+        // Join each thread and collect the results.
+        // If one thread terminates before the other this is not operated on first.
+        // Either use the sorted index to remove vacuum from the summation or
+        // find a way to operate on finshed threads first (ideally both).
+        for thread in spawned_threads {
+            if let Ok(tmp_bd) = thread.join() {
+                bader_error.iter_mut()
+                           .zip(tmp_bd.into_iter())
+                           .for_each(|(a, b)| {
+                               *a += b;
+                           });
+            } else {
+                panic!("Unable to join thread in sum_bader_densities.")
+            };
+        }
+    }).unwrap();
+    bader_error.into()
 }

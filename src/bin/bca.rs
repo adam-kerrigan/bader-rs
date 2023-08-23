@@ -1,5 +1,6 @@
 use bader::analysis::{
-    assign_maxima, calculate_bader_density, calculate_bader_volumes_and_radii,
+    assign_maxima, calculate_bader_density, calculate_bader_error,
+    calculate_bader_volumes_and_radii,
 };
 use bader::arguments::{Args, ClapApp};
 use bader::io::{self, FileFormat, FileType, WriteType};
@@ -102,6 +103,14 @@ fn main() {
                                                              args.threads,
                                                              pbar).iter()).for_each(|(ad, bd)| ad[i] += bd);
                                  });
+    let pbar = Bar::visible(reference.len() as u64,
+                            100,
+                            String::from("Calculating Errors: "));
+    let atoms_error = calculate_bader_error(reference,
+                                            &voxel_map,
+                                            &atoms,
+                                            args.threads,
+                                            pbar);
     // prepare the positions for writing out
     let positions = atoms.positions
                          .iter()
@@ -111,7 +120,8 @@ fn main() {
     let mut atoms_charge_file = io::output::partitions_file(positions,
                                                             &atoms_density,
                                                             &atoms_volume,
-                                                            &atoms_radius);
+                                                            &atoms_radius,
+                                                            &atoms_error);
     atoms_charge_file.push_str(&format!("\n  Bader Maxima: {}\n  Boundary Voxels: {}\n  Total Voxels: {}",
                                             bader_maxima.len(),
                                             voxel_map.weight_len(),

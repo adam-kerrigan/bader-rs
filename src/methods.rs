@@ -1,5 +1,5 @@
 use crate::progress::Bar;
-use crate::voxel_map::BlockingVoxelMap as VoxelMap;
+use crate::voxel_map::{BlockingVoxelMap, VoxelMap};
 use atomic_counter::{AtomicCounter, RelaxedCounter};
 use crossbeam_utils::thread;
 use rustc_hash::FxHashMap;
@@ -53,7 +53,7 @@ pub enum WeightResult {
 /// ```
 pub fn weight_step(p: isize,
                    density: &[f64],
-                   voxel_map: &VoxelMap,
+                   voxel_map: &BlockingVoxelMap,
                    weight_tolerance: f64)
                    -> WeightResult {
     let control = density[p as usize];
@@ -133,7 +133,7 @@ pub fn weight_step(p: isize,
 /// Note: This function will deadlock if the points above it have no associated
 /// maxima in [`VoxelMap.voxel_map`]. As such make sure index is sorted.
 pub fn weight(density: &[f64],
-              voxel_map: &VoxelMap,
+              voxel_map: &BlockingVoxelMap,
               index: &[usize],
               progress_bar: Bar,
               threads: usize,
@@ -215,7 +215,7 @@ pub fn weight(density: &[f64],
 /// Find (and remove from a sorted index) the maxima within the charge density
 pub fn maxima_finder(index: &[usize],
                      density: &[f64],
-                     voxel_map: &VoxelMap,
+                     voxel_map: &BlockingVoxelMap,
                      threads: usize,
                      progress_bar: Bar)
                      -> Vec<isize> {
@@ -260,4 +260,15 @@ pub fn maxima_finder(index: &[usize],
         }
     }).unwrap(); // There is no panic option in the threads that isn't covered
     bader_maxima
+}
+
+/// Calculate the Laplacian of the density at a point in the grid
+pub fn laplacian(p: usize, density: &[f64], voxel_map: &VoxelMap) -> f64 {
+    let mut flux = 0.0;
+    let grid = &voxel_map.grid;
+    let rho = density[p];
+    for (pt, alpha) in grid.voronoi_shifts(p as isize) {
+        flux += alpha * (density[pt as usize] - rho);
+    }
+    flux / grid.voronoi.volume
 }
