@@ -1,4 +1,6 @@
 ## v0.5.0
+### Changes
+- Voronoi now stores the volume of the Voronoi cell.
 ## v0.4.5
 ### Changes
 - Removed the need of passing a density to the calculate_bader_volume_radius function.
