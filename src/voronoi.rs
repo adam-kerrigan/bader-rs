@@ -8,6 +8,8 @@ pub struct Voronoi {
     /// The alphas associated with each Voronoi vector.
     /// alphas are used to multiply the charge difference by to calculate flux.
     pub alphas: Vec<f64>,
+    /// The volume of the Voronoi cell.
+    pub volume: f64,
     /// The LLL-reduced lattice for the voxel basis.
     pub lll_lattice: ReducedLattice,
 }
@@ -16,19 +18,22 @@ impl Voronoi {
     /// Generates a Voronoi struct from a [`Lattice`].
     pub fn new(lattice: &Lattice) -> Self {
         let lll_lattice = ReducedLattice::from_lattice(lattice);
-        let (vectors, alphas) = Voronoi::voronoi_vectors(&lll_lattice);
+        let (vectors, alphas, volume) = Voronoi::voronoi_vectors(&lll_lattice);
         Self { vectors,
                alphas,
+               volume,
                lll_lattice }
     }
 
     /// Calculates the Voronoi vectors and their alphas from a reduced basis.
     /// As the volume is identical for each cell alpha is effectively the area of the facet divided
     /// by the length of the vector.
-    fn voronoi_vectors(lll: &ReducedLattice) -> (Vec<Vec<usize>>, Vec<f64>) {
+    fn voronoi_vectors(lll: &ReducedLattice)
+                       -> (Vec<Vec<usize>>, Vec<f64>, f64) {
         // allocate the storage for voronoi vectors and flux coefficients
         let mut vectors = Vec::<Vec<usize>>::with_capacity(14);
         let mut alphas = Vec::<f64>::with_capacity(14);
+        let mut volume = 0f64;
         // allocate the vertex storage and vector/matrix for calculating them
         let mut vertices = Vec::<[f64; 3]>::with_capacity(28);
         let mut vector_mag = [0f64; 3];
@@ -101,29 +106,33 @@ impl Voronoi {
                         }
                     });
             let num_vertices = vertices.len();
-            // calculate the area of the facet and divide by the length, this is the same as
-            // summing the triple product of the Voronoi vector and pairs of vertices that make up
-            // the facet to build twice (triangle not parallelogram) total volume
-            let alpha =
+            // calculate the area of the facet and divide by the length
+            // first calculate the volume of the tetrahedron of v[i], v[i+1] & n/2. This is the
+            // scalar tripple product of the vectors divided by 6. The volume is for the Laplacian
+            // calculation later
+            let wedge_volume =
                 vertices.iter()
                         .enumerate()
                         .map(|(i, v)| {
                             vdot(*v, cross(vertices[(i + 1) % num_vertices], n))
                         })
                         .sum::<f64>()
-                / (2. * vdot(n, n));
-            if alpha.abs() < f64::EPSILON {
+                / 12f64;
+            if wedge_volume.abs() < f64::EPSILON {
                 vertices.clear();
                 continue 'vector;
             }
-
+            // now we need to turn the volume into an area and divide by |n|
+            // V = Ah/3 where h = n/2
+            let alpha = 6f64 * wedge_volume / vdot(n, n);
             vectors.push(lll.shift_matrix[vec_i].clone());
             alphas.push(alpha);
+            volume += wedge_volume;
             vertices.clear();
         }
         vectors.shrink_to_fit();
         alphas.shrink_to_fit();
-        (vectors, alphas)
+        (vectors, alphas, volume)
     }
 }
 

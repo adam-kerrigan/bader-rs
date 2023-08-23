@@ -1,4 +1,8 @@
 ## v0.5.0
+### Changes
+- Voronoi now stores the volume of the Voronoi cell.
+- Added a method for calculating the Laplacian at a point.
+- Added way to calculate the error in the partitioning from the Laplacian.
 ## v0.4.5
 ### Changes
 - Removed the need of passing a density to the calculate_bader_volume_radius function.

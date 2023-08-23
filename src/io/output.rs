@@ -5,7 +5,8 @@ use std::io::Write;
 pub fn partitions_file(positions: Vec<(String, String, String)>,
                        partitioned_density: &[Vec<f64>],
                        partitioned_volume: &[f64],
-                       radius: &[f64])
+                       radius: &[f64],
+                       errors: &[f64])
                        -> String {
     // calculate the total density for each density supplied
     let total_density: Vec<f64> =
@@ -38,8 +39,9 @@ pub fn partitions_file(positions: Vec<(String, String, String)>,
              .zip(partitioned_density)
              .zip(partitioned_volume)
              .zip(radius)
-             .for_each(|(((coord, density), volume), radius)| {
-                 table.add_row(index, coord, density, *volume, *radius);
+             .zip(errors)
+             .for_each(|((((coord, density), volume), radius), error)| {
+                 table.add_row(index, coord, density, *volume, *radius, *error);
                  index += 1;
              });
     table.get_string(vacuum_density,
@@ -70,7 +72,7 @@ impl Table {
     /// Creates a new structure and sets the minimum widths of each.
     fn new(density_num: usize) -> Self {
         let rows = vec![Vec::with_capacity(0)];
-        let mut column_width = Vec::with_capacity(6 + density_num);
+        let mut column_width = Vec::with_capacity(7 + density_num);
         column_width.push(1);
         column_width.push(1);
         column_width.push(1);
@@ -87,6 +89,7 @@ impl Table {
         };
         column_width.push(6);
         column_width.push(8);
+        column_width.push(6);
         Self { column_width,
                density_num,
                rows }
@@ -98,7 +101,8 @@ impl Table {
                p: (String, String, String),
                density: &[f64],
                volume: f64,
-               distance: f64) {
+               distance: f64,
+               error: f64) {
         let mut row: Vec<String> = Vec::with_capacity(6 + self.density_num);
         row.push(format!("{}", index));
         row.push(p.0);
@@ -107,6 +111,7 @@ impl Table {
         density.iter().for_each(|d| row.push(format!("{:.6}", d)));
         row.push(format!("{:.6}", volume));
         row.push(format!("{:.6}", distance));
+        row.push(format!("{:.6}", error));
         for (i, col) in row.iter().enumerate() {
             self.column_width[i] = self.column_width[i].max(col.len());
         }
@@ -197,8 +202,11 @@ impl Table {
         header.push_str(&format!(" {:^width$} |",
                                  "Volume",
                                  width = iter.next().unwrap()));
-        header.push_str(&format!(" {:^width$}\n",
+        header.push_str(&format!(" {:^width$} |",
                                  "Distance",
+                                 width = iter.next().unwrap()));
+        header.push_str(&format!(" {:^width$}\n",
+                                 "Error",
                                  width = iter.next().unwrap()));
         header
     }
