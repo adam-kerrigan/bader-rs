@@ -15,7 +15,7 @@ keywords = ["Analysis", "Materials_Science", "Physics", "Chemistry", "Multi-Thre
 
 [dependencies]
 regex = "1.6.0"
-clap = {version = "4.3.24", features = ["cargo"]}
+clap = {version = "4.4.0", features = ["cargo"]}
 indicatif = "0.17.6"
 atomic-counter = "1.0.1"
 num_cpus = "1.13.0"
