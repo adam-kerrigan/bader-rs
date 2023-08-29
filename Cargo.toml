@@ -14,7 +14,7 @@ keywords = ["Analysis", "Materials_Science", "Physics", "Chemistry", "Multi-Thre
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-regex = "1.6.0"
+regex = "1.9.4"
 clap = {version = "4.3.24", features = ["cargo"]}
 indicatif = "0.17.6"
 atomic-counter = "1.0.1"
