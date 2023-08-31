@@ -2,7 +2,8 @@ use bader::analysis::{
     assign_maxima, calculate_bader_density, calculate_bader_error,
     calculate_bader_volumes_and_radii,
 };
-use bader::arguments::{Args, ClapApp};
+use bader::arguments::App;
+use bader::errors::ArgumentError;
 use bader::io::{self, FileFormat, FileType, WriteType};
 use bader::methods::{maxima_finder, weight};
 use bader::progress::Bar;
@@ -10,12 +11,27 @@ use bader::utils::vacuum_index;
 use bader::voxel_map::{BlockingVoxelMap, VoxelMap};
 
 fn main() {
+    // print the splash
+    let version = env!("CARGO_PKG_VERSION");
+    let authors = env!("CARGO_PKG_AUTHORS");
+    let description = env!("CARGO_PKG_DESCRIPTION");
+    println!("{}: v{}\nWritten by: {}", description, version, authors);
     // argument parsing
-    let app = ClapApp::get();
-    let args = Args::new(app.get_matches());
-    // print splash
-    println!("Multi-threaded Bader Charge Analysis ({})",
-             env!("CARGO_PKG_VERSION"));
+    let app = App::new();
+    let env_args = std::env::args().collect::<Vec<String>>();
+    let args =
+        match app.parse_args(env_args.iter().map(|s| s.as_str()).collect()) {
+            Ok(a) => a,
+            Err(e) => match e {
+                ArgumentError::ShortHelp(_)
+                | ArgumentError::LongHelp(_)
+                | ArgumentError::NoFile(_) => {
+                    println!("{}", e);
+                    return;
+                }
+                _ => panic!("{}", e),
+            },
+        };
     // read the input files into a densities vector and a Grid struct
     let file_type: Box<dyn FileFormat> = match args.file_type {
         FileType::Vasp => Box::new(io::vasp::Vasp {}),

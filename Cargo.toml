@@ -4,7 +4,7 @@ version = "0.4.5"
 authors = ["Adam Kerrigan <ak1014@york.ac.uk>"]
 edition = "2021"
 rust-version = "1.64.0"
-description = "Grid based Bader charge partitioning"
+description = "Multi-threaded Bader Charge Analysis"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/adam-kerrigan/bader-rs"
@@ -15,7 +15,6 @@ keywords = ["Analysis", "Materials_Science", "Physics", "Chemistry", "Multi-Thre
 
 [dependencies]
 regex = "1.9.4"
-clap = {version = "4.3.24", features = ["cargo"]}
 indicatif = "0.17.6"
 atomic-counter = "1.0.1"
 num_cpus = "1.13.0"
