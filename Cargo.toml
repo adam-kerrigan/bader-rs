@@ -15,7 +15,7 @@ keywords = ["Analysis", "Materials_Science", "Physics", "Chemistry", "Multi-Thre
 
 [dependencies]
 regex = "1.9.4"
-indicatif = "0.17.6"
+indicatif = "0.17.7"
 atomic-counter = "1.0.1"
 num_cpus = "1.13.0"
 crossbeam-utils = "0.8.12"
