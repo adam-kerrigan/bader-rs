@@ -3,9 +3,10 @@
 - Voronoi now stores the volume of the Voronoi cell.
 - Added a method for calculating the Laplacian at a point.
 - Added way to calculate the error in the partitioning from the Laplacian.
-- Removed clap as a dependancy
-- Changed the flags for file type to -f --file_type from -t --type
-- Changed the short flag for threads to -t from -J
+- Removed clap as a dependancy.
+- Changed the flags for file type to -f --file_type from -t --type.
+- Changed the short flag for threads to -t from -J.
+- Finally dealing with saddle points in the charge density.
 ## v0.4.5
 ### Changes
 - Removed the need of passing a density to the calculate_bader_volume_radius function.

@@ -1,3 +1,4 @@
+use rustc_hash::FxHashMap;
 use std::fs::File;
 use std::io::Write;
 
@@ -48,6 +49,36 @@ pub fn partitions_file(positions: Vec<(String, String, String)>,
                      vacuum_volume,
                      &total_partitioned_density,
                      total_partitioned_volume)
+}
+
+pub fn bonds_file(bonds: &[FxHashMap<(usize, usize), f64>]) -> String {
+    let mut text =
+        String::with_capacity(58
+                              * (bonds.iter().map(|m| m.len()).sum::<usize>()
+                                 + bonds.len()
+                                 + 1)
+                              + bonds.len() * 2
+                              - 1);
+    text.push_str("                    | Atom Number |   Image  |   Strength");
+    let len = text.len() + 2;
+    for (atom_num, bond) in bonds.iter().enumerate() {
+        text.push_str(format!("\n-Atom: {:-<width$}",
+                              atom_num + 1,
+                              width = len - 7).as_str());
+        for ((atom, image), strength) in bond.iter() {
+            text.push_str(format!("\n                    |{:^width$}",
+                                  atom + 1,
+                                  width = 13).as_str());
+            let x = (image / 9) as isize - 1;
+            let y = (image / 3).rem_euclid(3) as isize - 1;
+            let z = image.rem_euclid(3) as isize - 1;
+            let position = format!("{:>2} {:>2} {:>2}", x, y, z);
+            text.push_str(format!("|{:^width$}", position, width = 10).as_str());
+            text.push_str(format!("|{:>width$.6}", strength, width = 11).as_str());
+        }
+    }
+    text.shrink_to_fit();
+    text
 }
 
 /// Enum of available tables.

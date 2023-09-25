@@ -6,13 +6,24 @@ pub fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
      a[2] * b[0] - a[0] * b[2],
      a[0] * b[1] - a[1] * b[0]]
 }
+
 /// compute the dot product between a vector and a matrix
 pub fn dot(v: [f64; 3], m: [[f64; 3]; 3]) -> [f64; 3] {
-    let mut out = [0f64; 3];
-    for (i, out) in out.iter_mut().enumerate() {
-        *out = v[0] * m[0][i] + v[1] * m[1][i] + v[2] * m[2][i]
-    }
-    out
+    (0..3).map(|i| (v[0] * m[0][i] + v[1] * m[1][i] + v[2] * m[2][i]))
+          .collect::<Vec<f64>>()
+          .try_into()
+          .unwrap() // safe to unwrap as is size 3
+}
+
+/// compute the integer dot product between a vector and a matrix
+pub fn idot(v: [f64; 3], m: [[f64; 3]; 3]) -> [isize; 3] {
+    (0..3).map(|i| {
+              (v[0] * m[0][i] + v[1] * m[1][i] + v[2] * m[2][i]).round()
+              as isize
+          })
+          .collect::<Vec<isize>>()
+          .try_into()
+          .unwrap() // safe to unwrap as is size 3
 }
 
 /// compute the dot product between two vectors
@@ -51,7 +62,7 @@ pub fn invert_lattice(lattice: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
     let determinant = lattice[0][0] * minor00 - lattice[0][1] * minor01
                       + lattice[0][2] * minor02;
     // a determinant of zero is not invertible
-    if determinant.abs() < f64::EPSILON {
+    if determinant.abs() <= f64::EPSILON {
         None
     } else {
         Some([[minor00 / determinant,
