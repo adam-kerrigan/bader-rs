@@ -1,5 +1,6 @@
+use crate::grid::Grid;
 use crate::progress::Bar;
-use crate::voxel_map::{BlockingVoxelMap, VoxelMap};
+use crate::voxel_map::BlockingVoxelMap;
 use atomic_counter::{AtomicCounter, RelaxedCounter};
 use crossbeam_utils::thread;
 use rustc_hash::FxHashMap;
@@ -49,7 +50,7 @@ pub enum WeightResult {
 ///     WeightResult::Saddle(weights) => weights,
 ///     _ => Vec::with_capacity(0).into(),
 /// };
-/// assert_eq!(weight, vec![62.625, 61.375].into())
+/// assert_eq!(weight, vec![61.375, 62.625].into())
 /// ```
 pub fn weight_step(p: isize,
                    density: &[f64],
@@ -71,6 +72,7 @@ pub fn weight_step(p: isize,
             let rho = charge_diff * alpha;
             let maxima = voxel_map.maxima_get(pt);
             match maxima.cmp(&-1) {
+                // feeds into already weighted voxel therefore not a saddle point
                 std::cmp::Ordering::Less => {
                     saddle_flag = false;
                     let point_weights = voxel_map.weight_get(maxima);
@@ -81,37 +83,40 @@ pub fn weight_step(p: isize,
                         *weight += w * rho;
                     }
                 }
+                // interior point
                 std::cmp::Ordering::Greater => {
                     let weight = weights.entry(maxima as usize).or_insert(0.);
                     *weight += rho;
                 }
+                // going into vacuum (this is be impossible)
                 std::cmp::Ordering::Equal => (),
             }
             t_sum += rho;
         }
     }
-    // Sort the weights, if they exist, by the most probable.
     match weights.len().cmp(&1) {
+        // more than one weight is a boundary or saddle (if the weight is weighty enough)
         std::cmp::Ordering::Greater => {
             let mut total = 0.;
-            let mut weights = weights.into_iter()
-                                     .filter_map(|(maxima, weight)| {
-                                         let weight = weight / t_sum;
-                                         if weight > weight_tolerance {
-                                             total += weight;
-                                             Some((maxima, weight))
-                                         } else {
-                                             None
-                                         }
-                                     })
-                                     .collect::<Vec<(usize, f64)>>();
-            if weights.len() > 1 {
-                weights.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-                // re-adjust the weights
+            // remove weuights below the tolerance
+            let weights = weights.into_iter()
+                                 .filter_map(|(maxima, weight)| {
+                                     let weight = weight / t_sum;
+                                     if weight > weight_tolerance {
+                                         total += weight;
+                                         Some((maxima, weight))
+                                     } else {
+                                         None
+                                     }
+                                 })
+                                 .collect::<Vec<(usize, f64)>>();
+            // still more than one weight then readjust the weights so that they sum to 1
+            if let std::cmp::Ordering::Greater = weights.len().cmp(&1) {
                 let weights =
                     weights.iter()
                            .map(|(maxima, w)| *maxima as f64 + w / total)
                            .collect::<Box<[f64]>>();
+                // check if saddle point
                 if saddle_flag {
                     WeightResult::Saddle(weights)
                 } else {
@@ -121,9 +126,11 @@ pub fn weight_step(p: isize,
                 WeightResult::Interior(weights[0].0)
             }
         }
+        // only feeds one atom means interior voxel
         std::cmp::Ordering::Equal => {
             WeightResult::Interior(*weights.keys().next().unwrap())
         }
+        // no flux out means maximum
         std::cmp::Ordering::Less => WeightResult::Maxima,
     }
 }
@@ -138,15 +145,14 @@ pub fn weight(density: &[f64],
               progress_bar: Bar,
               threads: usize,
               weight_tolerance: f64)
-              -> FxHashMap<isize, Box<[usize]>> {
+              -> Vec<isize> {
     let counter = RelaxedCounter::new(0);
-    let mut saddle_points = FxHashMap::<isize, Box<[usize]>>::default();
+    let mut saddle_points = vec![];
     thread::scope(|s| {
         // Assign the remaining voxels to Bader maxima
         let th = (0..threads).map(|_| {
                                  s.spawn(|_| {
-                     let mut saddles =
-                         FxHashMap::<isize, Box<[usize]>>::default();
+                     let mut saddles = vec![];
                      loop {
                          let p = {
                              let i = counter.inc();
@@ -179,10 +185,6 @@ pub fn weight(density: &[f64],
                                  voxel_map.weight_store(p, i);
                              }
                              WeightResult::Saddle(weights) => {
-                                 saddles.insert(p,
-                                                weights.iter()
-                                                       .map(|f| *f as usize)
-                                                       .collect());
                                  let i = {
                                      let mut weight = voxel_map.lock();
                                      let i = weight.len();
@@ -190,6 +192,7 @@ pub fn weight(density: &[f64],
                                      i
                                  };
                                  voxel_map.weight_store(p, i);
+                                 saddles.push(p);
                              }
                          }
                          progress_bar.tick();
@@ -263,9 +266,8 @@ pub fn maxima_finder(index: &[usize],
 }
 
 /// Calculate the Laplacian of the density at a point in the grid
-pub fn laplacian(p: usize, density: &[f64], voxel_map: &VoxelMap) -> f64 {
+pub fn laplacian(p: usize, density: &[f64], grid: &Grid) -> f64 {
     let mut flux = 0.0;
-    let grid = &voxel_map.grid;
     let rho = density[p];
     for (pt, alpha) in grid.voronoi_shifts(p as isize) {
         flux += alpha * (density[pt as usize] - rho);

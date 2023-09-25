@@ -1,6 +1,6 @@
 use bader::analysis::{
     assign_maxima, calculate_bader_density, calculate_bader_error,
-    calculate_bader_volumes_and_radii,
+    calculate_bader_volumes_and_radii, calculate_bond_strengths,
 };
 use bader::arguments::App;
 use bader::errors::ArgumentError;
@@ -13,9 +13,8 @@ use bader::voxel_map::{BlockingVoxelMap, VoxelMap};
 fn main() {
     // print the splash
     let version = env!("CARGO_PKG_VERSION");
-    let authors = env!("CARGO_PKG_AUTHORS");
     let description = env!("CARGO_PKG_DESCRIPTION");
-    println!("{}: v{}\nWritten by: {}", description, version, authors);
+    println!("{}: v{}", description, version);
     // argument parsing
     let app = App::new();
     let env_args = std::env::args().collect::<Vec<String>>();
@@ -90,12 +89,12 @@ fn main() {
                                                               as isize);
                                    });
     // calculate the weights leave the saddles for now
-    let _ = weight(reference,
-                   &voxel_map,
-                   &index,
-                   pbar,
-                   args.threads,
-                   args.weight_tolerance);
+    let saddles = weight(reference,
+                         &voxel_map,
+                         &index,
+                         pbar,
+                         args.threads,
+                         args.weight_tolerance);
     // convert into a VoxelMap as the map is filled and no longer needs to block
     let voxel_map = Box::new(VoxelMap::from_blocking_voxel_map(voxel_map));
     let pbar = Bar::visible(index.len() as u64,
@@ -127,6 +126,11 @@ fn main() {
                                             &atoms,
                                             args.threads,
                                             pbar);
+    let pbar = Bar::visible(saddles.len() as u64,
+                            100,
+                            String::from("Calculating Bond Strength: "));
+    let bonds =
+        calculate_bond_strengths(&saddles, reference, &atoms, &voxel_map, pbar);
     // prepare the positions for writing out
     let positions = atoms.positions
                          .iter()
@@ -145,6 +149,10 @@ fn main() {
     // check that the write was successfull
     if io::output::write(atoms_charge_file, String::from("ACF.dat")).is_err() {
         panic!("Error in writing ACF.dat")
+    }
+    let bonds_file = io::output::bonds_file(&bonds);
+    if io::output::write(bonds_file, String::from("BF.dat")).is_err() {
+        panic!("Error in writing BF.dat")
     }
     // Prepare to write any densities that have been requested.
     let filename = match densities.len().cmp(&2) {

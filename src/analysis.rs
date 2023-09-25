@@ -3,9 +3,9 @@ use crate::errors::MaximaError;
 use crate::grid::Grid;
 use crate::methods::laplacian;
 use crate::progress::Bar;
-use crate::utils;
 use crate::voxel_map::{Voxel, VoxelMap};
 use crossbeam_utils::thread;
+use rustc_hash::FxHashMap;
 
 /// Calculates the distance between a maxima and its nearest atom.
 /// Chunk represents a collection of bader maxima positions withing the density
@@ -22,14 +22,15 @@ fn maxima_to_atom(chunk: &[isize],
     for m in chunk.iter() {
         // convert the point first to cartesian, then to the reduced basis
         let m_cartesian = grid.to_cartesian(*m);
-        let m_reduced_cartesian = atoms.reduced_lattice.to_reduced(m_cartesian);
+        let m_reduced_cartesian =
+            atoms.lattice.cartesian_to_reduced(m_cartesian);
         let mut atom_num = 0;
         let mut min_distance = f64::INFINITY;
         // go through each atom in the reduced basis and shift in each
         // reduced direction, save the atom with the shortest distance
         for (i, atom) in atoms.reduced_positions.iter().enumerate() {
             for atom_shift in
-                atoms.reduced_lattice.cartesian_shift_matrix.iter()
+                atoms.lattice.reduced_cartesian_shift_matrix.iter()
             {
                 let distance = {
                     (m_reduced_cartesian[0] - (atom[0] + atom_shift[0])).powi(2)
@@ -209,16 +210,10 @@ pub fn calculate_bader_volumes_and_radii(voxel_map: &VoxelMap,
                                     let atom_number = vm.maxima_to_atom(m);
                                     let mr = &mut br[atom_number];
                                     let p_c = vm.grid_get().to_cartesian(p as isize);
-                                    let mut p_lll_f =
-                                        utils::dot(p_c, atoms.reduced_lattice.to_fractional);
-                                    for f in &mut p_lll_f {
-                                        *f = f.rem_euclid(1.);
-                                    }
-                                    let p_lll_c =
-                                        utils::dot(p_lll_f, atoms.reduced_lattice.to_cartesian);
+                                    let p_lll_c = atoms.lattice.cartesian_to_reduced(p_c);
                                     let atom = atoms.reduced_positions[atom_number];
                                     for atom_shift in
-                                        atoms.reduced_lattice.cartesian_shift_matrix.iter()
+                                        atoms.lattice.reduced_cartesian_shift_matrix.iter()
                                     {
                                         let distance = {
                                             (p_lll_c[0] - (atom[0] + atom_shift[0])).powi(2)
@@ -308,7 +303,7 @@ pub fn calculate_bader_error(density: &[f64],
                                        let p =
                                            index * chunk.len() + voxel_index;
                                        let lapl =
-                                           laplacian(p, density, voxel_map);
+                                           laplacian(p, density, &vm.grid);
                                        match vm.maxima_to_voxel(*maxima) {
                                            Voxel::Maxima(m) => {
                                                bd[m] += lapl;
@@ -347,4 +342,75 @@ pub fn calculate_bader_error(density: &[f64],
         }
     }).unwrap();
     bader_error.into()
+}
+
+pub fn calculate_bond_strengths(saddles: &[isize],
+                                density: &[f64],
+                                atoms: &Atoms,
+                                voxel_map: &VoxelMap,
+                                progress_bar: Bar)
+                                -> Vec<FxHashMap<(usize, usize), f64>> {
+    let pbar = &progress_bar;
+    let mut bonds = vec![
+        FxHashMap::<(usize, usize), f64>::default();
+        atoms.positions.len()
+    ];
+    saddles.iter().for_each(|p| {
+                      let lapl =
+                          laplacian(*p as usize, density, voxel_map.grid_get());
+                      let p_lll =
+                          atoms.lattice
+                               .cartesian_to_reduced(voxel_map.grid.to_cartesian(*p));
+                      let atom_nums =
+                          if let Voxel::Boundary(weights) = voxel_map.voxel_get(*p) {
+                              weights.iter()
+                                       .map(|w| {
+                                           let n = *w as usize;
+                                           let atom = atoms.reduced_positions[n];
+                                           let mut min_distance = f64::INFINITY;
+                                           let mut atom_image = 0;
+                                           for (i, atom_shift) in
+                                               atoms.lattice.reduced_cartesian_shift_matrix.iter().enumerate()
+                                           {
+                                               let distance = {
+                                                   (p_lll[0] - (atom[0] + atom_shift[0])).powi(2)
+                                                       + (p_lll[1] - (atom[1] + atom_shift[1])).powi(2)
+                                                       + (p_lll[2] - (atom[2] + atom_shift[2])).powi(2)
+                                               };
+                                               if distance < min_distance {
+                                                   min_distance = distance;
+                                                   atom_image = i;
+                                               }
+                                           }
+                                           (n, atom_image)
+                                       })
+                                       .collect::<Vec<(usize, usize)>>()
+                          } else {
+                              panic!("")
+                          };
+                      for (i, (atom_1, image_1)) in atom_nums.iter().enumerate() {
+                          for (atom_2, image_2) in atom_nums.iter().skip(i + 1) {
+                              // compare images
+                              // this needs some thought but for now just assume no boundary
+                              // crossing (out[0] * 9 + out[1] * 3 + out[2] + 13) as usize
+                              let x1 = (image_1 / 9) as isize - 1;
+                              let y1 = (image_1 / 3).rem_euclid(3) as isize - 1;
+                              let z1 = image_1.rem_euclid(3) as isize - 1;
+                              let x2 = (image_2 / 9) as isize - 1;
+                              let y2 = (image_2 / 3).rem_euclid(3) as isize - 1;
+                              let z2 = image_2.rem_euclid(3) as isize - 1;
+                              let image_1_adjust = ((x1 - x2) * 9 + (y1 - y2) * 3 + (z1 - z2) + 13) as usize;
+                              let image_2_adjust = ((x2 - x1) * 9 + (y2 - y1) * 3 + (z2 - z1) + 13) as usize;
+                              let bonds_1 = bonds[*atom_1].entry((*atom_2, image_2_adjust)).or_insert(0.0);
+                              if let std::cmp::Ordering::Greater = lapl.abs().partial_cmp(&bonds_1.abs()).unwrap() {
+                                  *bonds_1 = lapl;
+                                  let bonds_2 = bonds[*atom_2].entry((*atom_1, image_1_adjust)).or_insert(0.0);
+                                  *bonds_2 = lapl;
+                              };
+                          }
+                      }
+                      pbar.tick();
+                  });
+    bonds.iter_mut().for_each(|b| b.shrink_to_fit());
+    bonds
 }

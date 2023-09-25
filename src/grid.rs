@@ -44,11 +44,13 @@ impl Grid {
     /// get the full shift to visit the surrounding 26 voxels
     pub fn full_shift(&self, p: isize) -> [isize; 26] {
         let shift = self.shift.get(p);
-        [shift[0], shift[1], shift[2], shift[3], shift[4], shift[5], shift[6],
-         shift[7], shift[8], shift[9], shift[10], shift[11], shift[12],
-         shift[14], shift[15], shift[16], shift[17], shift[18], shift[19],
-         shift[20], shift[21], shift[22], shift[23], shift[24], shift[25],
-         shift[26]]
+        shift.iter()
+             .take(13)
+             .chain(shift.iter().skip(14))
+             .copied()
+             .collect::<Vec<isize>>()
+             .try_into()
+             .unwrap() // safe to unwrap as we know that we will get 26 items
     }
 
     /// get the reduced shift to visit the surrounding 6 voxels
@@ -72,14 +74,11 @@ impl Grid {
         self.voronoi
             .vectors
             .iter()
-            .zip(&self.voronoi.alphas)
-            .map(|(shifts, alpha)| {
-                let mut pn = p;
-                for p_shift in shifts.iter() {
-                    pn += self.shift.get(pn)[*p_shift];
-                }
-                (pn, *alpha)
+            .map(|shifts| {
+                shifts.iter()
+                      .fold(p, |pn, p_shift| pn + self.shift.get(pn)[*p_shift])
             })
+            .zip(self.voronoi.alphas.iter().copied())
             .collect()
     }
 
