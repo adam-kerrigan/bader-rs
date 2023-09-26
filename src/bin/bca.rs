@@ -56,14 +56,12 @@ fn main() {
     index.truncate(vacuum_i);
     // find the maxima in the system and store them whilst removing them from
     // the index list
-    let pbar =
-        Bar::visible(index.len() as u64, 100, String::from("Maxima Finding: "));
+    let pbar = Bar::visible(index.len(), String::from("Maxima Finding: "));
     let bader_maxima =
         maxima_finder(&index, reference, &voxel_map, args.threads, pbar);
     // Start a thread-safe progress bar and assign the maxima to atoms
-    let pbar = Bar::visible(bader_maxima.len() as u64,
-                            100,
-                            String::from("Assigning to Atoms: "));
+    let pbar =
+        Bar::visible(bader_maxima.len(), String::from("Assigning to Atoms: "));
     let atom_map = match assign_maxima(&bader_maxima,
                                        &atoms,
                                        &voxel_map.grid,
@@ -79,9 +77,7 @@ fn main() {
             e.distance,
         )
     };
-    let pbar = Bar::visible(index.len() as u64,
-                            100,
-                            String::from("Bader Partitioning: "));
+    let pbar = Bar::visible(index.len(), String::from("Bader Partitioning: "));
     // input the maxima as atoms into the voxel map
     bader_maxima.iter().enumerate().for_each(|(i, maxima)| {
                                        voxel_map.maxima_store(*maxima,
@@ -97,9 +93,7 @@ fn main() {
                          args.weight_tolerance);
     // convert into a VoxelMap as the map is filled and no longer needs to block
     let voxel_map = Box::new(VoxelMap::from_blocking_voxel_map(voxel_map));
-    let pbar = Bar::visible(index.len() as u64,
-                            100,
-                            String::from("Calculating Volumes: "));
+    let pbar = Bar::visible(index.len(), String::from("Calculating Volumes: "));
     // sum the densities and then write the charge partition files
     let (atoms_volume, atoms_radius) =
         calculate_bader_volumes_and_radii(&voxel_map,
@@ -109,8 +103,7 @@ fn main() {
     let mut atoms_density =
         vec![vec![0.0; densities.len()]; atoms_volume.len()];
     densities.iter().enumerate().for_each(|(i, density)| {
-                                     let pbar = Bar::visible(index.len() as u64,
-                            100,
+                                     let pbar = Bar::visible(index.len(),
                             String::from("Summing Densities: "));
                                      atoms_density.iter_mut().zip(calculate_bader_density(density,
                                                              &voxel_map,
@@ -118,16 +111,14 @@ fn main() {
                                                              args.threads,
                                                              pbar).iter()).for_each(|(ad, bd)| ad[i] += bd);
                                  });
-    let pbar = Bar::visible(reference.len() as u64,
-                            100,
-                            String::from("Calculating Errors: "));
+    let pbar =
+        Bar::visible(reference.len(), String::from("Calculating Errors: "));
     let atoms_error = calculate_bader_error(reference,
                                             &voxel_map,
                                             &atoms,
                                             args.threads,
                                             pbar);
-    let pbar = Bar::visible(saddles.len() as u64,
-                            100,
+    let pbar = Bar::visible(saddles.len(),
                             String::from("Calculating Bond Strength: "));
     let bonds =
         calculate_bond_strengths(&saddles, reference, &atoms, &voxel_map, pbar);
@@ -188,8 +179,7 @@ fn main() {
         densities.iter()
                  .zip(&filename)
                  .for_each(|(rho, flnm)| {
-                     let pbar = Bar::visible(index.len() as u64,
-                                             100,
+                     let pbar = Bar::visible(index.len(),
                                              format!("Writing file {}:", flnm));
                      if file_type.write(
                          &atoms,

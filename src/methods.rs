@@ -1,9 +1,11 @@
+use std::sync::atomic::AtomicUsize;
+
 use crate::grid::Grid;
 use crate::progress::Bar;
 use crate::voxel_map::BlockingVoxelMap;
-use atomic_counter::{AtomicCounter, RelaxedCounter};
 use crossbeam_utils::thread;
 use rustc_hash::FxHashMap;
+use std::sync::Arc;
 
 pub enum WeightResult {
     Maxima,
@@ -146,7 +148,7 @@ pub fn weight(density: &[f64],
               threads: usize,
               weight_tolerance: f64)
               -> Vec<isize> {
-    let counter = RelaxedCounter::new(0);
+    let counter = Arc::new(AtomicUsize::new(0));
     let mut saddle_points = vec![];
     thread::scope(|s| {
         // Assign the remaining voxels to Bader maxima
@@ -155,7 +157,7 @@ pub fn weight(density: &[f64],
                      let mut saddles = vec![];
                      loop {
                          let p = {
-                             let i = counter.inc();
+                             let i = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                              if i >= index.len() {
                                  break;
                              };
