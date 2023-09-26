@@ -8,6 +8,7 @@
 - Changed the short flag for threads to -t from -J.
 - Finally dealing with saddle points in the charge density.
 - Removed indicatif and atomic-counter as dependancies.
+- Removed regex from dependancies.
 ## v0.4.5
 ### Changes
 - Removed the need of passing a density to the calculate_bader_volume_radius function.
