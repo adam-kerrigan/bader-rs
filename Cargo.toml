@@ -3,6 +3,7 @@ name = "bader"
 version = "0.4.5"
 authors = ["Adam Kerrigan <ak1014@york.ac.uk>"]
 edition = "2021"
+rust-version = "1.56.1"
 description = "Multi-threaded Bader Charge Analysis"
 license = "MIT"
 readme = "README.md"
