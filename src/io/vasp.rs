@@ -3,7 +3,6 @@ use crate::io::reader::BufReader;
 use crate::io::{FileFormat, FortranFormat, ReadFunction};
 use crate::progress::Bar;
 use crate::utils;
-use regex::{Regex, RegexSet};
 use std::fs::File;
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 
@@ -33,9 +32,6 @@ impl FileFormat for Vasp {
             let mut grid: Vec<[usize; 2]> = vec![];
             let mut aug: Vec<usize> = vec![];
             let mut pos = 0;
-            // search for the grid lines or augmentation that bound the densities
-            let regex = RegexSet::new([r"^\s*\d+\s+\d+\s+\d+\s*$",
-                                        r"^\s*aug"]).unwrap();
             // the first 7 lines are useless to us
             for _ in 0..8 {
                 let size = match reader.read_line(&mut buffer) {
@@ -47,26 +43,64 @@ impl FileFormat for Vasp {
                 };
                 pos += size;
             }
-            // lets start trying to match
+            // lets find the start
             while let Some(line) = reader.read_line(&mut buffer) {
                 let (text, size) = line?;
-                if regex.is_match(text) {
-                    let matches: Vec<usize> =
-                        regex.matches(text).into_iter().collect();
-                    let matches = matches[0];
-                    match matches {
-                        0 => {
-                            let start = pos;
-                            pos += size;
-                            let end = pos;
-                            grid.push([start, end]);
-                        }
-                        1 => {
-                            aug.push(pos);
-                            pos += size;
-                        }
-                        _ => {}
-                    }
+                pos += size;
+                // empty line before the grid spacing
+                if text.trim().is_empty() {
+                    break;
+                }
+            }
+            // this line is the grid spacing
+            let mut buffer = String::new();
+            let grid_spacing = reader.read_line(&mut buffer)
+                                     .map(|line| {
+                                         let (text, size) = line.unwrap();
+                                         let start = pos;
+                                         pos += size;
+                                         let end = pos;
+                                         grid.push([start, end]);
+                                         text
+                                     })
+                                     .unwrap();
+            // lets fast forward a bit
+            let grid_length = grid_spacing.split_whitespace()
+                                          .fold(1, |acc, val| {
+                                              val.parse::<usize>().unwrap()
+                                              * acc
+                                          });
+            let mut buffer = String::new();
+            let per_row = reader.read_line(&mut buffer)
+                                .map(|line| {
+                                    let (text, size) = line.unwrap();
+                                    pos += size;
+                                    text
+                                })
+                                .unwrap()
+                                .split_whitespace()
+                                .count();
+            let grid_length = if grid_length.rem_euclid(per_row) == 0 {
+                grid_length / per_row
+            } else {
+                grid_length / per_row + 1
+            };
+            let mut buffer = String::new();
+            for _ in 1..grid_length {
+                pos += reader.read_line(&mut buffer).unwrap().unwrap().1;
+            }
+            // lets start trying to match
+            let mut buffer = String::new();
+            while let Some(line) = reader.read_line(&mut buffer) {
+                let (text, size) = line?;
+                if text == grid_spacing {
+                    let start = pos;
+                    pos += size;
+                    let end = pos;
+                    grid.push([start, end]);
+                } else if text.starts_with("aug") && aug.len() < grid.len() {
+                    aug.push(pos);
+                    pos += size;
                 } else {
                     pos += size;
                 }
@@ -148,32 +182,7 @@ impl FileFormat for Vasp {
     /// Read atom information.
     fn to_atoms(&self, atoms_text: String) -> Atoms {
         // create regex for matching the (C|K)artesian | Direct line
-        let coord_regex = Regex::new(r"(?m)^\s*(c|C|k|K|d|D)\w*").unwrap();
         // the last match is the one we want so we don't match carbon or the comment line
-        let matches = coord_regex.find_iter(&atoms_text).last().unwrap();
-        let coord_text =
-            &atoms_text[matches.start()..matches.end()].trim_start();
-        let coord = if coord_text.starts_with('d') | coord_text.starts_with('D')
-        {
-            Coord::Fractional
-        } else {
-            Coord::Cartesian
-        };
-        let mut pos: Vec<f64> = vec![];
-        // push the floats to the pos vector so we don't get caught out by selective dynamics
-        let _ = {
-            &atoms_text[matches.end()..].to_string()
-                                        .split_whitespace()
-                                        .map(|x| {
-                                            if let Ok(x) = x.parse::<f64>() {
-                                                pos.push(x);
-                                            }
-                                        })
-                                        .collect::<Vec<_>>()
-        };
-        for _ in 0..3 {
-            pos.pop();
-        }
         let mut lines = atoms_text.lines();
         // skip the comment line  and then read the lattice information
         let _ = lines.next();
@@ -233,28 +242,62 @@ impl FileFormat for Vasp {
         let lattice = Lattice::new([[a[2], a[1], a[0]],
                                     [b[2], b[1], b[0]],
                                     [c[2], c[1], c[0]]]);
-        let mut positions: Vec<[f64; 3]> = vec![];
-        // make the positions fractional and swap c and a
-        match coord {
-            Coord::Fractional => {
-                for i in (0..pos.len()).step_by(3) {
-                    positions.push(utils::dot([pos[i + 2].rem_euclid(1f64),
-                                               pos[i + 1].rem_euclid(1f64),
-                                               pos[i].rem_euclid(1f64)],
-                                              lattice.to_cartesian));
-                }
-            }
-            Coord::Cartesian => {
-                for i in (0..pos.len()).step_by(3) {
-                    let p = utils::dot([pos[i + 2], pos[i + 1], pos[i]],
-                                       lattice.to_fractional);
-                    positions.push(utils::dot([p[0].rem_euclid(1f64),
-                                               p[1].rem_euclid(1f64),
-                                               p[2].rem_euclid(1f64)],
-                                              lattice.to_cartesian));
-                }
-            }
+        // now lets find out what type of file we are dealing with
+        let dubious = lines.next().unwrap().trim().split_whitespace();
+        let total_atoms =
+            match dubious.clone()
+                         .fold(String::new(), |acc, val| {
+                             format!("{}{}", acc, val)
+                         })
+                         .parse::<usize>()
+                         .is_ok()
+            {
+                true => dubious,
+                false => lines.next().unwrap().trim().split_whitespace(),
+            }.fold(0, |acc, val| acc + val.parse::<usize>().unwrap());
+        let mut dubious = lines.next().unwrap().trim_start().to_lowercase();
+        if dubious.starts_with("s") {
+            dubious = lines.next().unwrap().trim_start().to_lowercase();
         }
+        let coord = if dubious.starts_with('d') {
+            Coord::Fractional
+        } else {
+            Coord::Cartesian
+        };
+        let pos: Vec<[f64; 3]> =
+            (0..total_atoms).map(|_| {
+                                lines.next()
+                                     .unwrap()
+                                     .split_whitespace()
+                                     .take(3)
+                                     .map(|f| f.parse::<f64>().unwrap())
+                                     .collect::<Vec<f64>>()
+                                     .try_into() // we only take 3 so safe
+                                     .unwrap()
+                            })
+                            .collect();
+        // make the positions fractional and swap c and a
+        let positions = match coord {
+            Coord::Fractional => pos.into_iter()
+                                    .map(|p| {
+                                        utils::dot([p[2].rem_euclid(1f64),
+                                                    p[1].rem_euclid(1f64),
+                                                    p[0].rem_euclid(1f64)],
+                                                   lattice.to_cartesian)
+                                    })
+                                    .collect(),
+            Coord::Cartesian => pos.into_iter()
+                                   .map(|p| {
+                                       let p =
+                                           utils::dot([p[2], p[1], p[0]],
+                                                      lattice.to_fractional);
+                                       utils::dot([p[0].rem_euclid(1f64),
+                                                   p[1].rem_euclid(1f64),
+                                                   p[2].rem_euclid(1f64)],
+                                                  lattice.to_cartesian)
+                                   })
+                                   .collect(),
+        };
         Atoms::new(lattice, positions, atoms_text)
     }
 

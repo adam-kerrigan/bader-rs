@@ -3,7 +3,6 @@ name = "bader"
 version = "0.4.5"
 authors = ["Adam Kerrigan <ak1014@york.ac.uk>"]
 edition = "2021"
-rust-version = "1.62.1"
 description = "Multi-threaded Bader Charge Analysis"
 license = "MIT"
 readme = "README.md"
@@ -14,7 +13,6 @@ keywords = ["Analysis", "Materials_Science", "Physics", "Chemistry", "Multi-Thre
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-regex = "1.9.5"
 num_cpus = "1.13.0"
 crossbeam-utils = "0.8.12"
 rustc-hash = "1.1.0"
