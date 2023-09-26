@@ -243,7 +243,7 @@ impl FileFormat for Vasp {
                                     [b[2], b[1], b[0]],
                                     [c[2], c[1], c[0]]]);
         // now lets find out what type of file we are dealing with
-        let dubious = lines.next().unwrap().trim().split_whitespace();
+        let dubious = lines.next().unwrap().split_whitespace();
         let total_atoms =
             match dubious.clone()
                          .fold(String::new(), |acc, val| {
@@ -253,10 +253,10 @@ impl FileFormat for Vasp {
                          .is_ok()
             {
                 true => dubious,
-                false => lines.next().unwrap().trim().split_whitespace(),
+                false => lines.next().unwrap().split_whitespace(),
             }.fold(0, |acc, val| acc + val.parse::<usize>().unwrap());
         let mut dubious = lines.next().unwrap().trim_start().to_lowercase();
-        if dubious.starts_with("s") {
+        if dubious.starts_with('s') {
             dubious = lines.next().unwrap().trim_start().to_lowercase();
         }
         let coord = if dubious.starts_with('d') {
