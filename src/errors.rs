@@ -45,16 +45,33 @@ impl Debug for VacuumError {
     }
 }
 
+/// Error for reading of Arguments.
 pub enum ArgumentError<'a> {
+    /// Passed an argument that isn't a flag.
     NotFlag(String),
+    /// Passed a value that isn't parsable.
+    /// Unparsable(flag, value, type)
     Unparsable(String, String, String),
+    /// Didn't pass a value.
+    /// NoValue(flag)
     NoValue(String),
+    /// Passed too many values.
+    /// TooManyValues(flag, max, supplied)
     TooManyValues(String, usize, usize),
+    /// Passed an unvalid value for the flag, ie. filetype.
+    /// NotValidValue(flag, value)
     NotValidValue(String, String),
+    /// Missing a dependant flag.
+    /// MissingDependant(flag, dependancy)
     MissingDependant(String, String),
+    /// Passed a flag for a different filetype than the one given.
+    /// WrongFileType(flag, filetype)
     WrongFileType(String, String),
+    /// No file given.
     NoFile(&'a App),
+    /// Asked for help with -h.
     ShortHelp(&'a App),
+    /// Asked for help with --help.
     LongHelp(&'a App),
 }
 

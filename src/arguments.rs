@@ -17,14 +17,21 @@ pub enum Reference {
     None,
 }
 
+/// Defualt values for arguments.
 enum DefaultValue {
+    /// None
     None,
+    /// Integer
     Int(usize),
+    /// Float
     Float(f64),
 }
 
+/// AllowedValues
 enum AllowedValue {
+    /// Anything
     None,
+    /// Specific list
     Strs(Vec<String>),
 }
 
@@ -144,6 +151,18 @@ impl App {
                 allowed_values: AllowedValue::None,
             },
             Opt {
+                name: String::from("silent"),
+                short_help: String::from("Whether to display any output."),
+                long_help: String::from("
+\tRuns the program without displaying any output text or progress bars."),
+                short_flag: String::from("x"),
+                long_flag: String::from("silent"),
+                takes_value: false,
+                multiple_values: false,
+                default_value: DefaultValue::None,
+                allowed_values: AllowedValue::None,
+            },
+            Opt {
                 name: String::from("spin"),
                 short_help: String::from("File containing spin density."),
                 long_help: String::from("
@@ -202,100 +221,108 @@ impl App {
             }
         ];
         // End options
-        let help =
-            Opt { name: String::from("help"),
-                  short_help:
-                      String::from("Print help (see more with '--help')"),
-                  long_help:
-                      String::from("Print help (see a summary with '-h')"),
-                  short_flag: String::from("h"),
-                  long_flag: String::from("help"),
-                  takes_value: false,
-                  multiple_values: false,
-                  default_value: DefaultValue::None,
-                  allowed_values: AllowedValue::None };
-        let max_width =
-            options.iter()
-                   .map(|o| {
-                       o.short_flag.len()
-                       + o.long_flag.len()
-                       + if o.takes_value { 7 + o.name.len() } else { 4 }
-                   })
-                   .max()
-                   .unwrap_or(0);
-        Self { options,
-               help,
-               max_width }
+        let help = Opt {
+            name: String::from("help"),
+            short_help: String::from("Print help (see more with '--help')"),
+            long_help: String::from("Print help (see a summary with '-h')"),
+            short_flag: String::from("h"),
+            long_flag: String::from("help"),
+            takes_value: false,
+            multiple_values: false,
+            default_value: DefaultValue::None,
+            allowed_values: AllowedValue::None,
+        };
+        let max_width = options
+            .iter()
+            .map(|o| {
+                o.short_flag.len()
+                    + o.long_flag.len()
+                    + if o.takes_value { 7 + o.name.len() } else { 4 }
+            })
+            .max()
+            .unwrap_or(0);
+        Self {
+            options,
+            help,
+            max_width,
+        }
     }
 
     fn get_options_text(&self, long: bool) -> String {
         self.options
             .iter()
             .map(|o| {
-                format!(" {:<width$}{}{}{}\n",
-                        // the short and long flag
-                        if o.takes_value {
-                            format!("-{},--{} [{}]",
-                                    o.short_flag, o.long_flag, o.name)
-                        } else {
-                            format!("-{},--{}", o.short_flag, o.long_flag)
-                        },
-                        // the help text
-                        if long {
-                            o.long_help.to_string()
-                        } else {
-                            format!("  {}", o.short_help)
-                        },
-                        // does it have a default value
-                        match o.default_value {
-                            DefaultValue::None =>
-                                if long {
-                                    String::from("\n")
-                                } else {
-                                    String::with_capacity(0)
-                                },
-                            DefaultValue::Int(u) =>
-                                if long {
-                                    format!("\n\n\t[default: {}]\n", u)
-                                } else {
-                                    format!(" [default: {}]", u)
-                                },
-                            DefaultValue::Float(f) =>
-                                if long {
-                                    format!("\n\n\t[default: {}]\n", f)
-                                } else {
-                                    format!(" [default: {}]", f)
-                                },
-                        },
-                        // does it have allowed values
-                        match &o.allowed_values {
-                            AllowedValue::None => String::with_capacity(0),
-                            AllowedValue::Strs(v) =>
-                                if long {
-                                    format!("\n\t[possible values: {:?}]\n", v)
-                                } else {
-                                    format!(" [possible values: {:?}]", v)
-                                },
-                        },
-                        width = self.max_width)
+                format!(
+                    " {:<width$}{}{}{}\n",
+                    // the short and long flag
+                    if o.takes_value {
+                        format!(
+                            "-{},--{} [{}]",
+                            o.short_flag, o.long_flag, o.name
+                        )
+                    } else {
+                        format!("-{},--{}", o.short_flag, o.long_flag)
+                    },
+                    // the help text
+                    if long {
+                        o.long_help.to_string()
+                    } else {
+                        format!("  {}", o.short_help)
+                    },
+                    // does it have a default value
+                    match o.default_value {
+                        DefaultValue::None =>
+                            if long {
+                                String::from("\n")
+                            } else {
+                                String::with_capacity(0)
+                            },
+                        DefaultValue::Int(u) =>
+                            if long {
+                                format!("\n\n\t[default: {}]\n", u)
+                            } else {
+                                format!(" [default: {}]", u)
+                            },
+                        DefaultValue::Float(f) =>
+                            if long {
+                                format!("\n\n\t[default: {}]\n", f)
+                            } else {
+                                format!(" [default: {}]", f)
+                            },
+                    },
+                    // does it have allowed values
+                    match &o.allowed_values {
+                        AllowedValue::None => String::with_capacity(0),
+                        AllowedValue::Strs(v) =>
+                            if long {
+                                format!("\n\t[possible values: {:?}]\n", v)
+                            } else {
+                                format!(" [possible values: {:?}]", v)
+                            },
+                    },
+                    width = self.max_width
+                )
             })
             .collect()
     }
 
     fn get_help_text(&self, long: bool) -> String {
-        format!(" {:<width$}{}",
-                format!("-{},--{}", self.help.short_flag, self.help.long_flag),
-                if long {
-                    format!("\n\t{}", self.help.long_help)
-                } else {
-                    format!("  {}", self.help.short_help)
-                },
-                width = self.max_width)
+        format!(
+            " {:<width$}{}",
+            format!("-{},--{}", self.help.short_flag, self.help.long_flag),
+            if long {
+                format!("\n\t{}", self.help.long_help)
+            } else {
+                format!("  {}", self.help.short_help)
+            },
+            width = self.max_width
+        )
     }
 
-    fn get_option_from_short_flag(&self,
-                                  f: String)
-                                  -> Result<&Opt, ArgumentError> {
+    fn get_option_from_short_flag(
+        &self,
+        f: String,
+    ) -> Result<&Opt, ArgumentError> {
         if f == self.help.short_flag {
             return Err(ArgumentError::ShortHelp(self));
         }
@@ -306,9 +333,10 @@ impl App {
         }
         Err(ArgumentError::NotFlag(f))
     }
-    fn get_option_from_long_flag(&self,
-                                 f: String)
-                                 -> Result<&Opt, ArgumentError> {
+    fn get_option_from_long_flag(
+        &self,
+        f: String,
+    ) -> Result<&Opt, ArgumentError> {
         if f == self.help.long_flag {
             return Err(ArgumentError::LongHelp(self));
         }
@@ -417,31 +445,54 @@ impl App {
             if !arg.starts_with('-') {
                 match flag.strip_prefix('-') {
                     // previous argument does start with - so we need to check if it is a passed value
-                    Some(short_flag) => {
-                        match short_flag.strip_prefix('-') {
-                            Some(long_flag) => if !self.get_option_from_long_flag(long_flag.to_string()).unwrap().takes_value {
+                    Some(short_flag) => match short_flag.strip_prefix('-') {
+                        Some(long_flag) => {
+                            if !self
+                                .get_option_from_long_flag(
+                                    long_flag.to_string(),
+                                )
+                                .unwrap()
+                                .takes_value
+                            {
                                 file = arg;
-                            },
-                            None => if short_flag.len() > 1 {
+                            }
+                        }
+                        None => {
+                            if short_flag.len() > 1 {
                                 let mut takes_value_flag = false;
                                 for f in short_flag.chars() {
-                                    if self.get_option_from_short_flag(f.to_string()).unwrap().takes_value {
+                                    if self
+                                        .get_option_from_short_flag(
+                                            f.to_string(),
+                                        )
+                                        .unwrap()
+                                        .takes_value
+                                    {
                                         takes_value_flag = true;
-                                        break
+                                        break;
                                     }
                                 }
                                 if !takes_value_flag {
                                     file = arg;
                                 }
-                            } else if !self.get_option_from_short_flag(short_flag.to_string()).unwrap().takes_value {
+                            } else if !self
+                                .get_option_from_short_flag(
+                                    short_flag.to_string(),
+                                )
+                                .unwrap()
+                                .takes_value
+                            {
                                 file = arg;
-                            },
+                            }
                         }
                     },
                     None => file = arg,
                 }
             }
         });
+        if file.is_empty() {
+            return Err(ArgumentError::NoFile(self));
+        }
         let file_type = match arguments.get("file type") {
             Some(ftype) => {
                 let ftype = ftype.to_lowercase();
@@ -450,7 +501,10 @@ impl App {
                 } else if ftype.eq("vasp") {
                     FileType::Vasp
                 } else {
-                    return Err(ArgumentError::NotValidValue(String::from("file type"), ftype));
+                    return Err(ArgumentError::NotValidValue(
+                        String::from("file type"),
+                        ftype,
+                    ));
                 }
             }
             None => {
@@ -460,7 +514,9 @@ impl App {
                 } else if f.contains("car") {
                     FileType::Vasp
                 } else {
-                    eprintln!("Cannot detect file type, attempting to read as VASP.");
+                    eprintln!(
+                        "Cannot detect file type, attempting to read as VASP."
+                    );
                     FileType::Vasp
                 }
             }
@@ -468,22 +524,42 @@ impl App {
         let weight_tolerance = match arguments.get("weight tolerance") {
             Some(w) => match w.parse::<f64>() {
                 Ok(f) => f,
-                Err(_) => return Err(ArgumentError::Unparsable(String::from("weight tolerance"), w.to_string(), String::from("f64")))
+                Err(_) => {
+                    return Err(ArgumentError::Unparsable(
+                        String::from("weight tolerance"),
+                        w.to_string(),
+                        String::from("f64"),
+                    ))
+                }
             },
-            None => match self.get_option_from_short_flag(String::from("w")).unwrap().default_value {
+            None => match self
+                .get_option_from_short_flag(String::from("w"))
+                .unwrap()
+                .default_value
+            {
                 DefaultValue::Float(f) => f,
                 _ => panic!(""),
-            }
+            },
         };
         let maximum_distance = match arguments.get("maximum distance") {
             Some(m) => match m.parse::<f64>() {
                 Ok(f) => f,
-                Err(_) => return Err(ArgumentError::Unparsable(String::from("maximum distance"), m.to_string(), String::from("f64")))
+                Err(_) => {
+                    return Err(ArgumentError::Unparsable(
+                        String::from("maximum distance"),
+                        m.to_string(),
+                        String::from("f64"),
+                    ))
+                }
             },
-            None => match self.get_option_from_short_flag(String::from("m")).unwrap().default_value {
+            None => match self
+                .get_option_from_short_flag(String::from("m"))
+                .unwrap()
+                .default_value
+            {
                 DefaultValue::Float(f) => f,
                 _ => panic!(""),
-            }
+            },
         };
         let vacuum_tolerance = match arguments.get("vacuum tolerance") {
             Some(m) => {
@@ -491,14 +567,21 @@ impl App {
                     None
                 } else {
                     match m.parse::<f64>() {
-                    Ok(f) => Some(f),
-                    Err(_) => return Err(ArgumentError::Unparsable(String::from("vacuum tolerance"), m.to_string(), String::from("f64")))
-                }
+                        Ok(f) => Some(f),
+                        Err(_) => {
+                            return Err(ArgumentError::Unparsable(
+                                String::from("vacuum tolerance"),
+                                m.to_string(),
+                                String::from("f64"),
+                            ))
+                        }
+                    }
                 }
             }
-            None => match self.get_option_from_short_flag(String::from("v"))
-                              .unwrap()
-                              .default_value
+            None => match self
+                .get_option_from_short_flag(String::from("v"))
+                .unwrap()
+                .default_value
             {
                 DefaultValue::Float(f) => Some(f),
                 _ => panic!(""),
@@ -507,64 +590,100 @@ impl App {
         let mut threads = match arguments.get("threads") {
             Some(t) => match t.parse::<usize>() {
                 Ok(f) => f,
-                Err(_) => return Err(ArgumentError::Unparsable(String::from("threads"), t.to_string(), String::from("usize")))
+                Err(_) => {
+                    return Err(ArgumentError::Unparsable(
+                        String::from("threads"),
+                        t.to_string(),
+                        String::from("usize"),
+                    ))
+                }
             },
-            None => match self.get_option_from_short_flag(String::from("t")).unwrap().default_value {
+            None => match self
+                .get_option_from_short_flag(String::from("t"))
+                .unwrap()
+                .default_value
+            {
                 DefaultValue::Int(u) => u,
                 _ => panic!(""),
-            }
+            },
         };
         if threads == 0 {
             threads = num_cpus::get().min(12);
         }
         let output = match arguments.get("output") {
-            Some(_) => {
-                match multi_arguments.get("index") {
-                    Some(v) => {
-                        let mut a = Vec::with_capacity(v.len());
-                        for i in v.iter() {
-                            match i.parse::<isize>() {
-                                Ok(i) => a.push(i - 1),
-                                Err(_) => return Err(ArgumentError::Unparsable(String::from("index"), i.to_string(), String::from("isize")))
+            Some(_) => match multi_arguments.get("index") {
+                Some(v) => {
+                    let mut a = Vec::with_capacity(v.len());
+                    for i in v.iter() {
+                        match i.parse::<isize>() {
+                            Ok(i) => a.push(i - 1),
+                            Err(_) => {
+                                return Err(ArgumentError::Unparsable(
+                                    String::from("index"),
+                                    i.to_string(),
+                                    String::from("isize"),
+                                ))
                             }
                         }
-                        WriteType::Atom(a)
-                    },
-                    None => WriteType::Atom(Vec::with_capacity(0)),
+                    }
+                    WriteType::Atom(a)
                 }
+                None => WriteType::Atom(Vec::with_capacity(0)),
             },
             None => match multi_arguments.get("index") {
-                Some(_) => return Err(ArgumentError::MissingDependant(String::from("index"), String::from("output"))),
+                Some(_) => {
+                    return Err(ArgumentError::MissingDependant(
+                        String::from("index"),
+                        String::from("output"),
+                    ))
+                }
                 None => WriteType::None,
-            }
+            },
         };
         let reference = match multi_arguments.get("reference") {
             Some(v) => match v.len().cmp(&2) {
                 std::cmp::Ordering::Less => Reference::One(v[0].to_string()),
-                std::cmp::Ordering::Equal => Reference::Two(v[0].to_string(), v[1].to_string()),
-                std::cmp::Ordering::Greater => return Err(ArgumentError::TooManyValues(String::from("reference"), 2, v.len())),
-            }
+                std::cmp::Ordering::Equal => {
+                    Reference::Two(v[0].to_string(), v[1].to_string())
+                }
+                std::cmp::Ordering::Greater => {
+                    return Err(ArgumentError::TooManyValues(
+                        String::from("reference"),
+                        2,
+                        v.len(),
+                    ))
+                }
+            },
             None => match arguments.get("aec") {
                 Some(_) => match file_type {
-                    FileType::Vasp => Reference::Two(String::from("AECCAR0"), String::from("AECCAR2")),
-                    FileType::Cube => return Err(ArgumentError::WrongFileType(String::from("aec"), String::from("cube"))),
+                    FileType::Vasp => Reference::Two(
+                        String::from("AECCAR0"),
+                        String::from("AECCAR2"),
+                    ),
+                    FileType::Cube => {
+                        return Err(ArgumentError::WrongFileType(
+                            String::from("aec"),
+                            String::from("cube"),
+                        ))
+                    }
                 },
                 None => Reference::None,
-            }
+            },
         };
         let spin = arguments.get("spin").cloned();
-        if file.is_empty() {
-            return Err(ArgumentError::NoFile(self));
-        }
-        Ok(Args { file,
-                  file_type,
-                  weight_tolerance,
-                  maximum_distance,
-                  output,
-                  reference,
-                  spin,
-                  threads,
-                  vacuum_tolerance })
+        let silent = arguments.get("silent").is_some();
+        Ok(Args {
+            file,
+            file_type,
+            weight_tolerance,
+            maximum_distance,
+            output,
+            reference,
+            silent,
+            spin,
+            threads,
+            vacuum_tolerance,
+        })
     }
 }
 
@@ -581,9 +700,11 @@ impl Display for App {
             String::from("Arguments:\n <file>  The file to analyse.");
         let options = self.get_options_text(false);
         let help = self.get_help_text(false);
-        write!(f,
-               "{}\n\n{}\n\nOptions:\n{}{}",
-               usage, arguments, options, help)
+        write!(
+            f,
+            "{}\n\n{}\n\nOptions:\n{}{}",
+            usage, arguments, options, help
+        )
     }
 }
 
@@ -594,9 +715,11 @@ impl Debug for App {
             String::from("Arguments:\n <file>  The file containing the charge density to analyse.");
         let options = self.get_options_text(true);
         let help = self.get_help_text(true);
-        write!(f,
-               "{}\n\n{}\n\nOptions:\n{}{}",
-               usage, arguments, options, help)
+        write!(
+            f,
+            "{}\n\n{}\n\nOptions:\n{}{}",
+            usage, arguments, options, help
+        )
     }
 }
 
@@ -614,6 +737,8 @@ pub struct Args {
     pub output: WriteType,
     /// Is there a reference file.
     pub reference: Reference,
+    /// Should the program be ran silently.
+    pub silent: bool,
     /// Is there a spin density to include as well.
     pub spin: Option<String>,
     /// How many threads to use in the calculation.
@@ -638,8 +763,9 @@ mod tests {
     #[should_panic]
     fn argument_no_file() {
         let app = App::new();
-        let _ = app.parse_args(vec!["bca"])
-                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+        let _ = app
+            .parse_args(vec!["bca"])
+            .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
@@ -691,8 +817,9 @@ mod tests {
     #[should_panic]
     fn argument_file_type_not_type() {
         let app = App::new();
-        let _ = app.parse_args(vec!["bca", "CHGCAR", "-f", "basp"])
-                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+        let _ = app
+            .parse_args(vec!["bca", "CHGCAR", "-f", "basp"])
+            .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
@@ -709,7 +836,7 @@ mod tests {
     #[test]
     fn argument_output_index() {
         let app = App::new();
-        let v = vec!["bca", "CHGCAR", "-o", "-i", "1",];
+        let v = vec!["bca", "CHGCAR", "-o", "-i", "1"];
         let args = app.parse_args(v).unwrap();
         match args.output {
             WriteType::Atom(v) => assert_eq!(v, vec![0]),
@@ -720,7 +847,7 @@ mod tests {
     #[test]
     fn argument_output_mult_index() {
         let app = App::new();
-        let v = vec!["bca", "CHGCAR", "-o", "--index", "1", "-i", "3",];
+        let v = vec!["bca", "CHGCAR", "-o", "--index", "1", "-i", "3"];
         let args = app.parse_args(v).unwrap();
         match args.output {
             WriteType::Atom(v) => assert_eq!(v, vec![0, 2]),
@@ -732,22 +859,24 @@ mod tests {
     #[should_panic]
     fn argument_index_no_output() {
         let app = App::new();
-        let _ = app.parse_args(vec!["bca", "CHGCAR", "-i", "1"])
-                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+        let _ = app
+            .parse_args(vec!["bca", "CHGCAR", "-i", "1"])
+            .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
     #[should_panic]
     fn argument_index_not_parse() {
         let app = App::new();
-        let _ = app.parse_args(vec!["bca", "CHGCAR", "-oi", "1,6"])
-                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+        let _ = app
+            .parse_args(vec!["bca", "CHGCAR", "-oi", "1,6"])
+            .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
     fn argument_spin() {
         let app = App::new();
-        let v = vec!["bca", "density.cube", "-s", "spin.cube",];
+        let v = vec!["bca", "density.cube", "-s", "spin.cube"];
         let args = app.parse_args(v).unwrap();
         assert_eq!(args.spin, Some(String::from("spin.cube")))
     }
@@ -820,8 +949,9 @@ mod tests {
     fn argument_vacuum_tolerance_not_float() {
         let app = App::new();
         let v = vec!["bca", "CHGCAR", "--vac", "0.00.1"];
-        let _ = app.parse_args(v)
-                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+        let _ = app
+            .parse_args(v)
+            .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
@@ -837,8 +967,9 @@ mod tests {
     fn argument_weight_tolerance_not_float() {
         let app = App::new();
         let v = vec!["bca", "CHGCAR", "-w", "0.00.1"];
-        let _ = app.parse_args(v)
-                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+        let _ = app
+            .parse_args(v)
+            .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
@@ -854,8 +985,9 @@ mod tests {
     fn argument_maximum_distance_not_float() {
         let app = App::new();
         let v = vec!["bca", "CHGCAR", "-m", "0.00.1"];
-        let _ = app.parse_args(v)
-                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+        let _ = app
+            .parse_args(v)
+            .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 
     #[test]
@@ -880,7 +1012,8 @@ mod tests {
     fn argument_threads_not_int() {
         let app = App::new();
         let v = vec!["bca", "CHGCAR", "-t", "0.1"];
-        let _ = app.parse_args(v)
-                   .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+        let _ = app
+            .parse_args(v)
+            .unwrap_or_else(|e| panic!("An error occurs: {}", e));
     }
 }

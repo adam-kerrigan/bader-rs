@@ -16,10 +16,10 @@ impl BufReader {
     }
 
     /// Reads a line from the buffer reader to mutable string
-    pub fn read_line<'buf>(&mut self,
-                           buffer: &'buf mut String)
-                           -> Option<io::Result<(&'buf mut String, usize)>>
-    {
+    pub fn read_line<'buf>(
+        &mut self,
+        buffer: &'buf mut String,
+    ) -> Option<io::Result<(&'buf mut String, usize)>> {
         buffer.clear();
 
         self.reader

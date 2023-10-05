@@ -82,10 +82,11 @@ unsafe impl Sync for BlockingVoxelMap {}
 impl BlockingVoxelMap {
     /// Initialises a [`BlockingVoxelMap`] and the [`Grid`] that will faciliate movemoment around the
     /// map.
-    pub fn new(grid: [usize; 3],
-               lattice: [[f64; 3]; 3],
-               voxel_origin: [f64; 3])
-               -> Self {
+    pub fn new(
+        grid: [usize; 3],
+        lattice: [[f64; 3]; 3],
+        voxel_origin: [f64; 3],
+    ) -> Self {
         let grid = Grid::new(grid, lattice, voxel_origin);
         let size = grid.size.total;
         // For mapping the the voxels
@@ -95,10 +96,12 @@ impl BlockingVoxelMap {
         voxel_map.resize_with(size, || AtomicIsize::new(-1));
         let lock = AtomicBool::new(false);
         // For post processing
-        Self { weight_map,
-               voxel_map,
-               grid,
-               lock }
+        Self {
+            weight_map,
+            voxel_map,
+            grid,
+            lock,
+        }
     }
 
     /// Retrieves the state of the voxel, p. This will lock until p has been stored
@@ -148,9 +151,11 @@ impl BlockingVoxelMap {
 
     /// Extract the voxel map data.
     pub fn into_inner(self) -> (Vec<isize>, Vec<Box<[f64]>>, Grid) {
-        (self.voxel_map.into_iter().map(|x| x.into_inner()).collect(),
-         self.weight_map.into_inner(),
-         self.grid)
+        (
+            self.voxel_map.into_iter().map(|x| x.into_inner()).collect(),
+            self.weight_map.into_inner(),
+            self.grid,
+        )
     }
 }
 
@@ -166,13 +171,16 @@ pub struct VoxelMap {
 
 impl VoxelMap {
     /// Create a new [`VoxelMap`]
-    pub fn new(voxel_map: Vec<isize>,
-               weight_map: Vec<Box<[f64]>>,
-               grid: Grid)
-               -> Self {
-        Self { voxel_map,
-               weight_map,
-               grid }
+    pub fn new(
+        voxel_map: Vec<isize>,
+        weight_map: Vec<Box<[f64]>>,
+        grid: Grid,
+    ) -> Self {
+        Self {
+            voxel_map,
+            weight_map,
+            grid,
+        }
     }
 
     /// Create a new [`VoxelMap`] from a [`BlockingVoxelMap`].
@@ -228,9 +236,10 @@ impl VoxelMap {
     }
 
     /// Return a Chunk over the maxima stored in the VoxelMap.
-    pub fn maxima_chunks(&self,
-                         chunk_size: usize)
-                         -> std::slice::Chunks<'_, isize> {
+    pub fn maxima_chunks(
+        &self,
+        chunk_size: usize,
+    ) -> std::slice::Chunks<'_, isize> {
         self.voxel_map.chunks(chunk_size)
     }
 
@@ -267,9 +276,10 @@ impl VoxelMap {
             .collect()
     }
     /// Produce a mask for a collection volume numbers.
-    pub fn multi_volume_map(&self,
-                            volume_numbers: &FxHashSet<isize>)
-                            -> Vec<Option<f64>> {
+    pub fn multi_volume_map(
+        &self,
+        volume_numbers: &FxHashSet<isize>,
+    ) -> Vec<Option<f64>> {
         self.maxima_iter()
             .map(|maxima| {
                 if volume_numbers.contains(maxima) {
