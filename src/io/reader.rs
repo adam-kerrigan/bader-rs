@@ -1,16 +1,16 @@
 use std::fs::File;
-use std::io::{self, prelude::*};
+use std::io::{BufRead, BufReader as Reader, Result};
 
 /// Read a file into a mutable buffer
 pub struct BufReader {
-    reader: io::BufReader<File>,
+    reader: Reader<File>,
 }
 
 impl BufReader {
     /// Opens the file from the path into a reader
-    pub fn open(path: impl AsRef<std::path::Path>) -> io::Result<Self> {
+    pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self> {
         let file = File::open(path)?;
-        let reader = io::BufReader::new(file);
+        let reader = Reader::new(file);
 
         Ok(Self { reader })
     }
@@ -19,7 +19,7 @@ impl BufReader {
     pub fn read_line<'buf>(
         &mut self,
         buffer: &'buf mut String,
-    ) -> Option<io::Result<(&'buf mut String, usize)>> {
+    ) -> Option<Result<(&'buf mut String, usize)>> {
         buffer.clear();
 
         self.reader
