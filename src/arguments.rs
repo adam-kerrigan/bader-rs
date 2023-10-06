@@ -1,10 +1,9 @@
-use rustc_hash::FxHashMap;
-
 use crate::{
     errors::ArgumentError,
     io::{FileType, WriteType},
 };
-use std::fmt::{Debug, Display};
+use rustc_hash::FxHashMap;
+use std::fmt::{Debug, Display, Write};
 
 /// Indicates how many reference files are passed
 #[derive(Clone)]
@@ -249,61 +248,57 @@ impl App {
     }
 
     fn get_options_text(&self, long: bool) -> String {
-        self.options
-            .iter()
-            .map(|o| {
-                format!(
-                    " {:<width$}{}{}{}\n",
-                    // the short and long flag
-                    if o.takes_value {
-                        format!(
-                            "-{},--{} [{}]",
-                            o.short_flag, o.long_flag, o.name
-                        )
-                    } else {
-                        format!("-{},--{}", o.short_flag, o.long_flag)
-                    },
-                    // the help text
-                    if long {
-                        o.long_help.to_string()
-                    } else {
-                        format!("  {}", o.short_help)
-                    },
-                    // does it have a default value
-                    match o.default_value {
-                        DefaultValue::None =>
-                            if long {
-                                String::from("\n")
-                            } else {
-                                String::with_capacity(0)
-                            },
-                        DefaultValue::Int(u) =>
-                            if long {
-                                format!("\n\n\t[default: {}]\n", u)
-                            } else {
-                                format!(" [default: {}]", u)
-                            },
-                        DefaultValue::Float(f) =>
-                            if long {
-                                format!("\n\n\t[default: {}]\n", f)
-                            } else {
-                                format!(" [default: {}]", f)
-                            },
-                    },
-                    // does it have allowed values
-                    match &o.allowed_values {
-                        AllowedValue::None => String::with_capacity(0),
-                        AllowedValue::Strs(v) =>
-                            if long {
-                                format!("\n\t[possible values: {:?}]\n", v)
-                            } else {
-                                format!(" [possible values: {:?}]", v)
-                            },
-                    },
-                    width = self.max_width
-                )
-            })
-            .collect()
+        self.options.iter().fold(String::new(), |mut output, o| {
+            let _ = writeln!(
+                output,
+                " {:<width$}{}{}{}",
+                // the short and long flag
+                if o.takes_value {
+                    format!("-{},--{} [{}]", o.short_flag, o.long_flag, o.name)
+                } else {
+                    format!("-{},--{}", o.short_flag, o.long_flag)
+                },
+                // the help text
+                if long {
+                    o.long_help.to_string()
+                } else {
+                    format!("  {}", o.short_help)
+                },
+                // does it have a default value
+                match o.default_value {
+                    DefaultValue::None =>
+                        if long {
+                            String::from("\n")
+                        } else {
+                            String::with_capacity(0)
+                        },
+                    DefaultValue::Int(u) =>
+                        if long {
+                            format!("\n\n\t[default: {}]\n", u)
+                        } else {
+                            format!(" [default: {}]", u)
+                        },
+                    DefaultValue::Float(f) =>
+                        if long {
+                            format!("\n\n\t[default: {}]\n", f)
+                        } else {
+                            format!(" [default: {}]", f)
+                        },
+                },
+                // does it have allowed values
+                match &o.allowed_values {
+                    AllowedValue::None => String::with_capacity(0),
+                    AllowedValue::Strs(v) =>
+                        if long {
+                            format!("\n\t[possible values: {:?}]\n", v)
+                        } else {
+                            format!(" [possible values: {:?}]", v)
+                        },
+                },
+                width = self.max_width
+            );
+            output
+        })
     }
 
     fn get_help_text(&self, long: bool) -> String {
