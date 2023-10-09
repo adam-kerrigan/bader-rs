@@ -15,7 +15,7 @@ use rustc_hash::FxHashMap;
 /// use bader::atoms::{Atoms, Lattice};
 /// use bader::grid::Grid;
 ///
-/// // Intialise [`Atoms`] and [`Grid`] structs as well as a list of maxima
+/// // Intialise Atoms and Grid structs as well as a list of maxima
 /// let lattice =
 ///     Lattice::new([[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]]);
 /// let atoms = Atoms::new(
@@ -142,7 +142,7 @@ pub fn assign_maxima(
 /// use bader::grid::Grid;
 /// use bader::voxel_map::VoxelMap;
 ///
-/// // Intialise [`Atoms`] and [`VoxelMap`] structs as well as a density to sum.
+/// // Intialise Atoms and VoxelMap structs as well as a density to sum.
 /// let lattice =
 ///     Lattice::new([[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]]);
 /// let atoms = Atoms::new(
@@ -263,7 +263,7 @@ pub fn calculate_bader_density(
 /// use bader::grid::Grid;
 /// use bader::voxel_map::VoxelMap;
 ///
-/// // Intialise [`Atoms`] and [`VoxelMap`] structs as well as a density to sum.
+/// // Intialise Atoms and VoxelMap structs as well as a density to sum.
 /// let lattice =
 ///     Lattice::new([[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]]);
 /// let atoms = Atoms::new(

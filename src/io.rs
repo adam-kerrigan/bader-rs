@@ -82,7 +82,7 @@ type InitReturn = (Vec<Vec<f64>>, Vec<f64>, Atoms, [usize; 3], [f64; 3]);
 
 /// FileFormat trait. Used for handling input from a file.
 pub trait FileFormat {
-    /// Returns the parts required to build [`Grid`] and [`Atoms`] structures.
+    /// Returns the parts required to build [`Grid`](crate::grid::Grid) and [`Atoms`] structures.
     ///
     /// * `args`: [`Args`] parsed from the command line.
     fn init(&self, args: &Args) -> InitReturn {
@@ -162,7 +162,7 @@ Ambiguous how to handle new spin when {} already has {} spin densities.",
     }
 
     /// Reads the file into a [`ReadFunction`] containing the information
-    /// needed from the file to build a [`Grid`].
+    /// needed from the file to build a [`Grid`](crate::grid::Grid).
     ///
     /// * `filename`: The name of the file to read.
     fn read(&self, filename: String) -> ReadFunction;

@@ -22,7 +22,7 @@ pub enum WeightResult {
 ///
 /// * `p`: The point from which to step.
 /// * `density`: The reference [`Grid`].
-/// * `weight_map`: An [`Arc`] wrapped [`VoxelMap`] for tracking the maxima.
+/// * `weight_map`: An [`Arc`] wrapped [`BlockingVoxelMap`] for tracking the maxima.
 ///
 /// ### Returns:
 /// [`WeightResult`]: The type of point `p` is (maxima, interior, boundary) and
