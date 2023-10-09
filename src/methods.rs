@@ -30,15 +30,18 @@ pub enum WeightResult {
 ///
 /// # Examples
 /// ```
+/// use bader::methods::{weight_step, WeightResult};
 /// use bader::voxel_map::BlockingVoxelMap as VoxelMap;
-/// use bader::methods::{WeightResult, weight_step};
 ///
 /// // Intialise the reference density, setting index 34 to 0. for easy maths.
-/// let density = (0..64).map(|rho| if rho != 34 { rho  as f64 } else {0.})
-///                      .collect::<Vec<f64>>();
-/// let voxel_map = VoxelMap::new([4, 4, 4],
-///                               [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
-///                               [0.0, 0.0, 0.0]);
+/// let density = (0..64)
+///     .map(|rho| if rho != 34 { rho as f64 } else { 0. })
+///     .collect::<Vec<f64>>();
+/// let voxel_map = VoxelMap::new(
+///     [4, 4, 4],
+///     [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
+///     [0.0, 0.0, 0.0],
+/// );
 /// // The highest gradient between point, p = 33, and it's neighbours, with
 /// // periodic boundary conditions, is with point p = 61.
 ///

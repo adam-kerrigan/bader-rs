@@ -59,9 +59,11 @@ impl<'a> Drop for Lock<'a> {
 /// use bader::voxel_map::BlockingVoxelMap;
 ///
 /// for p in 0..1isize {
-///     let voxel_map = BlockingVoxelMap::new([2, 5, 2],
-///                                   [[2.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 2.0]],
-///                                   [0.0, 0.0, 0.0]);
+///     let voxel_map = BlockingVoxelMap::new(
+///         [2, 5, 2],
+///         [[2.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 2.0]],
+///         [0.0, 0.0, 0.0],
+///     );
 ///     let i = {
 ///         let mut weight = voxel_map.lock();
 ///         (*weight).push(Vec::with_capacity(0).into());

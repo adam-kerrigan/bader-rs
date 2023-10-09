@@ -8,8 +8,41 @@ use crossbeam_utils::thread;
 use rustc_hash::FxHashMap;
 
 /// Assign the Bader maxima to the nearest atom.
-/// Threading will split the slice of maxima into chunks and operate on each
-/// chunk in parallel using [`maxima_to_atom`].
+///
+/// # Example
+/// ```
+/// use bader::analysis::assign_maxima;
+/// use bader::atoms::{Atoms, Lattice};
+/// use bader::grid::Grid;
+///
+/// // Intialise [`Atoms`] and [`Grid`] structs as well as a list of maxima
+/// let lattice =
+///     Lattice::new([[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]]);
+/// let atoms = Atoms::new(
+///     lattice,
+///     vec![[0.0, 0.0, 0.0], [1.5, 1.5, 1.5]],
+///     String::from(""),
+/// );
+/// let grid = Grid::new(
+///     [10, 10, 10],
+///     [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
+///     [0.0, 0.0, 0.0],
+/// );
+/// let maxima = vec![0, 555]; // maxima placed at the sites of the atoms
+///
+/// // Run with default maxima distance tolerance
+/// let maximum_distance = 0.1;
+/// let atom_list =
+///     assign_maxima(&maxima, &atoms, &grid, &maximum_distance, 1, false);
+/// assert!(atom_list.is_ok());
+/// assert_eq!(atom_list.unwrap(), vec![0, 1]);
+///
+/// // If the maxima is too far away we get an error.
+/// let maxima = vec![1, 555]; // maxima placed 0.3 Ang away from atom 0
+/// let atom_list =
+///     assign_maxima(&maxima, &atoms, &grid, &maximum_distance, 1, false);
+/// assert!(atom_list.is_err());
+/// ```
 pub fn assign_maxima(
     maxima: &[isize],
     atoms: &Atoms,
@@ -101,6 +134,50 @@ pub fn assign_maxima(
 }
 
 /// Sums the densities of each Bader volume.
+///
+/// #Example:
+/// ```
+/// use bader::analysis::calculate_bader_density;
+/// use bader::atoms::{Atoms, Lattice};
+/// use bader::grid::Grid;
+/// use bader::voxel_map::VoxelMap;
+///
+/// // Intialise [`Atoms`] and [`VoxelMap`] structs as well as a density to sum.
+/// let lattice =
+///     Lattice::new([[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]]);
+/// let atoms = Atoms::new(
+///     lattice,
+///     vec![[0.0, 0.0, 0.0], [1.5, 1.5, 1.5]],
+///     String::from(""),
+/// );
+/// let grid = Grid::new(
+///     [10, 10, 10],
+///     [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
+///     [0.0, 0.0, 0.0],
+/// );
+/// // each atom gets 500 voxels all of value 1
+/// let mut voxel_map = (0..1000).map(|i| i / 500).collect::<Vec<isize>>();
+/// // add some vacuum meaning atom 2 has 499 voxels
+/// voxel_map[600] = -1;
+/// // add a weighted voxel meaning atom 1 now has 499.7 voxels and atom 2 has 499.3
+/// voxel_map[400] = -2;
+/// let weight_map: Vec<Box<[f64]>> = vec![vec![0.7, 1.3].into(); 1];
+/// let voxel_map = VoxelMap::new(voxel_map, weight_map, grid);
+/// let density = vec![1.0; 1000];
+///
+/// let summed_density =
+///     calculate_bader_density(&density, &voxel_map, &atoms, 1, false);
+/// let volume = voxel_map.grid_get().voxel_lattice.volume;
+/// assert_eq!(
+///     summed_density,
+///     vec![
+///         499.7 * volume,
+///         499.3 * volume,
+///         volume
+///     ]
+///     .into()
+/// );
+/// ```
 pub fn calculate_bader_density(
     density: &[f64],
     voxel_map: &VoxelMap,
@@ -178,6 +255,53 @@ pub fn calculate_bader_density(
 }
 
 /// Calculates the volume and radius of each Bader atom.
+///
+/// #Example:
+/// ```
+/// use bader::analysis::calculate_bader_volumes_and_radii;
+/// use bader::atoms::{Atoms, Lattice};
+/// use bader::grid::Grid;
+/// use bader::voxel_map::VoxelMap;
+///
+/// // Intialise [`Atoms`] and [`VoxelMap`] structs as well as a density to sum.
+/// let lattice =
+///     Lattice::new([[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]]);
+/// let atoms = Atoms::new(
+///     lattice,
+///     vec![[0.0, 0.0, 0.0], [1.5, 1.5, 1.5]],
+///     String::from(""),
+/// );
+/// let grid = Grid::new(
+///     [10, 10, 10],
+///     [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
+///     [0.0, 0.0, 0.0],
+/// );
+/// // each atom gets 500 voxels all of value 1
+/// let mut voxel_map = (0..1000).map(|i| i / 500).collect::<Vec<isize>>();
+/// // add some vacuum meaning atom 2 has 499 voxels
+/// voxel_map[600] = -1;
+/// // add a weighted voxel meaning atom 1 now has 499.7 voxels and atom 2 has 499.3
+/// // this is the only factor in determining the radius; 2 * (a + b + c) for atom 1
+/// // and 3 * (a + b + c) for atom 2.
+/// voxel_map[222] = -2;
+/// let weight_map: Vec<Box<[f64]>> = vec![vec![0.7, 1.3].into(); 1];
+/// let voxel_map = VoxelMap::new(voxel_map, weight_map, grid);
+///
+/// let (volumes, radii) = calculate_bader_volumes_and_radii(&voxel_map, &atoms, 1, false);
+/// let volume = voxel_map.grid_get().voxel_lattice.volume;
+/// let a_b_c = (0.3_f64.powi(2) + 0.3_f64.powi(2) + 0.3_f64.powi(2)).powf(0.5);
+/// assert_eq!(
+///     volumes,
+///     vec![
+///         499.7 * volume,
+///         499.3 * volume,
+///         volume
+///     ]
+///     .into()
+/// );
+/// assert!(radii[0] - (2.0 * a_b_c) <= f64::EPSILON);
+/// assert!(radii[1] - (3.0 * a_b_c) <= f64::EPSILON);
+/// ```
 pub fn calculate_bader_volumes_and_radii(
     voxel_map: &VoxelMap,
     atoms: &Atoms,
