@@ -22,8 +22,7 @@ jobs:
         uses: actions/checkout@v2
       - name: Get release version from tag
         id: get-release-version
-        run: |
-          echo "::set-output name=version::${GITHUB_REF#refs/tags/}"
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
       - name: Create GitHub release
         id: release
         uses: actions/create-release@v1
