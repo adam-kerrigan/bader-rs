@@ -70,15 +70,14 @@
 //! [Yu Min  and Trinkle Dallas R. 2011  J. Che.m Phys. 134 064111]: <https://doi.org/10.1063/1.3553716>
 //! [cargo]: <https://doc.rust-lang.org/cargo/getting-started/installation.html>
 
-/// Performs analysis of the VoxelMap to find the partitioned charge, assigned atom and other
-/// relevant properties.
+/// Performs analysis of the [VoxelMap](voxel_map::VoxelMap) to find the partitioned charge,
+/// assigned atom and other relevant properties.
 pub mod analysis;
-/// Builds the [clap::App] and parses command-line arguments.
+/// For parsing command-line arguments.
 pub mod arguments;
 /// Contains [Atoms](atoms::Atoms) for storing the relevant data on the atoms
 /// in the calculation. Also contains [Lattice](atoms::Lattice) and
-/// [ReducedLattice](atoms::ReducedLattice) for storing information about the
-/// cell in which the density is stored.
+/// for storing information about the cell in which the density is stored.
 pub mod atoms;
 /// Provides custom errors types.
 pub mod errors;
@@ -89,17 +88,17 @@ pub mod grid;
 /// Provides a [FileFormat](io::FileFormat) trait to be implemented by modules designed to
 /// cover a specific file format of a density file.
 pub mod io;
-/// Contains the three methods for partioning the density, ([Ongrid](methods::ongrid),
-/// [Neargrid](methods::neargrid), and [Weight](methods::weight)), and functions for
-/// performing a step for in each.
+/// Contains the methods for partioning the density, finding maxima and calculating the
+/// Laplacian for voxel based grids.
 pub mod methods;
-/// Provides [Bar](progress::Bar): A quicker thread-safe version of the [indicatif::ProgressBar].
+/// Provides a [visible](progress::Bar) and [hidden](progress::HiddenBar) implementation of the
+/// trait [ProgressBar](progress::ProgressBar).
 pub mod progress;
 /// Misc functions mainly for vector and matrix manipulation.
 pub mod utils;
 /// Calculates the Voronoi vectors, and their alpha values for the weight method,
 /// for lattices. Also useful for periodic minimum distances.
 pub mod voronoi;
-/// Provides the [VoxelMap](voxel_map::VoxelMap) for storing the maxima and weights of
-/// partioned voxels.
+/// Provides the [BlockingVoxelMap](voxel_map::BlockingVoxelMap) and [VoxelMap](voxel_map::VoxelMap)
+/// for storing the maxima and weights of partioned voxels.
 pub mod voxel_map;

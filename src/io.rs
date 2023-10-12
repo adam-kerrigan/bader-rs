@@ -1,6 +1,5 @@
 use crate::arguments::{Args, Reference};
 use crate::atoms::Atoms;
-use crate::progress::Bar;
 
 /// File I/O for the gaussian cube format.
 pub mod cube;
@@ -54,17 +53,21 @@ impl std::fmt::Display for FortranFormat {
                 let decimals = float.abs() * 10f64.powi(prec as i32 - exponant);
                 let decimals = decimals.round() as usize;
                 if float.is_sign_negative() {
-                    write!(formatter,
-                           "-0.{:0<width$}E{:+03}",
-                           decimals,
-                           exponant,
-                           width = prec)
+                    write!(
+                        formatter,
+                        "-0.{:0<width$}E{:+03}",
+                        decimals,
+                        exponant,
+                        width = prec
+                    )
                 } else {
-                    write!(formatter,
-                           " 0.{:0<width$}E{:+03}",
-                           decimals,
-                           exponant,
-                           width = prec)
+                    write!(
+                        formatter,
+                        " 0.{:0<width$}E{:+03}",
+                        decimals,
+                        exponant,
+                        width = prec
+                    )
                 }
             }
         }
@@ -79,7 +82,7 @@ type InitReturn = (Vec<Vec<f64>>, Vec<f64>, Atoms, [usize; 3], [f64; 3]);
 
 /// FileFormat trait. Used for handling input from a file.
 pub trait FileFormat {
-    /// Returns the parts required to build [`Grid`] and [`Atoms`] structures.
+    /// Returns the parts required to build [`Grid`](crate::grid::Grid) and [`Atoms`] structures.
     ///
     /// * `args`: [`Args`] parsed from the command line.
     fn init(&self, args: &Args) -> InitReturn {
@@ -97,21 +100,23 @@ pub trait FileFormat {
                     };
                     if 1 != d.len() {
                         panic!(
-                               "Number of densities in original file is not 1.
+                            "Number of densities in original file is not 1.
 Ambiguous how to handle spin density when {} contains {} densities.",
-                               x,
-                               d.len()
+                            x,
+                            d.len()
                         );
                     }
-                    assert_eq!(g, grid,
-                               "Error: Spin density has different grid size.");
+                    assert_eq!(
+                        g, grid,
+                        "Error: Spin density has different grid size."
+                    );
                     densities.push(d[0].clone());
                 }
                 x => panic!(
-                            "Number of densities in original file is not 1.
+                    "Number of densities in original file is not 1.
 Ambiguous how to handle new spin when {} already has {} spin densities.",
-                            args.file,
-                            x - 1
+                    args.file,
+                    x - 1
                 ),
             }
         }
@@ -122,8 +127,10 @@ Ambiguous how to handle new spin when {} already has {} spin densities.",
                     Ok(r) => r,
                     Err(e) => panic!("{}", e),
                 };
-                assert_eq!(g, grid,
-                           "Error: Reference density has different grid size.");
+                assert_eq!(
+                    g, grid,
+                    "Error: Reference density has different grid size."
+                );
                 densities[0].clone()
             }
             Reference::Two(f1, f2) => {
@@ -131,26 +138,31 @@ Ambiguous how to handle new spin when {} already has {} spin densities.",
                     Ok(r) => r,
                     Err(e) => panic!("{}", e),
                 };
-                assert_eq!(g, grid,
-                           "Error: Reference density has different grid size.");
+                assert_eq!(
+                    g, grid,
+                    "Error: Reference density has different grid size."
+                );
                 let (_, g2, _, densities2) = match self.read(f2) {
                     Ok(r) => r,
                     Err(e) => panic!("{}", e),
                 };
 
-                assert_eq!(g2, grid,
-                           "Error: Reference density has different grid size.");
-                densities[0].iter()
-                            .zip(&densities2[0])
-                            .map(|(a, b)| a + b)
-                            .collect::<Vec<f64>>()
+                assert_eq!(
+                    g2, grid,
+                    "Error: Reference density has different grid size."
+                );
+                densities[0]
+                    .iter()
+                    .zip(&densities2[0])
+                    .map(|(a, b)| a + b)
+                    .collect::<Vec<f64>>()
             }
         };
         (densities, rho, atoms, grid, voxel_origin)
     }
 
     /// Reads the file into a [`ReadFunction`] containing the information
-    /// needed from the file to build a [`Grid`].
+    /// needed from the file to build a [`Grid`](crate::grid::Grid).
     ///
     /// * `filename`: The name of the file to read.
     fn read(&self, filename: String) -> ReadFunction;
@@ -168,12 +180,13 @@ Ambiguous how to handle new spin when {} already has {} spin densities.",
     /// * `filename`: Where to save the file, minus any suffix as this should
     /// be applied in the function.
     /// * `pbar`: A progress bar for monitoring the write.
-    fn write(&self,
-             atoms: &Atoms,
-             data: Vec<Option<f64>>,
-             filename: String,
-             pbar: Bar)
-             -> std::io::Result<()>;
+    fn write(
+        &self,
+        atoms: &Atoms,
+        data: Vec<Option<f64>>,
+        filename: String,
+        visible_pbar: bool,
+    ) -> std::io::Result<()>;
 
     /// How the format the positions of maxima and atoms
     ///

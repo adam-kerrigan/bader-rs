@@ -15,47 +15,53 @@ pub struct Atoms {
 
 impl Atoms {
     /// Initialises the structure.
-    pub fn new(lattice: Lattice,
-               positions: Vec<[f64; 3]>,
-               text: String)
-               -> Self {
-        let reduced_positions =
-            positions.iter()
-                     .map(|p| lattice.cartesian_to_reduced(*p))
-                     .collect::<Vec<[f64; 3]>>();
-        Self { lattice,
-               positions,
-               text,
-               reduced_positions }
+    pub fn new(
+        lattice: Lattice,
+        positions: Vec<[f64; 3]>,
+        text: String,
+    ) -> Self {
+        let reduced_positions = positions
+            .iter()
+            .map(|p| lattice.cartesian_to_reduced(*p))
+            .collect::<Vec<[f64; 3]>>();
+        Self {
+            lattice,
+            positions,
+            text,
+            reduced_positions,
+        }
     }
 }
 
 /// Lattice - structure for containing information on the cell
 ///
 /// <pre class="rust">
-/// distance_matrix ordering:
-///     0 -> (-1,-1,-1)   7 -> (-1, 1, 0)  14 -> (0, 1,-1)  21 -> (1, 0, 0)
-///     1 -> (-1,-1, 0)   8 -> (-1, 1, 1)  15 -> (0, 1, 0)  22 -> (1, 0, 1)
-///     2 -> (-1,-1, 1)   9 -> (0,-1,-1)   16 -> (0, 1, 1)  23 -> (1, 1,-1)
-///     3 -> (-1, 0,-1)  10 -> (0,-1, 0)   17 -> (1,-1,-1)  24 -> (1, 1, 0)
-///     4 -> (-1, 0, 0)  11 -> (0,-1, 1)   18 -> (1,-1, 0)  25 -> (1, 1, 1)
-///     5 -> (-1, 0, 1)  12 -> (0, 0,-1)   19 -> (1,-1, 1)
-///     6 -> (-1, 1,-1)  13 -> (0, 0, 1)   20 -> (1, 0,-1)
+/// shift matrix ordering:
+///     0 -> (-1,-1,-1)   7 -> (-1, 1, 0)  14 -> (0, 0, 1)  21 -> (1, 0,-1)
+///     1 -> (-1,-1, 0)   8 -> (-1, 1, 1)  15 -> (0, 1,-1)  22 -> (1, 0, 0)
+///     2 -> (-1,-1, 1)   9 -> (0,-1,-1)   16 -> (0, 1, 0)  23 -> (1, 0, 1)
+///     3 -> (-1, 0,-1)  10 -> (0,-1, 0)   17 -> (0, 1, 1)  24 -> (1, 1,-1)
+///     4 -> (-1, 0, 0)  11 -> (0,-1, 1)   18 -> (1,-1,-1)  25 -> (1, 1, 0)
+///     5 -> (-1, 0, 1)  12 -> (0, 0,-1)   19 -> (1,-1, 0)  26 -> (1, 1, 1)
+///     6 -> (-1, 1,-1)  13 -> (0, 0, 0)   20 -> (1,-1, 1)
 /// </pre>
 pub struct Lattice {
-    /// The cartesian vectors for each shift in the [`Lattice.distance_matrix`] with the
-    /// vector [0., 0., 0.] inserted at shift_matrix\[13\].
+    /// The cartesian vectors for every combination of lattice vector.
     pub cartesian_shift_matrix: [[f64; 3]; 27],
     /// Transformation matrix for converting to fractional coordinates.
     pub to_fractional: [[f64; 3]; 3],
     /// Transformation matrix for converting to cartesian coordinates.
     pub to_cartesian: [[f64; 3]; 3],
+    /// The cartesian vectors for every combination of reduced lattice vector.
     pub reduced_cartesian_shift_matrix: [[f64; 3]; 27],
+    /// The conversion of the reduced shift matrix to the individual steps in the
+    /// [`crate::grid::Grid`]
     pub reduced_grid_shift_matrix: Vec<Vec<usize>>,
     /// Transformation matrix for converting to fractional coordinates.
     pub reduced_to_fractional: [[f64; 3]; 3],
     /// Transformation matrix for converting to cartesian coordinates.
     pub reduced_to_cartesian: [[f64; 3]; 3],
+    /// Volume of the lattice.
     pub volume: f64,
 }
 
@@ -85,109 +91,129 @@ impl Lattice {
                 Some(inv) => inv,
                 None => panic!("Supplied lattice does not span 3d space."),
             };
-        let reduced_grid_shift_matrix =
-            Lattice::create_grid_shift_matrix(&reduced_cartesian_shift_matrix,
-                                              &reduced_to_fractional);
+        let reduced_grid_shift_matrix = Lattice::create_grid_shift_matrix(
+            &reduced_cartesian_shift_matrix,
+            &reduced_to_fractional,
+        );
         let volume =
             utils::vdot(lattice[0], utils::cross(lattice[1], lattice[2])).abs();
         let to_cartesian = lattice;
         let reduced_to_cartesian = reduced_lattice;
-        Self { cartesian_shift_matrix,
-               to_fractional,
-               to_cartesian,
-               reduced_cartesian_shift_matrix,
-               reduced_grid_shift_matrix,
-               reduced_to_fractional,
-               reduced_to_cartesian,
-               volume }
+        Self {
+            cartesian_shift_matrix,
+            to_fractional,
+            to_cartesian,
+            reduced_cartesian_shift_matrix,
+            reduced_grid_shift_matrix,
+            reduced_to_fractional,
+            reduced_to_cartesian,
+            volume,
+        }
     }
 
+    /// Turn fractional coordinates into Cartesian coordinates in the reduced basis.
     pub fn fractional_to_reduced(&self, p: [f64; 3]) -> [f64; 3] {
         self.cartesian_to_reduced(utils::dot(p, self.to_cartesian))
     }
 
+    /// Map Cartesian coordinates into the reduced basis.
     pub fn cartesian_to_reduced(&self, p: [f64; 3]) -> [f64; 3] {
-        let pn =
-            utils::dot(p, self.reduced_to_fractional).iter()
-                                                     .map(|p| p.rem_euclid(1.0))
-                                                     .collect::<Vec<f64>>()
-                                                     .try_into()
-                                                     .unwrap();
+        let pn = utils::dot(p, self.reduced_to_fractional)
+            .iter()
+            .map(|p| p.rem_euclid(1.0))
+            .collect::<Vec<f64>>()
+            .try_into()
+            .unwrap();
         utils::dot(pn, self.reduced_to_cartesian)
     }
 
-    fn create_cartesian_shift_matrix(lattice: &[[f64; 3]; 3])
-                                     -> [[f64; 3]; 27] {
+    /// Create the shift matrix from the lattice supplied.
+    fn create_cartesian_shift_matrix(
+        lattice: &[[f64; 3]; 3],
+    ) -> [[f64; 3]; 27] {
         let x = lattice[0];
         let y = lattice[1];
         let z = lattice[2];
-        [[-x[0] - y[0] - z[0],
-          -x[1] - y[1] - z[1],
-          -x[2] - y[2] - z[2]],
-         [-x[0] - y[0], -x[1] - y[1], -x[2] - y[2]],
-         [-x[0] - y[0] + z[0],
-          -x[1] - y[1] + z[1],
-          -x[2] - y[2] + z[2]],
-         [-x[0] - z[0], -x[1] - z[1], -x[2] - z[2]],
-         [-x[0], -x[1], -x[2]],
-         [-x[0] + z[0], -x[1] + z[1], -x[2] + z[2]],
-         [-x[0] + y[0] - z[0],
-          -x[1] + y[1] - z[1],
-          -x[2] + y[2] - z[2]],
-         [-x[0] + y[0], -x[1] + y[1], -x[2] + y[2]],
-         [-x[0] + y[0] + z[0],
-          -x[1] + y[1] + z[1],
-          -x[2] + y[2] + z[2]],
-         [-y[0] - z[0], -y[1] - z[1], -y[2] - z[2]],
-         [-y[0], -y[1], -y[2]],
-         [-y[0] + z[0], -y[1] + z[1], -y[2] + z[2]],
-         [-z[0], -z[1], -z[2]],
-         [0.0, 0.0, 0.0],
-         [z[0], z[1], z[2]],
-         [y[0] - z[0], y[1] - z[1], y[2] - z[2]],
-         [y[0], y[1], y[2]],
-         [y[0] + z[0], y[1] + z[1], y[2] + z[2]],
-         [x[0] - y[0] - z[0], x[1] - y[1] - z[1], x[2] - y[2] - z[2]],
-         [x[0] - y[0], x[1] - y[1], x[2] - y[2]],
-         [x[0] - y[0] + z[0], x[1] - y[1] + z[1], x[2] - y[2] + z[2]],
-         [x[0] - z[0], x[1] - z[1], x[2] - z[2]],
-         [x[0], x[1], x[2]],
-         [x[0] + z[0], x[1] + z[1], x[2] + z[2]],
-         [x[0] + y[0] - z[0], x[1] + y[1] - z[1], x[2] + y[2] - z[2]],
-         [x[0] + y[0], x[1] + y[1], x[2] + y[2]],
-         [x[0] + y[0] + z[0], x[1] + y[1] + z[1], x[2] + y[2] + z[2]]]
+        [
+            [
+                -x[0] - y[0] - z[0],
+                -x[1] - y[1] - z[1],
+                -x[2] - y[2] - z[2],
+            ],
+            [-x[0] - y[0], -x[1] - y[1], -x[2] - y[2]],
+            [
+                -x[0] - y[0] + z[0],
+                -x[1] - y[1] + z[1],
+                -x[2] - y[2] + z[2],
+            ],
+            [-x[0] - z[0], -x[1] - z[1], -x[2] - z[2]],
+            [-x[0], -x[1], -x[2]],
+            [-x[0] + z[0], -x[1] + z[1], -x[2] + z[2]],
+            [
+                -x[0] + y[0] - z[0],
+                -x[1] + y[1] - z[1],
+                -x[2] + y[2] - z[2],
+            ],
+            [-x[0] + y[0], -x[1] + y[1], -x[2] + y[2]],
+            [
+                -x[0] + y[0] + z[0],
+                -x[1] + y[1] + z[1],
+                -x[2] + y[2] + z[2],
+            ],
+            [-y[0] - z[0], -y[1] - z[1], -y[2] - z[2]],
+            [-y[0], -y[1], -y[2]],
+            [-y[0] + z[0], -y[1] + z[1], -y[2] + z[2]],
+            [-z[0], -z[1], -z[2]],
+            [0.0, 0.0, 0.0],
+            [z[0], z[1], z[2]],
+            [y[0] - z[0], y[1] - z[1], y[2] - z[2]],
+            [y[0], y[1], y[2]],
+            [y[0] + z[0], y[1] + z[1], y[2] + z[2]],
+            [x[0] - y[0] - z[0], x[1] - y[1] - z[1], x[2] - y[2] - z[2]],
+            [x[0] - y[0], x[1] - y[1], x[2] - y[2]],
+            [x[0] - y[0] + z[0], x[1] - y[1] + z[1], x[2] - y[2] + z[2]],
+            [x[0] - z[0], x[1] - z[1], x[2] - z[2]],
+            [x[0], x[1], x[2]],
+            [x[0] + z[0], x[1] + z[1], x[2] + z[2]],
+            [x[0] + y[0] - z[0], x[1] + y[1] - z[1], x[2] + y[2] - z[2]],
+            [x[0] + y[0], x[1] + y[1], x[2] + y[2]],
+            [x[0] + y[0] + z[0], x[1] + y[1] + z[1], x[2] + y[2] + z[2]],
+        ]
     }
 
-    fn create_grid_shift_matrix(shift_matrix: &[[f64; 3]; 27],
-                                to_fractional: &[[f64; 3]; 3])
-                                -> Vec<Vec<usize>> {
-        shift_matrix.iter()
-                    .map(|c_shift| {
-                        let shift = utils::idot(*c_shift, *to_fractional);
-                        // how many times are we going to have to reduce the vector
-                        let max = shift.iter().map(|x| x.abs()).max().unwrap();
-                        (0..max).map(|i| {
-                                    let out = shift.iter()
-                                                   .map(|s| {
-                                                       // if the value is 0 or below we have
-                                                       // finshed reducing this axis
-                                                       if let Less =
-                                                           (s.abs() - i).cmp(&1)
-                                                       {
-                                                           0
-                                                       // if it is 1 or above then we need to
-                                                       // add a 1 with the same sign as the value
-                                                       } else {
-                                                           s.signum()
-                                                       }
-                                                   })
-                                                   .collect::<Vec<isize>>();
-                                    (out[0] * 9 + out[1] * 3 + out[2] + 13)
-                                    as usize
-                                })
-                                .collect()
+    /// Turn the shift matrix into a vector of all the required steps in the [`crate::grid::Grid`]
+    /// required to move by the vector.
+    fn create_grid_shift_matrix(
+        shift_matrix: &[[f64; 3]; 27],
+        to_fractional: &[[f64; 3]; 3],
+    ) -> Vec<Vec<usize>> {
+        shift_matrix
+            .iter()
+            .map(|c_shift| {
+                let shift = utils::idot(*c_shift, *to_fractional);
+                // how many times are we going to have to reduce the vector
+                let max = shift.iter().map(|x| x.abs()).max().unwrap();
+                (0..max)
+                    .map(|i| {
+                        let out = shift
+                            .iter()
+                            .map(|s| {
+                                // if the value is 0 or below we have
+                                // finshed reducing this axis
+                                if let Less = (s.abs() - i).cmp(&1) {
+                                    0
+                                // if it is 1 or above then we need to
+                                // add a 1 with the same sign as the value
+                                } else {
+                                    s.signum()
+                                }
+                            })
+                            .collect::<Vec<isize>>();
+                        (out[0] * 9 + out[1] * 3 + out[2] + 13) as usize
                     })
                     .collect()
+            })
+            .collect()
     }
 }
 
@@ -212,7 +238,7 @@ pub fn lll_lattice(lattice: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
             }
         }
         if utils::vdot(b[i], b[i])
-           >= (delta - mu[i][i - 1].powi(2)) * utils::vdot(b[i - 1], b[i - 1])
+            >= (delta - mu[i][i - 1].powi(2)) * utils::vdot(b[i - 1], b[i - 1])
         {
             i += 1;
         } else {

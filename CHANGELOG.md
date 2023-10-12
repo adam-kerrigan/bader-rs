@@ -9,6 +9,8 @@
 - Finally dealing with saddle points in the charge density.
 - Removed indicatif and atomic-counter as dependancies.
 - Removed regex from dependancies.
+- Progress bars are now created inside functions and whether they are shown is optional.
+- Added a new silent flag: -x --silent.
 ## v0.4.5
 ### Changes
 - Removed the need of passing a density to the calculate_bader_volume_radius function.
