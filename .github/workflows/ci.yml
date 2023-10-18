@@ -7,51 +7,36 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  test-non-stable:
-    strategy:
-      matrix:
-        version: [stable, beta, nightly, 1.56.1]
-    name: Test (linux, ${{ matrix.version }})
+  test:
+    name: Test
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - uses: actions-rs/toolchain@v1
-      with:
-        toolchain: ${{ matrix.version }}
-        override: true
-        profile: minimal
-    - name: Test
-      uses: actions-rs/cargo@v1
-      with:
-        command: test
-        args: --verbose
+    - name: Test Stable
+      run: cargo test --verbose
+    - name: Install beta target
+      run: rustup update && rustup target add beta
+    - name: Test beta
+      run: cargo +beta test --verbose
+    - name: Install nightly target
+      run: rustup target add nightly
+    - name: Test nightly
+      run: cargo +nightly test --verbose
+    - name: Install MSRV target
+      run: rustup default 1.56.1
+    - name: Test MSRV
+      run: cargo test --verbose
   format:
+    name: Format
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        profile: minimal
-        override: true
-        components: rustfmt
     - name: Check formatting
-      uses: actions-rs/cargo@v1
-      with:
-        command: fmt
-        args: --all -- --check
+      run: cargo fmt --all -- --check
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-      - run: rustup component add clippy
-      - uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: -- -D warnings
+      - name: Check linting
+      - run: cargo clippy -- -D warnings
