@@ -1,5 +1,7 @@
 use bader::analysis::{
-    assign_maxima, calculate_bader_density, calculate_bader_error,
+    assign_maxima,
+    calculate_bader_density,
+    calculate_bader_error,
     calculate_bader_volumes_and_radii, // calculate_bond_strengths,
 };
 use bader::arguments::App;
