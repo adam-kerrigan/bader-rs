@@ -19,7 +19,7 @@ jobs:
     - name: Test beta
       run: cargo +beta test --verbose
     - name: Install nightly target
-      run: rustup toolchain install nighlty
+      run: rustup toolchain install nightly
     - name: Test nightly
       run: cargo +nightly test --verbose
     - name: Install MSRV target
