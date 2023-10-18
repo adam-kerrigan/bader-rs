@@ -15,11 +15,11 @@ jobs:
     - name: Test Stable
       run: cargo test --verbose
     - name: Install beta target
-      run: rustup update && rustup target add beta
+      run: rustup update && rustup toolchain install beta
     - name: Test beta
       run: cargo +beta test --verbose
     - name: Install nightly target
-      run: rustup target add nightly
+      run: rustup toolchain install nighlty
     - name: Test nightly
       run: cargo +nightly test --verbose
     - name: Install MSRV target
