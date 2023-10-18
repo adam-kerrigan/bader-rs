@@ -24,8 +24,8 @@ jobs:
       run: cargo +nightly test --verbose
     - name: Install MSRV target
       run: rustup default 1.56.1
-    - name: Test MSRV
-      run: cargo test --verbose
+    - name: Check MSRV
+      run: cargo check
   format:
     name: Format
     runs-on: ubuntu-latest
