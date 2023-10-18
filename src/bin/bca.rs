@@ -85,7 +85,7 @@ fn main() {
         voxel_map.maxima_store(*maxima, atom_map[i] as isize);
     });
     // calculate the weights leave the saddles for now
-    let saddles = weight(
+    let _saddles = weight(
         reference,
         &voxel_map,
         &index,
@@ -126,13 +126,13 @@ fn main() {
         args.threads,
         !args.silent,
     );
-    let bonds = calculate_bond_strengths(
-        &saddles,
-        reference,
-        &atoms,
-        &voxel_map,
-        !args.silent,
-    );
+    // let bonds = calculate_bond_strengths(
+    //     &saddles,
+    //     reference,
+    //     &atoms,
+    //     &voxel_map,
+    //     !args.silent,
+    // );
     // prepare the positions for writing out
     let positions = atoms
         .positions
@@ -157,10 +157,10 @@ fn main() {
     if io::output::write(atoms_charge_file, String::from("ACF.dat")).is_err() {
         panic!("Error in writing ACF.dat")
     }
-    let bonds_file = io::output::bonds_file(&bonds);
-    if io::output::write(bonds_file, String::from("BF.dat")).is_err() {
-        panic!("Error in writing BF.dat")
-    }
+    // let bonds_file = io::output::bonds_file(&bonds);
+    // if io::output::write(bonds_file, String::from("BF.dat")).is_err() {
+    //     panic!("Error in writing BF.dat")
+    // }
     // Prepare to write any densities that have been requested.
     let filename = match densities.len().cmp(&2) {
         std::cmp::Ordering::Less => vec![String::from("charge")],
