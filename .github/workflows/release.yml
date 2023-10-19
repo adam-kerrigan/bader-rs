@@ -75,22 +75,23 @@ jobs:
         uses: actions/checkout@v4
       - name: Get Tag
         id: get-release-version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
       - name: Download Linux Artifacts
         uses: actions/download-artifact@v3
-          with:
-            name: bca-x86_64-linux
+        with:
+          name: bca-x86_64-linux
       - name: Download Windows Artifacts
         uses: actions/download-artifact@v3
-          with:
-            name: bca-x86_64-windows
+        with:
+          name: bca-x86_64-windows
       - name: Download Intel Mac Artifacts
         uses: actions/download-artifact@v3
-          with:
-            name: bca-x86_64-macos
+        with:
+          name: bca-x86_64-macos
       - name: Download Apple Silicon Artifacts
         uses: actions/download-artifact@v3
-          with:
-            name: bca-aarch64-macos
+        with:
+          name: bca-aarch64-macos
       - name: Create GitHub release
         uses: softprops/action-gh-release@v1
         with:

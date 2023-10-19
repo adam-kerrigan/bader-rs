@@ -1,6 +1,7 @@
 ## v0.5.0
 ### Features
 - Finally dealing with saddle points in the charge density.
+## v0.4.7
 ### Small things
 - took VoxelMap out of the box in bca.
 ## v0.4.6
