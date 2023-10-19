@@ -96,7 +96,7 @@ fn main() {
         args.threads,
     );
     // convert into a VoxelMap as the map is filled and no longer needs to block
-    let voxel_map = Box::new(VoxelMap::from_blocking_voxel_map(voxel_map));
+    let voxel_map = VoxelMap::from_blocking_voxel_map(voxel_map);
     // sum the densities and then write the charge partition files
     let (atoms_volume, atoms_radius) = calculate_bader_volumes_and_radii(
         &voxel_map,
