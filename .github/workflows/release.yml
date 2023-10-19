@@ -59,13 +59,6 @@ jobs:
       with:
         name: bca-aarch64-macos
         path: target/release/bca
-  publish:
-    name: Publish to crates.io
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Publish crate
-      run: cargo publish --verbose --token ${{ secrets.CARGO_PUBLISH_TOKEN }}
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
@@ -83,7 +76,7 @@ jobs:
       - name: Download Windows Artifacts
         uses: actions/download-artifact@v3
         with:
-          name: bca-x86_64-windows
+          name: bca-x86_64-windows.exe
       - name: Download Intel Mac Artifacts
         uses: actions/download-artifact@v3
         with:
@@ -100,7 +93,14 @@ jobs:
           body_path: RELEASE.md
           files: |
             bca-x86_64-linux
-            bca-x86_64-windows
+            bca-x86_64-windows.exe
             bca-x86_64-macos
             bca-aarch64-macos
-
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+    - uses: actions/checkout@v4
+    - name: Publish crate
+      run: cargo publish --verbose --token ${{ secrets.CARGO_PUBLISH_TOKEN }}
