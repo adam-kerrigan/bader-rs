@@ -1,6 +1,6 @@
 [package]
 name = "bader"
-version = "0.4.6"
+version = "0.4.7"
 authors = ["Adam Kerrigan <ak1014@york.ac.uk>"]
 edition = "2021"
 rust-version = "1.56.1"

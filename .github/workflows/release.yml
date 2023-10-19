@@ -77,20 +77,20 @@ jobs:
         id: get-release-version
       - name: Download Linux Artifacts
         uses: actions/download-artifact@v3
-          with:
-            name: bca-x86_64-linux
+        with:
+          name: bca-x86_64-linux
       - name: Download Windows Artifacts
         uses: actions/download-artifact@v3
-          with:
-            name: bca-x86_64-windows
+        with:
+          name: bca-x86_64-windows
       - name: Download Intel Mac Artifacts
         uses: actions/download-artifact@v3
-          with:
-            name: bca-x86_64-macos
+        with:
+          name: bca-x86_64-macos
       - name: Download Apple Silicon Artifacts
         uses: actions/download-artifact@v3
-          with:
-            name: bca-aarch64-macos
+        with:
+          name: bca-aarch64-macos
       - name: Create GitHub release
         uses: softprops/action-gh-release@v1
         with:
