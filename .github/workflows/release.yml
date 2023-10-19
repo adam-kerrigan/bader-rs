@@ -75,6 +75,7 @@ jobs:
         uses: actions/checkout@v4
       - name: Get Tag
         id: get-release-version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
       - name: Download Linux Artifacts
         uses: actions/download-artifact@v3
         with:
