@@ -1,6 +1,8 @@
 ## v0.5.0
 ### Features
 - Finally dealing with saddle points in the charge density.
+### Small things
+- took VoxelMap out of the box in bca.
 ## v0.4.6
 ### Features
 - Added a method for calculating the Laplacian at a point.
