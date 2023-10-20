@@ -515,19 +515,7 @@ impl App {
                     ));
                 }
             }
-            None => {
-                let f = file.to_lowercase();
-                if f.contains("cube") {
-                    FileType::Cube
-                } else if f.contains("car") {
-                    FileType::Vasp
-                } else {
-                    eprintln!(
-                        "Cannot detect file type, attempting to read as VASP."
-                    );
-                    FileType::Vasp
-                }
-            }
+            None => parse_filetype(&file),
         };
         let weight_tolerance = match arguments.get("weight tolerance") {
             Some(w) => match w.parse::<f64>() {
@@ -754,6 +742,19 @@ pub struct Args {
     pub threads: usize,
     /// Is there a tolerance to consider a density vacuum.
     pub vacuum_tolerance: Option<f64>,
+}
+
+/// Parse the file type from the filename.
+pub fn parse_filetype(fname: &str) -> FileType {
+    let f = fname.to_lowercase();
+    if f.contains("cube") {
+        FileType::Cube
+    } else if f.contains("car") {
+        FileType::Vasp
+    } else {
+        eprintln!("Cannot detect file type, attempting to read as VASP.");
+        FileType::Vasp
+    }
 }
 
 #[cfg(test)]
