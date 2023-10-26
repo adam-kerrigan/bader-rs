@@ -3,6 +3,7 @@
 - Finally dealing with saddle points in the charge density.
 ### Changes
 - Opt -> Arg in arguments
+- added a parse_filetype function.
 ## v0.4.7
 ### Small things
 - Took VoxelMap out of the box in bca.
