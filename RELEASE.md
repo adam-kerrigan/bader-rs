@@ -1,5 +1,6 @@
-## v0.4.7
-### Small things
-- took VoxelMap out of the box in bca.
+## v0.4.8
+### Changes
+- Opt -> Arg in arguments
+- added a parse_filetype function.
 
 small release to check workflows
