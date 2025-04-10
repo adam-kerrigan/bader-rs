@@ -20,10 +20,10 @@ pub struct Lock<'a> {
     data: &'a BlockingVoxelMap,
 }
 
-unsafe impl<'a> Sync for Lock<'a> {}
+unsafe impl Sync for Lock<'_> {}
 
 /// Deref only exposes the weight_map field of a [`VoxelMap`].
-impl<'a> Deref for Lock<'a> {
+impl Deref for Lock<'_> {
     type Target = Vec<Box<[f64]>>;
     fn deref(&self) -> &Vec<Box<[f64]>> {
         unsafe { &*self.data.weight_map.get() }
@@ -31,14 +31,14 @@ impl<'a> Deref for Lock<'a> {
 }
 
 /// DerefMut only exposes the weight_map field of a [`VoxelMap`].
-impl<'a> DerefMut for Lock<'a> {
+impl DerefMut for Lock<'_> {
     fn deref_mut(&mut self) -> &mut Vec<Box<[f64]>> {
         unsafe { &mut *self.data.weight_map.get() }
     }
 }
 
 /// Make sure to free the lock when the struct is dropped.
-impl<'a> Drop for Lock<'a> {
+impl Drop for Lock<'_> {
     fn drop(&mut self) {
         self.data.lock.store(false, Ordering::SeqCst);
     }

@@ -38,11 +38,7 @@ pub struct FortranFormat {
 impl std::fmt::Display for FortranFormat {
     /// Format the structure into a fortran style exponential.
     fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let prec = if let Some(prec) = formatter.precision() {
-            prec
-        } else {
-            6
-        };
+        let prec = formatter.precision().unwrap_or(6);
         match self.float {
             None => {
                 write!(formatter, " 0.{:0<width$}E{:+03}", 0, 0, width = prec)
