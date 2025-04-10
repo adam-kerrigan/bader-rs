@@ -667,7 +667,7 @@ impl App {
             },
         };
         let spin = arguments.get("spin").cloned();
-        let silent = arguments.get("silent").is_some();
+        let silent = arguments.contains_key("silent");
         Ok(Args {
             file,
             file_type,
