@@ -6,11 +6,17 @@ use rustc_hash::FxHashMap;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
+/// Result of a Weight step.
+///
+/// TODO: turn this into an actual result type?
 pub enum WeightResult {
-    Maxima,
+    /// Length of the Box dictates the type of Critical Point, 1 -> Maxima, 2 -> Saddle,
+    /// 3+ -> Saddle or minima. Critical Points with >=2 will be on boundaries.
+    Critical(Box<[f64]>),
+    /// Entirely assigned to a single Bader atom.
     Interior(usize),
+    /// Meeting point at the edge of 2 or more Bader atoms.
     Boundary(Box<[f64]>),
-    Saddle(Box<[f64]>),
 }
 
 /// Steps in the density grid, from point p, following the gradient.
@@ -22,10 +28,11 @@ pub enum WeightResult {
 ///
 /// * `p`: The point from which to step.
 /// * `density`: The reference [`Grid`].
-/// * `weight_map`: An [`Arc`] wrapped [`BlockingVoxelMap`] for tracking the maxima.
+/// * `voxel_map`: An [`Arc`] wrapped [`BlockingVoxelMap`] for tracking the maxima.
+/// * `weight_tolerance`: Minimum percentage value to consider the weight significant.
 ///
 /// ### Returns:
-/// [`WeightResult`]: The type of point `p` is (maxima, interior, boundary) and
+/// [`WeightResult`]: The type of point `p` is Critical, Interior or Boundary and
 /// the relevant data for each type.
 ///
 /// # Examples
@@ -51,7 +58,7 @@ pub enum WeightResult {
 ///     voxel_map.maxima_store(*p, 62 - (i as isize) % 2);
 /// }
 /// let weight = match weight_step(33, &density, &voxel_map, 1E-8) {
-///     WeightResult::Saddle(weights) => weights,
+///     WeightResult::Critical(weights) => weights,
 ///     _ => Vec::with_capacity(0).into(),
 /// };
 /// assert_eq!(weight, vec![61.375, 62.625].into())
@@ -66,7 +73,7 @@ pub fn weight_step(
     let grid = &voxel_map.grid;
     let mut t_sum = 0.;
     let mut weights = FxHashMap::<usize, f64>::default();
-    let mut saddle_flag = true;
+    let mut weight_count = 0;
     // colllect the shift and distances and iterate over them.
     for (pt, alpha) in grid.voronoi_shifts(p) {
         let charge_diff = density[pt as usize] - control;
@@ -79,8 +86,8 @@ pub fn weight_step(
             match maxima.cmp(&-1) {
                 // feeds into already weighted voxel therefore not a saddle point
                 std::cmp::Ordering::Less => {
-                    saddle_flag = false;
                     let point_weights = voxel_map.weight_get(maxima);
+                    weight_count = point_weights.len().max(weight_count);
                     for maxima_weight in point_weights.iter() {
                         let maxima = *maxima_weight as usize;
                         let w = maxima_weight - maxima as f64;
@@ -93,7 +100,7 @@ pub fn weight_step(
                     let weight = weights.entry(maxima as usize).or_insert(0.);
                     *weight += rho;
                 }
-                // going into vacuum (this is be impossible)
+                // going into vacuum (this be impossible)
                 std::cmp::Ordering::Equal => (),
             }
             t_sum += rho;
@@ -103,7 +110,7 @@ pub fn weight_step(
         // more than one weight is a boundary or saddle (if the weight is weighty enough)
         std::cmp::Ordering::Greater => {
             let mut total = 0.;
-            // remove weuights below the tolerance
+            // remove weights below the tolerance
             let weights = weights
                 .into_iter()
                 .filter_map(|(maxima, weight)| {
@@ -122,9 +129,9 @@ pub fn weight_step(
                     .iter()
                     .map(|(maxima, w)| *maxima as f64 + w / total)
                     .collect::<Box<[f64]>>();
-                // check if saddle point
-                if saddle_flag {
-                    WeightResult::Saddle(weights)
+                // check if new maxima has joined the weights -> Critical Point (saddle/ring/cage)
+                if weights.len() > weight_count {
+                    WeightResult::Critical(weights)
                 } else {
                     WeightResult::Boundary(weights)
                 }
@@ -137,7 +144,7 @@ pub fn weight_step(
             WeightResult::Interior(*weights.keys().next().unwrap())
         }
         // no flux out means maximum
-        std::cmp::Ordering::Less => WeightResult::Maxima,
+        std::cmp::Ordering::Less => WeightResult::Critical([0.0].into()),
     }
 }
 
@@ -154,7 +161,7 @@ pub fn weight(
     threads: usize,
 ) -> Vec<isize> {
     let counter = Arc::new(AtomicUsize::new(0));
-    let mut saddle_points = vec![];
+    let mut critical_points = vec![];
     let pbar: Box<dyn ProgressBar> = match visible_bar {
         false => Box::new(HiddenBar {}),
         true => {
@@ -166,7 +173,7 @@ pub fn weight(
         let th = (0..threads)
             .map(|_| {
                 s.spawn(|_| {
-                    let mut saddles = vec![];
+                    let mut c_ps = vec![];
                     loop {
                         let p = {
                             let i = counter.fetch_add(
@@ -184,14 +191,6 @@ pub fn weight(
                             voxel_map,
                             weight_tolerance,
                         ) {
-                            // Maxima should already be stored
-                            WeightResult::Maxima => {
-                                if voxel_map.maxima_check(p).is_none() {
-                                    panic!(
-                                        "Found new maxima in voxel assigning."
-                                    )
-                                }
-                            }
                             WeightResult::Interior(maxima) => {
                                 voxel_map.maxima_store(p, maxima as isize);
                             }
@@ -204,26 +203,29 @@ pub fn weight(
                                 };
                                 voxel_map.weight_store(p, i);
                             }
-                            WeightResult::Saddle(weights) => {
-                                let i = {
-                                    let mut weight = voxel_map.lock();
-                                    let i = weight.len();
-                                    (*weight).push(weights);
-                                    i
-                                };
-                                voxel_map.weight_store(p, i);
-                                saddles.push(p);
+                            WeightResult::Critical(weights) => {
+                                // length = 1 is a maxima and doesn't need storing.
+                                if weights.len() > 1 {
+                                    let i = {
+                                        let mut weight = voxel_map.lock();
+                                        let i = weight.len();
+                                        (*weight).push(weights);
+                                        i
+                                    };
+                                    voxel_map.weight_store(p, i);
+                                }
+                                c_ps.push(p);
                             }
                         }
                         pbar.tick();
                     }
-                    saddles
+                    c_ps
                 })
             })
             .collect::<Vec<_>>();
         for thread in th {
-            if let Ok(saddles) = thread.join() {
-                saddle_points.extend(saddles);
+            if let Ok(c_ps) = thread.join() {
+                critical_points.extend(c_ps);
             }
         }
     })
@@ -232,8 +234,8 @@ pub fn weight(
         let mut weights = voxel_map.lock();
         weights.shrink_to_fit();
     }
-    saddle_points.shrink_to_fit();
-    saddle_points
+    critical_points.shrink_to_fit();
+    critical_points
 }
 
 /// Find the maxima within the charge density
