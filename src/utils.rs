@@ -9,6 +9,11 @@ pub fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     ]
 }
 
+/// subtract two [f64;3] vectors
+pub fn subtract(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
 /// compute the dot product between a vector and a matrix
 pub fn dot(v: [f64; 3], m: [[f64; 3]; 3]) -> [f64; 3] {
     (0..3)

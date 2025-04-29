@@ -97,15 +97,21 @@ impl Grid {
             .collect()
     }
 
+    /// Converts a 1D index of the array into a 3D index
+    pub fn to_3d(&self, p: isize) -> [isize; 3] {
+        let x = p / (self.size.y * self.size.z);
+        let y = (p / self.size.z).rem_euclid(self.size.y);
+        let z = p.rem_euclid(self.size.z);
+        [x, y, z]
+    }
+
     /// Converts a point in the array to cartesian.
     pub fn to_cartesian(&self, p: isize) -> [f64; 3] {
-        let x = (p / (self.size.y * self.size.z)) as f64;
-        let y = (p / self.size.z).rem_euclid(self.size.y) as f64;
-        let z = p.rem_euclid(self.size.z) as f64;
+        let [x, y, z] = self.to_3d(p);
         let p = [
-            x + self.voxel_origin[0],
-            y + self.voxel_origin[1],
-            z + self.voxel_origin[2],
+            x as f64 + self.voxel_origin[0],
+            y as f64 + self.voxel_origin[1],
+            z as f64 + self.voxel_origin[2],
         ];
         dot(p, self.voxel_lattice.to_cartesian)
     }

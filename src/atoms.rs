@@ -127,6 +127,48 @@ impl Lattice {
         utils::dot(pn, self.reduced_to_cartesian)
     }
 
+    // Calculates the minimum distance between two points, with an optional upper bound.
+    pub fn minimum_distance(
+        &self,
+        a: [f64; 3],
+        b: [f64; 3],
+        min_dist: Option<f64>,
+    ) -> f64 {
+        let mut min_dist = min_dist.unwrap_or(f64::INFINITY);
+        for periodic_shift in self.reduced_cartesian_shift_matrix.iter() {
+            let distance = {
+                (a[0] - (b[0] + periodic_shift[0])).powi(2)
+                    + (a[1] - (b[1] + periodic_shift[1])).powi(2)
+                    + (a[2] - (b[2] + periodic_shift[2])).powi(2)
+            };
+            if distance < min_dist {
+                min_dist = distance;
+            }
+        }
+        min_dist
+    }
+
+    pub fn closest_image(&self, a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+        let mut min_dist = f64::INFINITY;
+        let mut position = [0.0; 3];
+        for periodic_shift in self.reduced_cartesian_shift_matrix.iter() {
+            let image_position = b
+                .iter()
+                .zip(periodic_shift)
+                .map(|(f, image)| *f + *image)
+                .collect::<Vec<f64>>();
+            let distance = a
+                .iter()
+                .zip(&image_position)
+                .fold(0.0, |acc, (f, p)| acc + (f - p).powi(2));
+            if distance < min_dist {
+                min_dist = distance;
+                position = image_position.try_into().unwrap();
+            }
+        }
+        position
+    }
+
     /// Create the shift matrix from the lattice supplied.
     fn create_cartesian_shift_matrix(
         lattice: &[[f64; 3]; 3],
