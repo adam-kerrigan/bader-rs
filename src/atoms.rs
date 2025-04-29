@@ -120,7 +120,7 @@ impl Lattice {
     pub fn cartesian_to_reduced(&self, p: [f64; 3]) -> [f64; 3] {
         let pn = utils::dot(p, self.reduced_to_fractional)
             .iter()
-            .map(|p| p.rem_euclid(1.0))
+            .map(|p| p - p.floor())
             .collect::<Vec<f64>>()
             .try_into()
             .unwrap();

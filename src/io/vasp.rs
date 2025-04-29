@@ -288,9 +288,9 @@ impl FileFormat for Vasp {
                 .map(|p| {
                     utils::dot(
                         [
-                            p[2].rem_euclid(1f64),
-                            p[1].rem_euclid(1f64),
-                            p[0].rem_euclid(1f64),
+                            p[2] - p[2].floor(),
+                            p[1] - p[1].floor(),
+                            p[0] - p[0].floor(),
                         ],
                         lattice.to_cartesian,
                     )
@@ -303,9 +303,9 @@ impl FileFormat for Vasp {
                         utils::dot([p[2], p[1], p[0]], lattice.to_fractional);
                     utils::dot(
                         [
-                            p[0].rem_euclid(1f64),
-                            p[1].rem_euclid(1f64),
-                            p[2].rem_euclid(1f64),
+                            p[0] - p[0].floor(),
+                            p[1] - p[1].floor(),
+                            p[2] - p[2].floor(),
                         ],
                         lattice.to_cartesian,
                     )
