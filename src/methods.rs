@@ -23,6 +23,7 @@ pub enum WeightResult {
     Maximum,
 }
 
+#[derive(Clone)]
 pub struct CriticalPoint {
     pub position: isize,
     pub kind: CriticalPointKind,
@@ -49,6 +50,7 @@ pub enum CriticalPointKind {
     Bond,
     Ring,
     Cage,
+    Blank,
 }
 
 /// Steps in the density grid, from point p, following the gradient.
@@ -107,37 +109,49 @@ pub fn weight_step(
     let mut weights = FxHashMap::<usize, f64>::default();
     let mut weight_count = 0;
     // colllect the shift and distances and iterate over them.
-    for (pt, alpha) in grid.voronoi_shifts(p) {
-        let charge_diff = density[pt as usize] - control;
-        // density differences of zero should be ignored to avoid division by
-        // zero errors.
-        if charge_diff > 0. {
-            // calculate the gradient and add any weights to the HashMap.
-            let rho = charge_diff * alpha;
-            let maxima = voxel_map.maxima_get(pt);
-            match maxima.cmp(&-1) {
-                // feeds into already weighted voxel therefore not a saddle point
-                std::cmp::Ordering::Less => {
-                    let point_weights = voxel_map.weight_get(maxima);
-                    weight_count = point_weights.len().max(weight_count);
-                    for maxima_weight in point_weights.iter() {
-                        let maxima = *maxima_weight as usize;
-                        let w = maxima_weight - maxima as f64;
-                        let weight = weights.entry(maxima).or_insert(0.);
-                        *weight += w * rho;
+    grid.voronoi_shifts(p)
+        .into_iter()
+        .for_each(|((pt, image), alpha)| {
+            let charge_diff = density[pt as usize] - control;
+            // density differences of zero should be ignored to avoid division by
+            // zero errors.
+            if charge_diff > 0. {
+                // calculate the gradient and add any weights to the HashMap.
+                let rho = charge_diff * alpha;
+                let maxima = voxel_map.maxima_get(pt);
+                match maxima.cmp(&-1) {
+                    // feeds into already weighted voxel therefore not a saddle point
+                    std::cmp::Ordering::Less => {
+                        let point_weights = voxel_map.weight_get(maxima);
+                        weight_count = point_weights.len().max(weight_count);
+                        for maxima_weight in point_weights.iter() {
+                            let mut maxima = *maxima_weight as usize;
+                            let w = maxima_weight - maxima as f64;
+                            if image[0].abs() + image[1].abs() + image[2].abs()
+                                != 0
+                            {
+                                maxima = grid.encode_maxima(maxima, image);
+                            }
+                            let weight = weights.entry(maxima).or_insert(0.);
+                            *weight += w * rho;
+                        }
                     }
+                    // interior point
+                    std::cmp::Ordering::Greater => {
+                        let mut maxima = maxima as usize;
+                        if image[0].abs() + image[1].abs() + image[2].abs() != 0
+                        {
+                            maxima = grid.encode_maxima(maxima, image);
+                        }
+                        let weight = weights.entry(maxima).or_insert(0.);
+                        *weight += rho;
+                    }
+                    // going into vacuum (this be impossible)
+                    std::cmp::Ordering::Equal => (),
                 }
-                // interior point
-                std::cmp::Ordering::Greater => {
-                    let weight = weights.entry(maxima as usize).or_insert(0.);
-                    *weight += rho;
-                }
-                // going into vacuum (this be impossible)
-                std::cmp::Ordering::Equal => (),
+                t_sum += rho;
             }
-            t_sum += rho;
-        }
-    }
+        });
     match weights.len().cmp(&1) {
         // more than one weight is a boundary or saddle (if the weight is weighty enough)
         std::cmp::Ordering::Greater => {
@@ -317,8 +331,9 @@ pub fn maxima_finder(
                             // we have to tick first due to early return
                             pbar.tick();
                             let rho = density[*p];
-                            for (pt, _) in
-                                voxel_map.grid.voronoi_shifts(*p as isize)
+                            for (pt, _) in voxel_map
+                                .grid
+                                .voronoi_shifts_nocheck(*p as isize)
                             {
                                 if density[pt as usize] > rho {
                                     return None;
@@ -391,8 +406,9 @@ pub fn minima_finder(
                             // we have to tick first due to early return
                             pbar.tick();
                             let rho = density[*p];
-                            for (pt, _) in
-                                voxel_map.grid.voronoi_shifts(*p as isize)
+                            for (pt, _) in voxel_map
+                                .grid
+                                .voronoi_shifts_nocheck(*p as isize)
                             {
                                 if density[pt as usize] < rho {
                                     return None;
@@ -401,6 +417,8 @@ pub fn minima_finder(
                             // if we made it this far we have a maxima
                             // change this index to a value it could
                             // never be and return it
+                            // TODO: This needs to check if the cage is actually a boundary and if
+                            // not complain that the weight tolerance is too high
                             Some(CriticalPoint::new(
                                 *p as isize,
                                 CriticalPointKind::Cage,
@@ -507,7 +525,7 @@ pub fn assign_maximum(
 /// Calculate the Laplacian of the density at a point in the grid
 pub fn laplacian(p: usize, density: &[f64], grid: &Grid) -> f64 {
     let rho = density[p];
-    grid.voronoi_shifts(p as isize)
+    grid.voronoi_shifts_nocheck(p as isize)
         .iter()
         .fold(0.0, |acc, (pt, alpha)| {
             acc + alpha * (density[*pt as usize] - rho)

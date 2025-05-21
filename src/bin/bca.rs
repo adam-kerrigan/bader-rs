@@ -130,15 +130,17 @@ fn main() {
         args.threads,
         !args.silent,
     );
-    let critical_points = critcal_point_pruning(
+    let _critical_points = critcal_point_pruning(
         &critical_points.0,
         &critical_points.1,
         &critical_points.2,
         &critical_points.3,
         reference,
         &atoms,
+        voxel_map.grid_get(),
         !args.silent,
     );
+    /*
     println!(
         "{} {} {} {}",
         critical_points.0.len(),
@@ -146,6 +148,39 @@ fn main() {
         critical_points.2.len(),
         critical_points.3.len()
     );
+    critical_points.0.iter().for_each(|cp| {
+        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
+        let x = x as f64 / voxel_map.grid.size.x as f64;
+        let y = y as f64 / voxel_map.grid.size.y as f64;
+        let z = z as f64 / voxel_map.grid.size.z as f64;
+        let (x, y, z) = file_type.coordinate_format([x, y, z]);
+        println!("{} {} {}        {:?}", x, y, z, cp.atoms);
+    });
+    critical_points.1.iter().for_each(|cp| {
+        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
+        let x = x as f64 / voxel_map.grid.size.x as f64;
+        let y = y as f64 / voxel_map.grid.size.y as f64;
+        let z = z as f64 / voxel_map.grid.size.z as f64;
+        let (x, y, z) = file_type.coordinate_format([x, y, z]);
+        println!("{} {} {}        {:?}", x, y, z, cp.atoms);
+    });
+    critical_points.2.iter().for_each(|cp| {
+        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
+        let x = x as f64 / voxel_map.grid.size.x as f64;
+        let y = y as f64 / voxel_map.grid.size.y as f64;
+        let z = z as f64 / voxel_map.grid.size.z as f64;
+        let (x, y, z) = file_type.coordinate_format([x, y, z]);
+        println!("{} {} {}        {:?}", x, y, z, cp.atoms);
+    });
+    critical_points.3.iter().for_each(|cp| {
+        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
+        let x = x as f64 / voxel_map.grid.size.x as f64;
+        let y = y as f64 / voxel_map.grid.size.y as f64;
+        let z = z as f64 / voxel_map.grid.size.z as f64;
+        let (x, y, z) = file_type.coordinate_format([x, y, z]);
+        println!("{} {} {}        {:?}", x, y, z, cp.atoms);
+    });
+    */
     // prepare the positions for writing out
     let positions = atoms
         .positions

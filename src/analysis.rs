@@ -1,7 +1,8 @@
 use crate::atoms::Atoms;
-use crate::methods::{laplacian, CriticalPoint};
+use crate::grid::Grid;
+use crate::methods::{laplacian, CriticalPoint, CriticalPointKind};
 use crate::progress::{Bar, HiddenBar, ProgressBar};
-use crate::utils::{cross, norm, subtract, vdot};
+use crate::utils::{cross, dot, norm, subtract, vdot};
 use crate::voxel_map::{Voxel, VoxelMap};
 use crossbeam_utils::thread;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -83,12 +84,16 @@ pub fn calculate_bader_density(
                             let p = index * chunk.len() + voxel_index;
                             match vm.maxima_to_voxel(*maxima) {
                                 Voxel::Maxima(m) => {
+                                    let (m, _) =
+                                        voxel_map.grid.decode_maxima(m);
                                     bd[m] += density[p];
                                 }
                                 Voxel::Boundary(weights) => {
                                     for weight in weights.iter() {
                                         let m = *weight as usize;
                                         let w = weight - (m as f64);
+                                        let (m, _) =
+                                            voxel_map.grid.decode_maxima(m);
                                         bd[m] += w * density[p];
                                     }
                                 }
@@ -210,6 +215,8 @@ pub fn calculate_bader_volumes_and_radii(
                                 for weight in weights.iter() {
                                     let m = *weight as usize;
                                     let w = weight - (m as f64);
+                                    let (m, _) =
+                                        voxel_map.grid.decode_maxima(m);
                                     bv[m] += w;
                                     let atom_number = vm.maxima_to_atom(m);
                                     let p_c = vm.grid.to_cartesian(p as isize);
@@ -219,6 +226,8 @@ pub fn calculate_bader_volumes_and_radii(
                                 }
                             }
                             Voxel::Maxima(m) => {
+                                    let (m, _) =
+                                        voxel_map.grid.decode_maxima(m);
                                 bv[m] += 1.0;
                             }
                             Voxel::Vacuum => {
@@ -304,12 +313,16 @@ pub fn calculate_bader_error(
                             let lapl = laplacian(p, density, &vm.grid);
                             match vm.maxima_to_voxel(*maxima) {
                                 Voxel::Maxima(m) => {
+                                    let (m, _) =
+                                        voxel_map.grid.decode_maxima(m);
                                     bd[m] += lapl;
                                 }
                                 Voxel::Boundary(weights) => {
                                     for weight in weights.iter() {
                                         let m = *weight as usize;
                                         let w = weight - (m as f64);
+                                        let (m, _) =
+                                            voxel_map.grid.decode_maxima(m);
                                         bd[m] += w * lapl;
                                     }
                                 }
@@ -352,6 +365,7 @@ pub fn critcal_point_pruning(
     cages: &[CriticalPoint],
     density: &[f64],
     atoms: &Atoms,
+    grid: &Grid,
     visible_bar: bool,
 ) -> (
     Vec<CriticalPoint>,
@@ -367,26 +381,28 @@ pub fn critcal_point_pruning(
         )),
     };
     let pbar = &progress_bar;
-    // 0 -> nuclei 1 -> bond 2 -> ring 3 -> cage
     // Find all the nuclei with the same atom number and group them based on which is largest
-    // charge density
-    let nuclei: Vec<CriticalPoint> = nuclei
-        .iter()
-        .filter_map(|cp| {
-            let p = cp.position;
-            let rho = density[p as usize];
-            let atom_num = cp.atoms[0];
-            pbar.tick();
-            for cp_t in nuclei {
-                let pt = cp_t.position;
-                let atom_num_t = cp_t.atoms[0];
-                if atom_num_t == atom_num && rho < density[pt as usize] {
-                    return None;
-                }
-            }
-            Some(CriticalPoint::new(cp.position, cp.kind, cp.atoms.clone()))
-        })
-        .collect();
+    // charge density. All maxima will be in image (0, 0, 0).
+    // We need to order the nuclei by atom so that we can get the position of them by knowing the
+    // atom number.
+    let mut ordered_nuclei =
+        vec![
+            CriticalPoint::new(0, CriticalPointKind::Blank, Box::new([]));
+            atoms.positions.len()
+        ];
+    nuclei.iter().for_each(|cp| {
+        let p = cp.position;
+        let rho = density[p as usize];
+        let atom_num = cp.atoms[0];
+        if let CriticalPointKind::Blank = ordered_nuclei[atom_num].kind {
+            ordered_nuclei[atom_num] =
+                CriticalPoint::new(cp.position, cp.kind, cp.atoms.clone());
+        } else if rho > density[ordered_nuclei[atom_num].position as usize] {
+            ordered_nuclei[atom_num] =
+                CriticalPoint::new(cp.position, cp.kind, cp.atoms.clone());
+        }
+        pbar.tick();
+    });
     // Find all the cages with the same atoms and group them based on which is smallest charge
     // density
     let cages: Vec<CriticalPoint> = cages
@@ -394,23 +410,35 @@ pub fn critcal_point_pruning(
         .filter_map(|cp| {
             pbar.tick();
             if cp.atoms.len() < 4 {
+                // impossible to have a cage with 3 atoms
                 return None;
             } else {
-                let origin = atoms.reduced_positions[cp.atoms[0]];
-                let vec_1 = subtract(
-                    atoms.lattice.closest_image(
-                        origin,
-                        atoms.reduced_positions[cp.atoms[1]],
-                    ),
-                    origin,
-                );
-                let vec_2 = subtract(
-                    atoms.lattice.closest_image(
-                        origin,
-                        atoms.reduced_positions[cp.atoms[2]],
-                    ),
-                    origin,
-                );
+                // form a plane with the first 3 atoms
+                let positions = cp.atoms[..3]
+                    .iter()
+                    .map(|a| {
+                        let (atom_num, image) = grid.decode_maxima(*a);
+                        let image_shift = dot(
+                            image
+                                .into_iter()
+                                .map(|i| i as f64)
+                                .collect::<Vec<f64>>()
+                                .try_into()
+                                .unwrap(),
+                            atoms.lattice.to_cartesian,
+                        );
+                        // get the position of the nuclei and apply the image shift
+                        grid.to_cartesian(ordered_nuclei[atom_num].position)
+                            .iter()
+                            .zip(image_shift)
+                            .map(|(p, s)| *p + s)
+                            .collect::<Vec<f64>>()
+                            .try_into()
+                            .unwrap()
+                    })
+                    .collect::<Vec<[f64; 3]>>();
+                let vec_1 = subtract(positions[1], positions[0]);
+                let vec_2 = subtract(positions[2], positions[0]);
                 let plane = cross(vec_1, vec_2);
                 let plane_normal = norm(plane);
                 let plane: [f64; 3] = plane
@@ -420,13 +448,28 @@ pub fn critcal_point_pruning(
                     .try_into()
                     .unwrap();
                 let mut flag = true;
-                for u in cp.atoms[3..].iter() {
-                    let vec_2 = subtract(
-                        atoms
-                            .lattice
-                            .closest_image(origin, atoms.reduced_positions[*u]),
-                        origin,
+                // check every other atom against this plane, at least one should not be in the
+                // plane
+                for a in cp.atoms[3..].iter() {
+                    let (atom_num, image) = grid.decode_maxima(*a);
+                    let image_shift = dot(
+                        image
+                            .into_iter()
+                            .map(|i| i as f64)
+                            .collect::<Vec<f64>>()
+                            .try_into()
+                            .unwrap(),
+                        atoms.lattice.to_cartesian,
                     );
+                    let position = grid
+                        .to_cartesian(ordered_nuclei[atom_num].position)
+                        .iter()
+                        .zip(image_shift.into_iter())
+                        .map(|(p, s)| *p + s)
+                        .collect::<Vec<f64>>()
+                        .try_into()
+                        .unwrap();
+                    let vec_2 = subtract(position, positions[0]);
                     let plane_t = cross(vec_1, vec_2);
                     let plane_normal = norm(plane_t);
                     let plane_t: [f64; 3] = plane_t
@@ -435,11 +478,13 @@ pub fn critcal_point_pruning(
                         .collect::<Vec<f64>>()
                         .try_into()
                         .unwrap();
-                    // TODO: make this a tolerance
-                    if vdot(plane, plane_t).abs().acos() > 0.01 {
+                    // TODO: make this a tolerance currently 5.73 degrees
+                    if vdot(plane, plane_t).abs() < 0.995 {
                         flag = false;
                     }
                 }
+                // if the flag is still true then all were in the same plane and the cage is a
+                // density fluctuation
                 if flag {
                     return None;
                 }
@@ -447,6 +492,7 @@ pub fn critcal_point_pruning(
             let p = cp.position;
             let rho = density[p as usize];
             let atom_num = FxHashSet::from_iter(cp.atoms.iter());
+            // now we check against the other cages, note there is no check on folded atoms
             for cp_t in cages {
                 let pt = cp_t.position;
                 let atom_num_t = FxHashSet::from_iter(cp_t.atoms.iter());
@@ -457,26 +503,47 @@ pub fn critcal_point_pruning(
             Some(CriticalPoint::new(cp.position, cp.kind, cp.atoms.clone()))
         })
         .collect();
-    let rings: Vec<CriticalPoint> = rings
+    // We are going to add more if the ring has no atom within the periodic bounds
+    let mut pbc_rings = vec![];
+    let rings = rings
         .iter()
         .filter_map(|cp| {
-            let atom_num = FxHashSet::from_iter(cp.atoms.iter());
+            let mut folded_atom_nums =
+                Vec::<usize>::with_capacity(cp.atoms.len());
+            let mut atom_images = Vec::<[i8; 3]>::with_capacity(cp.atoms.len());
+            let mut origin_flag = false;
+            let positions = cp.atoms[..3]
+                .iter()
+                .map(|a| {
+                    let (atom_num, image) = grid.decode_maxima(*a);
+                    folded_atom_nums.push(atom_num);
+                    atom_images.push(image);
+                    if image[0].abs() + image[1].abs() + image[2].abs() == 0 {
+                        origin_flag = true;
+                    }
+                    let image_shift = dot(
+                        image
+                            .into_iter()
+                            .map(|i| i as f64)
+                            .collect::<Vec<f64>>()
+                            .try_into()
+                            .unwrap(),
+                        atoms.lattice.to_cartesian,
+                    );
+                    grid.to_cartesian(ordered_nuclei[atom_num].position)
+                        .iter()
+                        .zip(image_shift)
+                        .map(|(p, s)| *p + s)
+                        .collect::<Vec<f64>>()
+                        .try_into()
+                        .unwrap()
+                })
+                .collect::<Vec<[f64; 3]>>();
+            // if has 3 atoms they must form a plane
             if cp.atoms.len() > 3 {
-                let origin = atoms.reduced_positions[cp.atoms[0]];
-                let vec_1 = subtract(
-                    atoms.lattice.closest_image(
-                        origin,
-                        atoms.reduced_positions[cp.atoms[1]],
-                    ),
-                    origin,
-                );
-                let vec_2 = subtract(
-                    atoms.lattice.closest_image(
-                        origin,
-                        atoms.reduced_positions[cp.atoms[2]],
-                    ),
-                    origin,
-                );
+                // create a vector normal to the plane span by the first 3 atoms
+                let vec_1 = subtract(positions[1], positions[0]);
+                let vec_2 = subtract(positions[2], positions[0]);
                 let plane = cross(vec_1, vec_2);
                 let plane_normal = norm(plane);
                 let plane: [f64; 3] = plane
@@ -485,13 +552,30 @@ pub fn critcal_point_pruning(
                     .collect::<Vec<f64>>()
                     .try_into()
                     .unwrap();
-                for u in cp.atoms[3..].iter() {
-                    let vec_2 = subtract(
-                        atoms
-                            .lattice
-                            .closest_image(origin, atoms.reduced_positions[*u]),
-                        origin,
+                // check if every other atom falls on that plane
+                for a in cp.atoms[3..].iter() {
+                    let (atom_num, image) = grid.decode_maxima(*a);
+                    if image[0].abs() + image[1].abs() + image[2].abs() == 0 {
+                        origin_flag = true;
+                    }
+                    let image_shift = dot(
+                        image
+                            .into_iter()
+                            .map(|i| i as f64)
+                            .collect::<Vec<f64>>()
+                            .try_into()
+                            .unwrap(),
+                        atoms.lattice.to_cartesian,
                     );
+                    let position = grid
+                        .to_cartesian(ordered_nuclei[atom_num].position)
+                        .iter()
+                        .zip(image_shift.into_iter())
+                        .map(|(p, s)| *p + s)
+                        .collect::<Vec<f64>>()
+                        .try_into()
+                        .unwrap();
+                    let vec_2 = subtract(position, positions[0]);
                     let plane_t = cross(vec_1, vec_2);
                     let plane_normal = norm(plane_t);
                     let plane_t: [f64; 3] = plane_t
@@ -500,35 +584,140 @@ pub fn critcal_point_pruning(
                         .collect::<Vec<f64>>()
                         .try_into()
                         .unwrap();
-                    // TODO: make this a tolerance
-                    if vdot(plane, plane_t).abs().acos() > 0.01 {
+                    // TODO: make this a tolerance currently 5.73 degrees
+                    if vdot(plane, plane_t).abs() < 0.995 {
+                        pbar.tick();
+                        return None;
+                    //TODO: remove this, its is for testing
+                    } else {
+                        folded_atom_nums.push(atom_num);
+                        atom_images.push(image);
+                    }
+                }
+            }
+            // filter down all the same rings into the one with the highest charge density
+            let p = cp.position;
+            let rho = density[p as usize];
+            let atom_nums = FxHashSet::from_iter(cp.atoms.iter());
+            // check if the ring is the same as others and get rid if it has lower density
+            for cp_t in rings.iter() {
+                let pt = cp_t.position;
+                let atom_num_t = FxHashSet::from_iter(cp_t.atoms.iter());
+                if atom_nums == atom_num_t && rho < density[pt as usize] {
+                    pbar.tick();
+                    return None;
+                }
+            }
+            // the origin flag is still false if none of the atoms are within the periodic bounds.
+            // need to add these to a seperate list so they can be wrapped in and checked
+            if !origin_flag {
+                // these are all the unique collections of atoms that are shifted by the images
+                let pbc_atoms =
+                    FxHashSet::from_iter(cp.atoms.iter().map(|a| {
+                        let (_, image) = grid.decode_maxima(*a);
+                        cp.atoms
+                            .iter()
+                            .map(|a| {
+                                let (pbc_a, pbc_image) = grid.decode_maxima(*a);
+                                grid.encode_maxima(
+                                    pbc_a,
+                                    pbc_image
+                                        .into_iter()
+                                        .zip(image.iter())
+                                        .map(|(pbc_i, i)| pbc_i - i)
+                                        .collect::<Vec<i8>>()
+                                        .try_into()
+                                        .unwrap(),
+                                )
+                            })
+                            .collect::<Vec<usize>>()
+                    }));
+                pbc_rings.push((
+                    CriticalPoint::new(cp.position, cp.kind, cp.atoms.clone()),
+                    pbc_atoms,
+                ));
+                None
+            } else {
+                Some(CriticalPoint::new(cp.position, cp.kind, cp.atoms.clone()))
+            }
+        })
+        .collect::<Vec<CriticalPoint>>();
+    // now we prune the out of origin atoms
+    let mut pbc_rings = pbc_rings
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (cp, pbc_atoms))| {
+            // we want to check every pbc ring against all of its pbc reflections
+            let p = cp.position;
+            let rho = density[p as usize];
+            // first we compare against all of the other non origin rings and remove if it has
+            // lower density
+            for (ii, (cp_t, pbc_t)) in pbc_rings.iter().enumerate() {
+                if i != ii {
+                    let pt = cp_t.position;
+                    for atom_nums in pbc_atoms.iter() {
+                        let atom_nums = FxHashSet::from_iter(atom_nums);
+                        for atom_nums_t in pbc_t.iter() {
+                            let atom_nums_t = FxHashSet::from_iter(atom_nums_t);
+                            if atom_nums == atom_nums_t {
+                                if rho < density[pt as usize] {
+                                    pbar.tick();
+                                    return None;
+                                }
+                            } else if atom_nums.is_subset(&atom_nums_t) {
+                                pbar.tick();
+                                return None;
+                            }
+                        }
+                    }
+                }
+            }
+            // then compare against the other rings. this is mor complicated, if they are the same
+            // remove if the density is lower, else we need to add this one and later remove the
+            // one that has lower density
+            for cp_t in rings.iter() {
+                let pt = cp_t.position;
+                for atom_nums in pbc_atoms.iter() {
+                    let atom_nums = FxHashSet::from_iter(atom_nums);
+                    let atom_nums_t = FxHashSet::from_iter(cp_t.atoms.iter());
+                    // if they have the exact same atoms check the density
+                    if atom_nums == atom_nums_t {
+                        if rho < density[pt as usize] {
+                            pbar.tick();
+                            return None;
+                        } else {
+                            return Some(CriticalPoint::new(
+                                cp.position,
+                                cp.kind,
+                                cp_t.atoms.clone(),
+                            ));
+                        }
+                    // if its a subset remove it
+                    } else if atom_nums.is_subset(&atom_nums_t) {
                         pbar.tick();
                         return None;
                     }
                 }
             }
-            let rho = density[cp.position as usize];
-            // filter down all the same rings into the one with the highest charge density
-            for cp_t in rings.iter() {
-                let pt = cp_t.position;
-                let atom_num_t = FxHashSet::from_iter(cp_t.atoms.iter());
-                if atom_num == atom_num_t && rho < density[pt as usize] {
-                    pbar.tick();
-                    return None;
-                }
-            }
             Some(CriticalPoint::new(cp.position, cp.kind, cp.atoms.clone()))
         })
-        .collect();
-    let rings: Vec<CriticalPoint> = rings
+        .collect::<Vec<CriticalPoint>>();
+    pbc_rings.extend(rings);
+    let rings: Vec<CriticalPoint> = pbc_rings
         .iter()
         .filter_map(|cp| {
             pbar.tick();
             let atom_num = FxHashSet::from_iter(cp.atoms.iter());
+            let rho = density[cp.position as usize];
             // filter down all the same rings into the one with the highest charge density
-            for cp_t in rings.iter() {
+            for cp_t in pbc_rings.iter() {
+                let pt = cp_t.position;
                 let atom_num_t = FxHashSet::from_iter(cp_t.atoms.iter());
-                if atom_num != atom_num_t && atom_num.is_subset(&atom_num_t) {
+                if atom_num == atom_num_t {
+                    if rho < density[pt as usize] {
+                        return None;
+                    }
+                } else if atom_num.is_subset(&atom_num_t) {
                     return None;
                 }
             }
@@ -539,16 +728,90 @@ pub fn critcal_point_pruning(
         .iter()
         .filter_map(|cp| {
             pbar.tick();
+            let mut origin_flag = false;
+            cp.atoms.iter().for_each(|a| {
+                let (_, image) = grid.decode_maxima(*a);
+                if image[0].abs() + image[1].abs() + image[2].abs() == 0 {
+                    origin_flag = true;
+                }
+            });
             let rho = density[cp.position as usize];
-            let atom_num = FxHashSet::from_iter(cp.atoms.iter());
+            let atom_num = match origin_flag {
+                true => FxHashSet::from_iter(vec![cp.atoms.to_vec()]),
+                false => cp
+                    .atoms
+                    .iter()
+                    .map(|a| {
+                        let (_, image) = grid.decode_maxima(*a);
+                        cp.atoms
+                            .iter()
+                            .map(|a| {
+                                let (a, i) = grid.decode_maxima(*a);
+                                grid.encode_maxima(
+                                    a,
+                                    i.into_iter()
+                                        .zip(image.iter())
+                                        .map(|(i, ii)| i - *ii)
+                                        .collect::<Vec<i8>>()
+                                        .try_into()
+                                        .unwrap(),
+                                )
+                            })
+                            .collect::<Vec<usize>>()
+                    })
+                    .collect(),
+            };
             for cp_t in bonds.iter() {
                 let pt = cp_t.position;
-                let atom_num_t = FxHashSet::from_iter(cp_t.atoms.iter());
-                if atom_num == atom_num_t && rho < density[pt as usize] {
-                    return None;
+                let mut origin_flag_t = false;
+                cp_t.atoms.iter().for_each(|a| {
+                    let (_, image) = grid.decode_maxima(*a);
+                    if image[0].abs() + image[1].abs() + image[2].abs() == 0 {
+                        origin_flag_t = true;
+                    }
+                });
+                let atom_num_t = match origin_flag_t {
+                    true => FxHashSet::from_iter(vec![cp_t.atoms.to_vec()]),
+                    false => FxHashSet::from_iter(cp_t.atoms.iter().map(|a| {
+                        let (_, image) = grid.decode_maxima(*a);
+                        cp_t.atoms
+                            .iter()
+                            .map(|a| {
+                                let (a, i) = grid.decode_maxima(*a);
+                                grid.encode_maxima(
+                                    a,
+                                    i.into_iter()
+                                        .zip(image.iter())
+                                        .map(|(i, ii)| i - *ii)
+                                        .collect::<Vec<i8>>()
+                                        .try_into()
+                                        .unwrap(),
+                                )
+                            })
+                            .collect::<Vec<usize>>()
+                    })),
+                };
+                for an in atom_num.iter() {
+                    let an = FxHashSet::from_iter(an);
+                    for ant in atom_num_t.iter() {
+                        let ant = FxHashSet::from_iter(ant);
+                        if an == ant && rho < density[pt as usize] {
+                            return None;
+                        }
+                    }
                 }
             }
             Some(CriticalPoint::new(cp.position, cp.kind, cp.atoms.clone()))
+        })
+        .collect();
+    let nuclei = ordered_nuclei
+        .into_iter()
+        .filter_map(|cp| {
+            if let CriticalPointKind::Blank = cp.kind {
+                None
+            } else {
+                Some(CriticalPoint::new(cp.position, cp.kind, cp.atoms.clone()))
+            }
         })
         .collect();
     (nuclei, bonds, rings, cages)

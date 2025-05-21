@@ -1,9 +1,12 @@
 ## v0.5.0
 ### Features
-- Finally dealing with saddle points in the charge density.
+- Added critical point handling.
+- Atoms can now be bonded to images of themselves.
+### Changes
+- Voronoi shift has been changed to include the passing of periodic boundaries, a no check version has been added to perform as previously.
 ## v0.4.8
 ### Changes
-- Opt -> Arg in arguments
+- Opt -> Arg in arguments.
 - added a parse_filetype function.
 ## v0.4.7
 ### Small things

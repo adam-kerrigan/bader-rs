@@ -220,7 +220,7 @@ impl App {
                 long_flag: String::from("weight"),
                 takes_value: true,
                 multiple_values: false,
-                default_value: DefaultValue::Float(1E-8),
+                default_value: DefaultValue::Float(1E-6),
                 allowed_values: AllowedValue::None,
             }
         ];
