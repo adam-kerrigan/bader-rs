@@ -357,27 +357,17 @@ pub fn calculate_bader_error(
     bader_error.into()
 }
 
-/// Prune critical points based on the type they are
-pub fn critcal_point_pruning(
-    nuclei: &[CriticalPoint],
-    bonds: &[CriticalPoint],
-    rings: &[CriticalPoint],
-    cages: &[CriticalPoint],
+pub fn nuclei_ordering(
+    nuclei: Vec<CriticalPoint>,
     density: &[f64],
-    atoms: &Atoms,
-    grid: &Grid,
+    atom_len: usize,
     visible_bar: bool,
-) -> (
-    Vec<CriticalPoint>,
-    Vec<CriticalPoint>,
-    Vec<CriticalPoint>,
-    Vec<CriticalPoint>,
-) {
+) -> Vec<CriticalPoint> {
     let progress_bar: Box<dyn ProgressBar> = match visible_bar {
         false => Box::new(HiddenBar {}),
         true => Box::new(Bar::new(
-            nuclei.len() + bonds.len() + rings.len() + cages.len(),
-            String::from("Categorising Critical Points"),
+            nuclei.len(),
+            String::from("Pruning Nucleus Critical Points"),
         )),
     };
     let pbar = &progress_bar;
@@ -388,7 +378,7 @@ pub fn critcal_point_pruning(
     let mut ordered_nuclei =
         vec![
             CriticalPoint::new(0, CriticalPointKind::Blank, Box::new([]));
-            atoms.positions.len()
+            atom_len
         ];
     nuclei.iter().for_each(|cp| {
         let p = cp.position;
@@ -403,107 +393,121 @@ pub fn critcal_point_pruning(
         }
         pbar.tick();
     });
-    // Find all the cages with the same atoms and group them based on which is smallest charge
-    // density
-    let cages: Vec<CriticalPoint> = cages
+    ordered_nuclei
+}
+
+pub fn bond_pruning(
+    bonds: &[CriticalPoint],
+    density: &[f64],
+    grid: &Grid,
+    visible_bar: bool,
+) -> Vec<CriticalPoint> {
+    let progress_bar: Box<dyn ProgressBar> = match visible_bar {
+        false => Box::new(HiddenBar {}),
+        true => Box::new(Bar::new(
+            bonds.len(),
+            String::from("Pruning Bond Critical Points"),
+        )),
+    };
+    let pbar = &progress_bar;
+    bonds
         .iter()
         .filter_map(|cp| {
             pbar.tick();
-            if cp.atoms.len() < 4 {
-                // impossible to have a cage with 3 atoms
-                return None;
-            } else {
-                // form a plane with the first 3 atoms
-                let positions = cp.atoms[..3]
+            let mut origin_flag = false;
+            cp.atoms.iter().for_each(|a| {
+                let (_, image) = grid.decode_maxima(*a);
+                if image[0].abs() + image[1].abs() + image[2].abs() == 0 {
+                    origin_flag = true;
+                }
+            });
+            let rho = density[cp.position as usize];
+            let atom_num = match origin_flag {
+                true => FxHashSet::from_iter(vec![cp.atoms.to_vec()]),
+                false => cp
+                    .atoms
                     .iter()
                     .map(|a| {
-                        let (atom_num, image) = grid.decode_maxima(*a);
-                        let image_shift = dot(
-                            image
-                                .into_iter()
-                                .map(|i| i as f64)
-                                .collect::<Vec<f64>>()
-                                .try_into()
-                                .unwrap(),
-                            atoms.lattice.to_cartesian,
-                        );
-                        // get the position of the nuclei and apply the image shift
-                        grid.to_cartesian(ordered_nuclei[atom_num].position)
+                        let (_, image) = grid.decode_maxima(*a);
+                        cp.atoms
                             .iter()
-                            .zip(image_shift)
-                            .map(|(p, s)| *p + s)
-                            .collect::<Vec<f64>>()
-                            .try_into()
-                            .unwrap()
+                            .map(|a| {
+                                let (a, i) = grid.decode_maxima(*a);
+                                grid.encode_maxima(
+                                    a,
+                                    i.into_iter()
+                                        .zip(image.iter())
+                                        .map(|(i, ii)| i - *ii)
+                                        .collect::<Vec<i8>>()
+                                        .try_into()
+                                        .unwrap(),
+                                )
+                            })
+                            .collect::<Vec<usize>>()
                     })
-                    .collect::<Vec<[f64; 3]>>();
-                let vec_1 = subtract(positions[1], positions[0]);
-                let vec_2 = subtract(positions[2], positions[0]);
-                let plane = cross(vec_1, vec_2);
-                let plane_normal = norm(plane);
-                let plane: [f64; 3] = plane
-                    .into_iter()
-                    .map(|f| f / plane_normal)
-                    .collect::<Vec<f64>>()
-                    .try_into()
-                    .unwrap();
-                let mut flag = true;
-                // check every other atom against this plane, at least one should not be in the
-                // plane
-                for a in cp.atoms[3..].iter() {
-                    let (atom_num, image) = grid.decode_maxima(*a);
-                    let image_shift = dot(
-                        image
-                            .into_iter()
-                            .map(|i| i as f64)
-                            .collect::<Vec<f64>>()
-                            .try_into()
-                            .unwrap(),
-                        atoms.lattice.to_cartesian,
-                    );
-                    let position = grid
-                        .to_cartesian(ordered_nuclei[atom_num].position)
-                        .iter()
-                        .zip(image_shift.into_iter())
-                        .map(|(p, s)| *p + s)
-                        .collect::<Vec<f64>>()
-                        .try_into()
-                        .unwrap();
-                    let vec_2 = subtract(position, positions[0]);
-                    let plane_t = cross(vec_1, vec_2);
-                    let plane_normal = norm(plane_t);
-                    let plane_t: [f64; 3] = plane_t
-                        .into_iter()
-                        .map(|f| f / plane_normal)
-                        .collect::<Vec<f64>>()
-                        .try_into()
-                        .unwrap();
-                    // TODO: make this a tolerance currently 5.73 degrees
-                    if vdot(plane, plane_t).abs() < 0.995 {
-                        flag = false;
-                    }
-                }
-                // if the flag is still true then all were in the same plane and the cage is a
-                // density fluctuation
-                if flag {
-                    return None;
-                }
-            }
-            let p = cp.position;
-            let rho = density[p as usize];
-            let atom_num = FxHashSet::from_iter(cp.atoms.iter());
-            // now we check against the other cages, note there is no check on folded atoms
-            for cp_t in cages {
+                    .collect(),
+            };
+            for cp_t in bonds.iter() {
                 let pt = cp_t.position;
-                let atom_num_t = FxHashSet::from_iter(cp_t.atoms.iter());
-                if atom_num_t == atom_num && rho > density[pt as usize] {
-                    return None;
+                let mut origin_flag_t = false;
+                cp_t.atoms.iter().for_each(|a| {
+                    let (_, image) = grid.decode_maxima(*a);
+                    if image[0].abs() + image[1].abs() + image[2].abs() == 0 {
+                        origin_flag_t = true;
+                    }
+                });
+                let atom_num_t = match origin_flag_t {
+                    true => FxHashSet::from_iter(vec![cp_t.atoms.to_vec()]),
+                    false => FxHashSet::from_iter(cp_t.atoms.iter().map(|a| {
+                        let (_, image) = grid.decode_maxima(*a);
+                        cp_t.atoms
+                            .iter()
+                            .map(|a| {
+                                let (a, i) = grid.decode_maxima(*a);
+                                grid.encode_maxima(
+                                    a,
+                                    i.into_iter()
+                                        .zip(image.iter())
+                                        .map(|(i, ii)| i - *ii)
+                                        .collect::<Vec<i8>>()
+                                        .try_into()
+                                        .unwrap(),
+                                )
+                            })
+                            .collect::<Vec<usize>>()
+                    })),
+                };
+                for an in atom_num.iter() {
+                    let an = FxHashSet::from_iter(an);
+                    for ant in atom_num_t.iter() {
+                        let ant = FxHashSet::from_iter(ant);
+                        if an == ant && rho < density[pt as usize] {
+                            return None;
+                        }
+                    }
                 }
             }
             Some(CriticalPoint::new(cp.position, cp.kind, cp.atoms.clone()))
         })
-        .collect();
-    // We are going to add more if the ring has no atom within the periodic bounds
+        .collect()
+}
+
+pub fn ring_pruning(
+    rings: &[CriticalPoint],
+    ordered_nuclei: &[CriticalPoint],
+    density: &[f64],
+    atoms: &Atoms,
+    grid: &Grid,
+    visible_bar: bool,
+) -> Vec<CriticalPoint> {
+    let progress_bar: Box<dyn ProgressBar> = match visible_bar {
+        false => Box::new(HiddenBar {}),
+        true => Box::new(Bar::new(
+            rings.len(),
+            String::from("Pruning Ring Critical Points"),
+        )),
+    };
+    let pbar = &progress_bar;
     let mut pbc_rings = vec![];
     let rings = rings
         .iter()
@@ -703,7 +707,7 @@ pub fn critcal_point_pruning(
         })
         .collect::<Vec<CriticalPoint>>();
     pbc_rings.extend(rings);
-    let rings: Vec<CriticalPoint> = pbc_rings
+    pbc_rings
         .iter()
         .filter_map(|cp| {
             pbar.tick();
@@ -723,98 +727,123 @@ pub fn critcal_point_pruning(
             }
             Some(CriticalPoint::new(cp.position, cp.kind, cp.atoms.clone()))
         })
-        .collect();
-    let bonds: Vec<CriticalPoint> = bonds
+        .collect()
+}
+
+pub fn cage_pruning(
+    cages: &[CriticalPoint],
+    ordered_nuclei: &[CriticalPoint],
+    density: &[f64],
+    atoms: &Atoms,
+    grid: &Grid,
+    visible_bar: bool,
+) -> Vec<CriticalPoint> {
+    let progress_bar: Box<dyn ProgressBar> = match visible_bar {
+        false => Box::new(HiddenBar {}),
+        true => Box::new(Bar::new(
+            cages.len(),
+            String::from("Pruning Cage Critical Points"),
+        )),
+    };
+    let pbar = &progress_bar;
+    cages
         .iter()
         .filter_map(|cp| {
             pbar.tick();
-            let mut origin_flag = false;
-            cp.atoms.iter().for_each(|a| {
-                let (_, image) = grid.decode_maxima(*a);
-                if image[0].abs() + image[1].abs() + image[2].abs() == 0 {
-                    origin_flag = true;
-                }
-            });
-            let rho = density[cp.position as usize];
-            let atom_num = match origin_flag {
-                true => FxHashSet::from_iter(vec![cp.atoms.to_vec()]),
-                false => cp
-                    .atoms
+            if cp.atoms.len() < 4 {
+                // impossible to have a cage with 3 atoms
+                return None;
+            } else {
+                // form a plane with the first 3 atoms
+                let positions = cp.atoms[..3]
                     .iter()
                     .map(|a| {
-                        let (_, image) = grid.decode_maxima(*a);
-                        cp.atoms
+                        let (atom_num, image) = grid.decode_maxima(*a);
+                        let image_shift = dot(
+                            image
+                                .into_iter()
+                                .map(|i| i as f64)
+                                .collect::<Vec<f64>>()
+                                .try_into()
+                                .unwrap(),
+                            atoms.lattice.to_cartesian,
+                        );
+                        // get the position of the nuclei and apply the image shift
+                        grid.to_cartesian(ordered_nuclei[atom_num].position)
                             .iter()
-                            .map(|a| {
-                                let (a, i) = grid.decode_maxima(*a);
-                                grid.encode_maxima(
-                                    a,
-                                    i.into_iter()
-                                        .zip(image.iter())
-                                        .map(|(i, ii)| i - *ii)
-                                        .collect::<Vec<i8>>()
-                                        .try_into()
-                                        .unwrap(),
-                                )
-                            })
-                            .collect::<Vec<usize>>()
+                            .zip(image_shift)
+                            .map(|(p, s)| *p + s)
+                            .collect::<Vec<f64>>()
+                            .try_into()
+                            .unwrap()
                     })
-                    .collect(),
-            };
-            for cp_t in bonds.iter() {
+                    .collect::<Vec<[f64; 3]>>();
+                let vec_1 = subtract(positions[1], positions[0]);
+                let vec_2 = subtract(positions[2], positions[0]);
+                let plane = cross(vec_1, vec_2);
+                let plane_normal = norm(plane);
+                let plane: [f64; 3] = plane
+                    .into_iter()
+                    .map(|f| f / plane_normal)
+                    .collect::<Vec<f64>>()
+                    .try_into()
+                    .unwrap();
+                let mut flag = true;
+                // check every other atom against this plane, at least one should not be in the
+                // plane
+                for a in cp.atoms[3..].iter() {
+                    let (atom_num, image) = grid.decode_maxima(*a);
+                    let image_shift = dot(
+                        image
+                            .into_iter()
+                            .map(|i| i as f64)
+                            .collect::<Vec<f64>>()
+                            .try_into()
+                            .unwrap(),
+                        atoms.lattice.to_cartesian,
+                    );
+                    let position = grid
+                        .to_cartesian(ordered_nuclei[atom_num].position)
+                        .iter()
+                        .zip(image_shift.into_iter())
+                        .map(|(p, s)| *p + s)
+                        .collect::<Vec<f64>>()
+                        .try_into()
+                        .unwrap();
+                    let vec_2 = subtract(position, positions[0]);
+                    let plane_t = cross(vec_1, vec_2);
+                    let plane_normal = norm(plane_t);
+                    let plane_t: [f64; 3] = plane_t
+                        .into_iter()
+                        .map(|f| f / plane_normal)
+                        .collect::<Vec<f64>>()
+                        .try_into()
+                        .unwrap();
+                    // TODO: make this a tolerance currently 5.73 degrees
+                    if vdot(plane, plane_t).abs() < 0.995 {
+                        flag = false;
+                    }
+                }
+                // if the flag is still true then all were in the same plane and the cage is a
+                // density fluctuation
+                if flag {
+                    return None;
+                }
+            }
+            let p = cp.position;
+            let rho = density[p as usize];
+            let atom_num = FxHashSet::from_iter(cp.atoms.iter());
+            // now we check against the other cages, note there is no check on folded atoms
+            for cp_t in cages {
                 let pt = cp_t.position;
-                let mut origin_flag_t = false;
-                cp_t.atoms.iter().for_each(|a| {
-                    let (_, image) = grid.decode_maxima(*a);
-                    if image[0].abs() + image[1].abs() + image[2].abs() == 0 {
-                        origin_flag_t = true;
-                    }
-                });
-                let atom_num_t = match origin_flag_t {
-                    true => FxHashSet::from_iter(vec![cp_t.atoms.to_vec()]),
-                    false => FxHashSet::from_iter(cp_t.atoms.iter().map(|a| {
-                        let (_, image) = grid.decode_maxima(*a);
-                        cp_t.atoms
-                            .iter()
-                            .map(|a| {
-                                let (a, i) = grid.decode_maxima(*a);
-                                grid.encode_maxima(
-                                    a,
-                                    i.into_iter()
-                                        .zip(image.iter())
-                                        .map(|(i, ii)| i - *ii)
-                                        .collect::<Vec<i8>>()
-                                        .try_into()
-                                        .unwrap(),
-                                )
-                            })
-                            .collect::<Vec<usize>>()
-                    })),
-                };
-                for an in atom_num.iter() {
-                    let an = FxHashSet::from_iter(an);
-                    for ant in atom_num_t.iter() {
-                        let ant = FxHashSet::from_iter(ant);
-                        if an == ant && rho < density[pt as usize] {
-                            return None;
-                        }
-                    }
+                let atom_num_t = FxHashSet::from_iter(cp_t.atoms.iter());
+                if atom_num_t == atom_num && rho > density[pt as usize] {
+                    return None;
                 }
             }
             Some(CriticalPoint::new(cp.position, cp.kind, cp.atoms.clone()))
         })
-        .collect();
-    let nuclei = ordered_nuclei
-        .into_iter()
-        .filter_map(|cp| {
-            if let CriticalPointKind::Blank = cp.kind {
-                None
-            } else {
-                Some(CriticalPoint::new(cp.position, cp.kind, cp.atoms.clone()))
-            }
-        })
-        .collect();
-    (nuclei, bonds, rings, cages)
+        .collect()
 }
 
 /// Calculates the Laplacian at each saddle point. This is currently basic analysis, atoms images

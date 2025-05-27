@@ -1,6 +1,6 @@
 use bader::analysis::{
-    calculate_bader_density, calculate_bader_error,
-    calculate_bader_volumes_and_radii, critcal_point_pruning,
+    bond_pruning, cage_pruning, calculate_bader_density, calculate_bader_error,
+    calculate_bader_volumes_and_radii, nuclei_ordering, ring_pruning,
 };
 use bader::arguments::App;
 use bader::errors::ArgumentError;
@@ -57,8 +57,7 @@ fn main() {
     index.truncate(vacuum_i);
     // find the maxima in the system and store them whilst removing them from
     // the index list
-    let mut critical_points = (vec![], vec![], vec![], vec![]);
-    critical_points.0 = match maxima_finder(
+    let nuclei = match maxima_finder(
         &index,
         reference,
         &voxel_map,
@@ -76,12 +75,14 @@ fn main() {
         )
     };
     // input the maxima as atoms into the voxel map
-    critical_points.0.iter().for_each(|maximum| {
+    nuclei.iter().for_each(|maximum| {
         voxel_map.maxima_store(maximum.position, maximum.atoms[0] as isize);
     });
-    let n_bader_maxima = critical_points.0.len();
+    let n_bader_maxima = nuclei.len();
+    let nuclei =
+        nuclei_ordering(nuclei, reference, atoms.positions.len(), !args.silent);
     // calculate the weights leave the critical points for now
-    (critical_points.1, critical_points.2) = weight(
+    let (bonds, rings) = weight(
         reference,
         &voxel_map,
         &index,
@@ -92,7 +93,7 @@ fn main() {
     // convert into a VoxelMap as the map is filled and no longer needs to block
     let voxel_map = VoxelMap::from_blocking_voxel_map(voxel_map);
     // Find the minima
-    critical_points.3 = minima_finder(
+    let cages = minima_finder(
         &index,
         reference,
         &voxel_map,
@@ -130,24 +131,32 @@ fn main() {
         args.threads,
         !args.silent,
     );
-    let _critical_points = critcal_point_pruning(
-        &critical_points.0,
-        &critical_points.1,
-        &critical_points.2,
-        &critical_points.3,
+    let bonds =
+        bond_pruning(&bonds, reference, voxel_map.grid_get(), !args.silent);
+    let rings = ring_pruning(
+        &rings,
+        &nuclei,
         reference,
         &atoms,
         voxel_map.grid_get(),
         !args.silent,
     );
-    /*
+    let cages = cage_pruning(
+        &cages,
+        &nuclei,
+        reference,
+        &atoms,
+        voxel_map.grid_get(),
+        !args.silent,
+    );
     println!(
         "{} {} {} {}",
-        critical_points.0.len(),
-        critical_points.1.len(),
-        critical_points.2.len(),
-        critical_points.3.len()
+        nuclei.len(),
+        bonds.len(),
+        rings.len(),
+        cages.len()
     );
+    /*
     critical_points.0.iter().for_each(|cp| {
         let [x, y, z] = voxel_map.grid.to_3d(cp.position);
         let x = x as f64 / voxel_map.grid.size.x as f64;
