@@ -199,7 +199,7 @@ impl FileFormat for Cube {
             let pos_frac =
                 utils::dot([pos[2], pos[3], pos[4]], lattice.to_fractional)
                     .iter()
-                    .map(|x| x.rem_euclid(1.))
+                    .map(|x| x - x.floor())
                     .collect::<Vec<f64>>();
             let pos_cart = {
                 utils::dot(

@@ -38,11 +38,7 @@ pub struct FortranFormat {
 impl std::fmt::Display for FortranFormat {
     /// Format the structure into a fortran style exponential.
     fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let prec = if let Some(prec) = formatter.precision() {
-            prec
-        } else {
-            6
-        };
+        let prec = formatter.precision().unwrap_or(6);
         match self.float {
             None => {
                 write!(formatter, " 0.{:0<width$}E{:+03}", 0, 0, width = prec)
@@ -170,7 +166,7 @@ Ambiguous how to handle new spin when {} already has {} spin densities.",
     /// Reads the non-density section of the file into an [`Atoms`] object.
     ///
     /// * `atom_text`: The full string of non-density information from the
-    /// density file.
+    ///   density file.
     fn to_atoms(&self, atom_text: String) -> Atoms;
 
     /// Writes a specific density, data, to tile in the correct format.
@@ -178,7 +174,7 @@ Ambiguous how to handle new spin when {} already has {} spin densities.",
     /// * `atoms`: The associated &[`Atoms`] object for the density file.
     /// * `data`: The density to write to file wrapped in options with None representing 0.
     /// * `filename`: Where to save the file, minus any suffix as this should
-    /// be applied in the function.
+    ///   be applied in the function.
     /// * `pbar`: A progress bar for monitoring the write.
     fn write(
         &self,

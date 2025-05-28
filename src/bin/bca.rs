@@ -1,13 +1,11 @@
 use bader::analysis::{
-    assign_maxima,
-    calculate_bader_density,
-    calculate_bader_error,
-    calculate_bader_volumes_and_radii, // calculate_bond_strengths,
+    bond_pruning, cage_pruning, calculate_bader_density, calculate_bader_error,
+    calculate_bader_volumes_and_radii, nuclei_ordering, ring_pruning,
 };
 use bader::arguments::App;
 use bader::errors::ArgumentError;
 use bader::io::{self, FileFormat, FileType, WriteType};
-use bader::methods::{maxima_finder, weight};
+use bader::methods::{maxima_finder, minima_finder, weight};
 use bader::utils::vacuum_index;
 use bader::voxel_map::{BlockingVoxelMap, VoxelMap};
 
@@ -59,21 +57,15 @@ fn main() {
     index.truncate(vacuum_i);
     // find the maxima in the system and store them whilst removing them from
     // the index list
-    let bader_maxima = maxima_finder(
+    let nuclei = match maxima_finder(
         &index,
         reference,
         &voxel_map,
+        &args.maximum_distance,
+        &atoms,
         args.threads,
         !args.silent,
-    );
-    // Start a thread-safe progress bar and assign the maxima to atoms
-    let atom_map = match assign_maxima(&bader_maxima,
-                                       &atoms,
-                                       &voxel_map.grid,
-                                       &args.maximum_distance,
-                                       args.threads,
-                                       !args.silent)
-    {
+    ) {
         Ok(v) => v,
         Err(e) => panic!(
             "\nBader maximum at {:#?}\n is too far away from nearest atom: {} with a distance of {} Ang.",
@@ -83,11 +75,14 @@ fn main() {
         )
     };
     // input the maxima as atoms into the voxel map
-    bader_maxima.iter().enumerate().for_each(|(i, maxima)| {
-        voxel_map.maxima_store(*maxima, atom_map[i] as isize);
+    nuclei.iter().for_each(|maximum| {
+        voxel_map.maxima_store(maximum.position, maximum.atoms[0] as isize);
     });
-    // calculate the weights leave the saddles for now
-    let _saddles = weight(
+    let n_bader_maxima = nuclei.len();
+    let nuclei =
+        nuclei_ordering(nuclei, reference, atoms.positions.len(), !args.silent);
+    // calculate the weights leave the critical points for now
+    let (bonds, rings) = weight(
         reference,
         &voxel_map,
         &index,
@@ -97,6 +92,14 @@ fn main() {
     );
     // convert into a VoxelMap as the map is filled and no longer needs to block
     let voxel_map = VoxelMap::from_blocking_voxel_map(voxel_map);
+    // Find the minima
+    let cages = minima_finder(
+        &index,
+        reference,
+        &voxel_map,
+        args.threads,
+        !args.silent,
+    );
     // sum the densities and then write the charge partition files
     let (atoms_volume, atoms_radius) = calculate_bader_volumes_and_radii(
         &voxel_map,
@@ -128,13 +131,65 @@ fn main() {
         args.threads,
         !args.silent,
     );
-    // let bonds = calculate_bond_strengths(
-    //     &saddles,
-    //     reference,
-    //     &atoms,
-    //     &voxel_map,
-    //     !args.silent,
-    // );
+    let bonds =
+        bond_pruning(&bonds, reference, voxel_map.grid_get(), !args.silent);
+    let rings = ring_pruning(
+        &rings,
+        &nuclei,
+        reference,
+        &atoms,
+        voxel_map.grid_get(),
+        !args.silent,
+    );
+    let cages = cage_pruning(
+        &cages,
+        &nuclei,
+        reference,
+        &atoms,
+        voxel_map.grid_get(),
+        !args.silent,
+    );
+    println!(
+        "{} {} {} {}",
+        nuclei.len(),
+        bonds.len(),
+        rings.len(),
+        cages.len()
+    );
+    /*
+    critical_points.0.iter().for_each(|cp| {
+        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
+        let x = x as f64 / voxel_map.grid.size.x as f64;
+        let y = y as f64 / voxel_map.grid.size.y as f64;
+        let z = z as f64 / voxel_map.grid.size.z as f64;
+        let (x, y, z) = file_type.coordinate_format([x, y, z]);
+        println!("{} {} {}        {:?}", x, y, z, cp.atoms);
+    });
+    critical_points.1.iter().for_each(|cp| {
+        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
+        let x = x as f64 / voxel_map.grid.size.x as f64;
+        let y = y as f64 / voxel_map.grid.size.y as f64;
+        let z = z as f64 / voxel_map.grid.size.z as f64;
+        let (x, y, z) = file_type.coordinate_format([x, y, z]);
+        println!("{} {} {}        {:?}", x, y, z, cp.atoms);
+    });
+    critical_points.2.iter().for_each(|cp| {
+        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
+        let x = x as f64 / voxel_map.grid.size.x as f64;
+        let y = y as f64 / voxel_map.grid.size.y as f64;
+        let z = z as f64 / voxel_map.grid.size.z as f64;
+        let (x, y, z) = file_type.coordinate_format([x, y, z]);
+        println!("{} {} {}        {:?}", x, y, z, cp.atoms);
+    });
+    critical_points.3.iter().for_each(|cp| {
+        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
+        let x = x as f64 / voxel_map.grid.size.x as f64;
+        let y = y as f64 / voxel_map.grid.size.y as f64;
+        let z = z as f64 / voxel_map.grid.size.z as f64;
+        let (x, y, z) = file_type.coordinate_format([x, y, z]);
+        println!("{} {} {}        {:?}", x, y, z, cp.atoms);
+    });
+    */
     // prepare the positions for writing out
     let positions = atoms
         .positions
@@ -151,7 +206,7 @@ fn main() {
     );
     atoms_charge_file.push_str(&format!(
         "\n  Bader Maxima: {}\n  Boundary Voxels: {}\n  Total Voxels: {}",
-        bader_maxima.len(),
+        n_bader_maxima,
         voxel_map.weight_len(),
         reference.len()
     ));
