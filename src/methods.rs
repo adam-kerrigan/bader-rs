@@ -14,7 +14,7 @@ use std::sync::Arc;
 pub enum WeightResult {
     /// Length of the Box dictates the type of Critical Point, 1 -> Maxima, 2 -> Saddle,
     /// 3+ -> Saddle or minima. Critical Points with >=2 will be on boundaries.
-    Saddle(Box<[f64]>),
+    Critical(Box<[f64]>),
     /// Entirely assigned to a single Bader atom.
     Interior(usize),
     /// Meeting point at the edge of 2 or more Bader atoms.
@@ -91,11 +91,19 @@ pub enum CriticalPointKind {
 /// for (i, p) in [37, 45, 49].iter().enumerate() {
 ///     voxel_map.maxima_store(*p, 62 - (i as isize) % 2);
 /// }
-/// let weight = match weight_step(33, &density, &voxel_map, 1E-8) {
-///     WeightResult::Critical(weights) => weights,
-///     _ => Vec::with_capacity(0).into(),
+/// let weight: Vec<f64> = match weight_step(33, &density, &voxel_map, 1E-8) {
+///     WeightResult::Critical(weights) => weights
+///         .iter()
+///         .map(|f| {
+///             let maxima = *f as usize;
+///             let weight = f - maxima as f64;
+///             let (decoded_maxima, _) = voxel_map.grid.decode_maxima(maxima);
+///             weight + decoded_maxima as f64
+///         })
+///         .collect(),
+///     _ => panic!("None Weight"),
 /// };
-/// assert_eq!(weight, vec![61.375, 62.625].into())
+/// assert_eq!(weight, vec![61.375, 62.625])
 /// ```
 pub fn weight_step(
     p: isize,
@@ -177,7 +185,7 @@ pub fn weight_step(
                     .collect::<Box<[f64]>>();
                 // check if new maxima has joined the weights -> Critical Point (saddle/ring/cage)
                 if weights.len() > weight_count {
-                    WeightResult::Saddle(weights)
+                    WeightResult::Critical(weights)
                 } else {
                     WeightResult::Boundary(weights)
                 }
@@ -250,7 +258,7 @@ pub fn weight(
                                 };
                                 voxel_map.weight_store(p, i);
                             }
-                            WeightResult::Saddle(weights) => {
+                            WeightResult::Critical(weights) => {
                                 // length = 1 is a maxima and doesn't need storing.
                                 let (i, atoms) = {
                                     let mut weight = voxel_map.lock();
@@ -452,9 +460,9 @@ pub fn minima_finder(
 ///
 /// # Example
 /// ```
-/// use bader::analysis::assign_maxima;
 /// use bader::atoms::{Atoms, Lattice};
 /// use bader::grid::Grid;
+/// use bader::methods::assign_maximum;
 ///
 /// // Intialise Atoms and Grid structs as well as a list of maxima
 /// let lattice =
@@ -473,14 +481,12 @@ pub fn minima_finder(
 ///
 /// // Run with default maxima distance tolerance
 /// let maximum_distance = 0.1;
-/// let atom_list =
-///     assign_maxima(555, &atoms, &grid, &maximum_distance, 1, false);
+/// let atom_list = assign_maximum(555, &atoms, &grid, &maximum_distance);
 /// assert!(atom_list.is_ok());
 /// assert_eq!(atom_list.unwrap(), 1);
 ///
 /// // If the maxima is too far away we get an error.
-/// let atom_list =
-///     assign_maxima(554, &atoms, &grid, &maximum_distance, 1, false);
+/// let atom_list = assign_maximum(554, &atoms, &grid, &maximum_distance);
 /// assert!(atom_list.is_err());
 /// ```
 pub fn assign_maximum(
