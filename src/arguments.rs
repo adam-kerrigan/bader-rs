@@ -4,6 +4,7 @@ use crate::{
 };
 use rustc_hash::FxHashMap;
 use std::fmt::{Debug, Display, Write};
+use std::thread::available_parallelism;
 
 /// Indicates how many reference files are passed
 #[derive(Clone)]
@@ -525,7 +526,7 @@ impl App {
                         String::from("weight tolerance"),
                         w.to_string(),
                         String::from("f64"),
-                    ))
+                    ));
                 }
             },
             None => match self
@@ -545,7 +546,7 @@ impl App {
                         String::from("maximum distance"),
                         m.to_string(),
                         String::from("f64"),
-                    ))
+                    ));
                 }
             },
             None => match self
@@ -569,7 +570,7 @@ impl App {
                                 String::from("vacuum tolerance"),
                                 m.to_string(),
                                 String::from("f64"),
-                            ))
+                            ));
                         }
                     }
                 }
@@ -591,7 +592,7 @@ impl App {
                         String::from("threads"),
                         t.to_string(),
                         String::from("usize"),
-                    ))
+                    ));
                 }
             },
             None => match self
@@ -604,7 +605,10 @@ impl App {
             },
         };
         if threads == 0 {
-            threads = num_cpus::get().min(12);
+            threads = match available_parallelism() {
+                Ok(u) => u.get().min(12),
+                Err(_) => todo!(),
+            };
         }
         let output = match arguments.get("output") {
             Some(_) => match multi_arguments.get("index") {
@@ -618,7 +622,7 @@ impl App {
                                     String::from("index"),
                                     i.to_string(),
                                     String::from("isize"),
-                                ))
+                                ));
                             }
                         }
                     }
@@ -631,7 +635,7 @@ impl App {
                     return Err(ArgumentError::MissingDependant(
                         String::from("index"),
                         String::from("output"),
-                    ))
+                    ));
                 }
                 None => WriteType::None,
             },
@@ -647,7 +651,7 @@ impl App {
                         String::from("reference"),
                         2,
                         v.len(),
-                    ))
+                    ));
                 }
             },
             None => match arguments.get("aec") {
@@ -660,7 +664,7 @@ impl App {
                         return Err(ArgumentError::WrongFileType(
                             String::from("aec"),
                             String::from("cube"),
-                        ))
+                        ));
                     }
                 },
                 None => Reference::None,
@@ -708,8 +712,9 @@ impl Display for App {
 impl Debug for App {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let usage = String::from("Usage: bca [OPTIONS] <file>");
-        let arguments =
-            String::from("Arguments:\n <file>  The file containing the charge density to analyse.");
+        let arguments = String::from(
+            "Arguments:\n <file>  The file containing the charge density to analyse.",
+        );
         let options = self.get_options_text(true);
         let help = self.get_help_text(true);
         write!(
@@ -1005,7 +1010,7 @@ mod tests {
         let app = App::new();
         let v = vec!["bca", "CHGCAR"];
         let args = app.parse_args(v).unwrap();
-        let threads = num_cpus::get().min(12);
+        let threads = available_parallelism().unwrap().get().min(12);
         assert_eq!(args.threads, threads)
     }
 
