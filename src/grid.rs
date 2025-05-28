@@ -134,7 +134,7 @@ impl Grid {
 
     pub fn encode_maxima(&self, maxima: usize, image: [i8; 3]) -> usize {
         let (decoded_maxima, decoded_image) = self.decode_maxima(maxima);
-        let [x, y, z] = if decoded_maxima != maxima {
+        let [x, y, z]: [u8; 3] = if decoded_maxima != maxima {
             decoded_image
                 .into_iter()
                 .zip(image)
