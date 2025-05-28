@@ -166,7 +166,7 @@ Ambiguous how to handle new spin when {} already has {} spin densities.",
     /// Reads the non-density section of the file into an [`Atoms`] object.
     ///
     /// * `atom_text`: The full string of non-density information from the
-    ///                density file.
+    ///   density file.
     fn to_atoms(&self, atom_text: String) -> Atoms;
 
     /// Writes a specific density, data, to tile in the correct format.
@@ -174,7 +174,7 @@ Ambiguous how to handle new spin when {} already has {} spin densities.",
     /// * `atoms`: The associated &[`Atoms`] object for the density file.
     /// * `data`: The density to write to file wrapped in options with None representing 0.
     /// * `filename`: Where to save the file, minus any suffix as this should
-    ///               be applied in the function.
+    ///   be applied in the function.
     /// * `pbar`: A progress bar for monitoring the write.
     fn write(
         &self,

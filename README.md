@@ -3,7 +3,7 @@
 [![Latest Version](https://img.shields.io/crates/v/bader.svg)](https://crates.io/crates/bader)
 [![Documentation](https://docs.rs/bader/badge.svg)](https://docs.rs/bader/)
 [![DOI](https://zenodo.org/badge/292534636.svg)](https://zenodo.org/badge/latestdoi/292534636)
-[![MSRV: rustc 1.56.1+](https://img.shields.io/badge/MSRV-rustc_1.56+-lightgray.svg)](https://blog.rust-lang.org/2021/11/01/Rust-1.56.1.html)
+[![MSRV: rustc 1.60.0+](https://img.shields.io/badge/MSRV-rustc_1.60.0+-lightgray.svg)](https://blog.rust-lang.org/2022/04/07/Rust-1.60.0/)
 
 An incredibly fast, multi-threaded, Bader charge partitioning tool. Based on methods presented in [Yu Min  and Trinkle Dallas R. 2011  J. Che.m Phys. 134 064111] with adaptions for multi-threading and increased speed.
 ## Installation
@@ -26,7 +26,7 @@ From here you can either move or link the binary to folder in your path.
 $ mv ./target/release/bca ~/bin
 ```
 ### Minimum Supported Rust Version (MSRV)
-This crate is guaranteed to compile on stable Rust 1.56.1 and up.
+This crate is guaranteed to compile on stable Rust 1.60.0 and up.
 ## Usage
 The program takes a charge density file as input and performs Bader analysis of the data. Currently it supports density in [VASP] or [cube] formats. It is recommended to run VASP calculations with [LAECHG] = .TRUE. to print the core density and self-consistent valence density. These can then be passed as reference files to the program using the -r, --reference flag where they will be summed.
 ```sh
