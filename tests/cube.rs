@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use bader::io::cube::Cube;
     use bader::io::FileFormat;
+    use bader::io::cube::Cube;
 
     const LENGTH_UNITS: f64 = 0.52917721067;
     const VOLUME_UNITS: f64 = LENGTH_UNITS * LENGTH_UNITS * LENGTH_UNITS;

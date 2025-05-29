@@ -170,35 +170,35 @@ impl Table {
     ) -> String {
         let mut separator = self.format_separator();
         let footer = match self.density_num.cmp(&2) {
-                std::cmp::Ordering::Less => format!(
-                    "\n  Vacuum Charge: {:>18.4}\n  Vacuum Volume: {:>18.4}\n  Partitioned Charge: {:>13.4}\n  Partitioned Volume: {:>13.4}",
-                    vacuum_density[0],
-                    vacuum_volume,
-                    partitioned_density[0],
-                    partitioned_volume,
-                ),
-                std::cmp::Ordering::Equal =>  format!(
-                    "\n  Vacuum Charge: {:>18.4}\n  Vacuum Spin: {:>20.4}\n  Vacuum Volume: {:>18.4}\n  Partitioned Charge: {:>13.4}\n  Partitioned Spin: {:>15.4}\n  Partitioned Volume: {:>13.4}",
-                    vacuum_density[0],
-                    vacuum_density[1],
-                    vacuum_volume,
-                    partitioned_density[0],
-                    partitioned_density[1],
-                    partitioned_volume,
-                ),
-                std::cmp::Ordering::Greater =>  format!(
-                    "\n  Vacuum Charge: {:>18.4}\n  Vacuum Spin X: {:>18.4}\n  Vacuum Spin Y: {:>18.4}\n  Vacuum Spin Z: {:>18.4}\n  Vacuum Volume: {:>18.4}\n  Partitioned Charge: {:>13.4}\n  Partitioned Spin X: {:>13.4}\n  Partitioned Spin Y: {:>13.4}\n  Partitioned Spin Z: {:>13.4}\n  Partitioned Volume: {:>13.4}",
-                    vacuum_density[0],
-                    vacuum_density[1],
-                    vacuum_density[2],
-                    vacuum_density[3],
-                    vacuum_volume,
-                    partitioned_density[0],
-                    partitioned_density[1],
-                    partitioned_density[2],
-                    partitioned_density[3],
-                    partitioned_volume,
-                ),
+            std::cmp::Ordering::Less => format!(
+                "\n  Vacuum Charge: {:>18.4}\n  Vacuum Volume: {:>18.4}\n  Partitioned Charge: {:>13.4}\n  Partitioned Volume: {:>13.4}",
+                vacuum_density[0],
+                vacuum_volume,
+                partitioned_density[0],
+                partitioned_volume,
+            ),
+            std::cmp::Ordering::Equal => format!(
+                "\n  Vacuum Charge: {:>18.4}\n  Vacuum Spin: {:>20.4}\n  Vacuum Volume: {:>18.4}\n  Partitioned Charge: {:>13.4}\n  Partitioned Spin: {:>15.4}\n  Partitioned Volume: {:>13.4}",
+                vacuum_density[0],
+                vacuum_density[1],
+                vacuum_volume,
+                partitioned_density[0],
+                partitioned_density[1],
+                partitioned_volume,
+            ),
+            std::cmp::Ordering::Greater => format!(
+                "\n  Vacuum Charge: {:>18.4}\n  Vacuum Spin X: {:>18.4}\n  Vacuum Spin Y: {:>18.4}\n  Vacuum Spin Z: {:>18.4}\n  Vacuum Volume: {:>18.4}\n  Partitioned Charge: {:>13.4}\n  Partitioned Spin X: {:>13.4}\n  Partitioned Spin Y: {:>13.4}\n  Partitioned Spin Z: {:>13.4}\n  Partitioned Volume: {:>13.4}",
+                vacuum_density[0],
+                vacuum_density[1],
+                vacuum_density[2],
+                vacuum_density[3],
+                vacuum_volume,
+                partitioned_density[0],
+                partitioned_density[1],
+                partitioned_density[2],
+                partitioned_density[3],
+                partitioned_volume,
+            ),
         };
         separator.push_str(&footer);
         separator

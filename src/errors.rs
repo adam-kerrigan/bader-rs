@@ -35,7 +35,11 @@ pub struct VacuumError {
 
 impl Display for VacuumError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Vacuum tolerance ({}) is higher than maximum value of density ({}).", self.vacuum_tolerance, self.density)
+        write!(
+            f,
+            "Vacuum tolerance ({}) is higher than maximum value of density ({}).",
+            self.vacuum_tolerance, self.density
+        )
     }
 }
 
@@ -80,15 +84,39 @@ impl Display for ArgumentError<'_> {
         match self {
             Self::NotFlag(flag) => {
                 write!(f, "The flag: {} does not exist", flag)
-            },
-            Self::Unparsable(flag, value, typ) => write!(f, "The supplied value \"{}\" for the option \"{}\" is unparsable as a {}.", value, flag, typ),
-            Self::NoValue(flag) => write!(f, "The option \"{}\" requires a value to be supplied.", flag),
-            Self::TooManyValues(flag, max, supplied) => write!(f, "Option \"{}\" was supplied {} times, the maximum allowed is \"{}\".", flag, supplied, max),
-            Self::NotValidValue(flag, value) => write!(f, "The value \"{}\" is not valid input for the option \"{}\".", value, flag),
-            Self::MissingDependant(flag, dependant) => write!(f, "The option \"{}\" requires the option \"{}\" to also be set.", flag, dependant),
-            Self::WrongFileType(flag, file_type) => write!(f,"The option \"{}\" cannot be set for the file type \"{}\".", flag, file_type),
-            Self::NoFile(app) => write!(f,"No file supplied.\n\n{}", app),
-            Self::ShortHelp(app) => write!(f,"{}", app),
+            }
+            Self::Unparsable(flag, value, typ) => write!(
+                f,
+                "The supplied value \"{}\" for the option \"{}\" is unparsable as a {}.",
+                value, flag, typ
+            ),
+            Self::NoValue(flag) => write!(
+                f,
+                "The option \"{}\" requires a value to be supplied.",
+                flag
+            ),
+            Self::TooManyValues(flag, max, supplied) => write!(
+                f,
+                "Option \"{}\" was supplied {} times, the maximum allowed is \"{}\".",
+                flag, supplied, max
+            ),
+            Self::NotValidValue(flag, value) => write!(
+                f,
+                "The value \"{}\" is not valid input for the option \"{}\".",
+                value, flag
+            ),
+            Self::MissingDependant(flag, dependant) => write!(
+                f,
+                "The option \"{}\" requires the option \"{}\" to also be set.",
+                flag, dependant
+            ),
+            Self::WrongFileType(flag, file_type) => write!(
+                f,
+                "The option \"{}\" cannot be set for the file type \"{}\".",
+                flag, file_type
+            ),
+            Self::NoFile(app) => write!(f, "No file supplied.\n\n{}", app),
+            Self::ShortHelp(app) => write!(f, "{}", app),
             Self::LongHelp(app) => write!(f, "{:?}", app),
         }
     }

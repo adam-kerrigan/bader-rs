@@ -5,8 +5,8 @@ use crate::progress::{Bar, HiddenBar, ProgressBar};
 use crate::voxel_map::{BlockingVoxelMap, VoxelMap};
 use crossbeam_utils::thread;
 use rustc_hash::FxHashMap;
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 
 /// Result of a Weight step.
 ///

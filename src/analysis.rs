@@ -1,6 +1,6 @@
 use crate::atoms::Atoms;
 use crate::grid::Grid;
-use crate::methods::{laplacian, CriticalPoint, CriticalPointKind};
+use crate::methods::{CriticalPoint, CriticalPointKind, laplacian};
 use crate::progress::{Bar, HiddenBar, ProgressBar};
 use crate::utils::{cross, dot, norm, subtract, vdot};
 use crate::voxel_map::{Voxel, VoxelMap};

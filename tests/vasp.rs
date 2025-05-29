@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use bader::io::vasp::Vasp;
     use bader::io::FileFormat;
+    use bader::io::vasp::Vasp;
 
     #[test]
     fn vasp_read_no_spin() {
