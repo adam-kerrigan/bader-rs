@@ -72,7 +72,7 @@ fn main() {
             file_type.coordinate_format(e.maximum),
             e.atom + 1,
             e.distance,
-        )
+        ),
     };
     // input the maxima as atoms into the voxel map
     nuclei.iter().for_each(|maximum| {

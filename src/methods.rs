@@ -5,8 +5,8 @@ use crate::progress::{Bar, HiddenBar, ProgressBar};
 use crate::voxel_map::{BlockingVoxelMap, VoxelMap};
 use crossbeam_utils::thread;
 use rustc_hash::FxHashMap;
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 
 /// Result of a Weight step.
 ///
@@ -91,7 +91,7 @@ pub enum CriticalPointKind {
 /// for (i, p) in [37, 45, 49].iter().enumerate() {
 ///     voxel_map.maxima_store(*p, 62 - (i as isize) % 2);
 /// }
-/// let weight: Vec<f64> = match weight_step(33, &density, &voxel_map, 1E-8) {
+/// let mut weight: Vec<f64> = match weight_step(33, &density, &voxel_map, 1E-8) {
 ///     WeightResult::Critical(weights) => weights
 ///         .iter()
 ///         .map(|f| {
@@ -103,6 +103,7 @@ pub enum CriticalPointKind {
 ///         .collect(),
 ///     _ => panic!("None Weight"),
 /// };
+/// weight.sort_by(|a, b| a.partial_cmp(b).unwrap());
 /// assert_eq!(weight, vec![61.375, 62.625])
 /// ```
 pub fn weight_step(
