@@ -131,54 +131,6 @@ impl Grid {
         ];
         dot(p, self.voxel_lattice.to_cartesian)
     }
-
-    pub fn encode_maxima(&self, maxima: usize, image: [i8; 3]) -> usize {
-        let (decoded_maxima, decoded_image) = self.decode_maxima(maxima);
-        let [x, y, z]: [u8; 3] = if decoded_maxima != maxima {
-            decoded_image
-                .into_iter()
-                .zip(image)
-                .map(|(di, i)| (di + i) as u8)
-                .collect::<Vec<u8>>()
-                .try_into()
-                .unwrap()
-        } else {
-            image
-                .into_iter()
-                .map(|i| i as u8)
-                .collect::<Vec<u8>>()
-                .try_into()
-                .unwrap()
-        };
-        // starting with 2 zeros allows for 32,767 atoms
-        // TODO: Add a check at the start for this?
-        let maxima_shift = usize::from_le_bytes([0, 0, x, y, z, 0, 0, 0]);
-        decoded_maxima + maxima_shift
-    }
-
-    pub fn decode_maxima(&self, maxima: usize) -> (usize, [i8; 3]) {
-        // the true maxima number has been shifted but by an integer multiple of the number of
-        // atoms
-        let encoded_maxima = maxima.to_le_bytes();
-        let maxima = usize::from_le_bytes([
-            encoded_maxima[0],
-            encoded_maxima[1],
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-        ]);
-        let maxima_bytes: Vec<i8> = encoded_maxima
-            .into_iter()
-            // the shift is offset by 2 to allow for 32,767 atoms
-            .skip(2)
-            .take(3)
-            .map(|u| u as i8)
-            .collect();
-        (maxima, maxima_bytes.try_into().unwrap())
-    }
 }
 
 /// Structure for holding the periodic shifts

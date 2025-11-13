@@ -3,7 +3,7 @@ use crate::grid::Grid;
 use crate::methods::{CriticalPoint, CriticalPointKind, laplacian};
 use crate::progress::{Bar, HiddenBar, ProgressBar};
 use crate::utils::{cross, dot, norm, subtract, vdot};
-use crate::voxel_map::{Voxel, VoxelMap};
+use crate::voxel_map::{EncodedData, Voxel, VoxelMap};
 use crossbeam_utils::thread;
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -58,7 +58,7 @@ pub fn calculate_bader_density(
     atoms: &Atoms,
     threads: usize,
     visible_bar: bool,
-) -> Box<[f64]> {
+) -> (Box<[f64]>, Box<[f64]>, Box<[f64]>, Box<[f64]>) {
     let progress_bar: Box<dyn ProgressBar> = match visible_bar {
         false => Box::new(HiddenBar {}),
         true => Box::new(Bar::new(
@@ -68,6 +68,9 @@ pub fn calculate_bader_density(
     };
     let pbar = &progress_bar;
     let mut bader_density = vec![0.0; atoms.positions.len() + 1];
+    let mut bader_volume = vec![0.0; atoms.positions.len() + 1];
+    let mut bader_radius = vec![f64::INFINITY; atoms.positions.len()];
+    let mut bader_error = vec![0.0; atoms.positions.len() + 1];
     let vm = &voxel_map;
     // Calculate the size of the vector to be passed to each thread.
     let chunk_size =
@@ -79,32 +82,66 @@ pub fn calculate_bader_density(
             .map(|(index, chunk)| {
                 s.spawn(move |_| {
                     let mut bd = vec![0.0; atoms.positions.len() + 1];
+                    let mut bv = vec![0.0; atoms.positions.len() + 1];
+                    let mut br = vec![f64::INFINITY; atoms.positions.len()];
+                    let mut be = vec![0.0; atoms.positions.len() + 1];
                     chunk.iter().enumerate().for_each(
                         |(voxel_index, maxima)| {
                             let p = index * chunk.len() + voxel_index;
+                            let lapl = laplacian(p, density, &vm.grid);
                             match vm.maxima_to_voxel(*maxima) {
                                 Voxel::Maxima(m) => {
-                                    let (m, _) =
-                                        voxel_map.grid.decode_maxima(m);
+                                    let m = EncodedData::decode_maxima(m as u32)
+                                        .0
+                                        as usize;
+                                    // Bader density
                                     bd[m] += density[p];
+                                    // Bader Volume
+                                    bv[m] += 1.0;
+                                    // Bader Error
+                                    be[m] += lapl
                                 }
                                 Voxel::Boundary(weights) => {
-                                    for weight in weights.iter() {
-                                        let m = *weight as usize;
-                                        let w = weight - (m as f64);
-                                        let (m, _) =
-                                            voxel_map.grid.decode_maxima(m);
+                                    for (m, w) in weights.into_iter() {
+                                        let m = EncodedData::decode_maxima(m).0
+                                            as usize;
+                                        let w = w as f64;
+                                        // Bader density
                                         bd[m] += w * density[p];
+                                        // Bader radius
+                                        let atom_number = vm.maxima_to_atom(m);
+                                        let p_c =
+                                            vm.grid.to_cartesian(p as isize);
+                                        let p_lll_c = atoms
+                                            .lattice
+                                            .cartesian_to_reduced(p_c);
+                                        let atom = atoms.reduced_positions
+                                            [atom_number];
+                                        br[atom_number] =
+                                            atoms.lattice.minimum_distance(
+                                                p_lll_c,
+                                                atom,
+                                                Some(br[atom_number]),
+                                            );
+                                        // Bader volume
+                                        bv[m] += w;
+                                        // Bader error
+                                        be[m] += w * lapl;
                                     }
                                 }
                                 Voxel::Vacuum => {
-                                    bd[atoms.positions.len()] += density[p]
+                                    // Bader Density
+                                    bd[atoms.positions.len()] += density[p];
+                                    // Bader Volume
+                                    bv[atoms.positions.len()] += 1.0;
+                                    // Bader Error
+                                    be[atoms.positions.len()] += lapl
                                 }
                             };
                             pbar.tick();
                         },
                     );
-                    bd
+                    (bd, bv, br, be)
                 })
             })
             .collect::<Vec<_>>();
@@ -113,8 +150,23 @@ pub fn calculate_bader_density(
         // Either use the sorted index to remove vacuum from the summation or
         // find a way to operate on finshed threads first (ideally both).
         for thread in spawned_threads {
-            if let Ok(tmp_bd) = thread.join() {
+            if let Ok((tmp_bd, tmp_bv, tmp_br, tmp_be)) = thread.join() {
                 bader_density.iter_mut().zip(tmp_bd.into_iter()).for_each(
+                    |(a, b)| {
+                        *a += b;
+                    },
+                );
+                bader_volume.iter_mut().zip(tmp_bv.into_iter()).for_each(
+                    |(a, b)| {
+                        *a += b;
+                    },
+                );
+                bader_radius.iter_mut().zip(tmp_br.into_iter()).for_each(
+                    |(a, b)| {
+                        *a = a.min(b);
+                    },
+                );
+                bader_error.iter_mut().zip(tmp_be.into_iter()).for_each(
                     |(a, b)| {
                         *a += b;
                     },
@@ -129,7 +181,24 @@ pub fn calculate_bader_density(
     bader_density.iter_mut().for_each(|a| {
         *a *= voxel_map.grid_get().voxel_lattice.volume;
     });
-    bader_density.into()
+    // The distance isn't square rooted in the calcation of distance to save time.
+    // As we need to filter out the infinite distances (atoms with no assigned maxima)
+    // we can square root here also.
+    bader_volume.iter_mut().for_each(|a| {
+        *a *= voxel_map.grid_get().voxel_lattice.volume;
+    });
+    bader_radius.iter_mut().for_each(|d| {
+        match (*d).partial_cmp(&f64::INFINITY) {
+            Some(std::cmp::Ordering::Less) => *d = d.powf(0.5),
+            _ => *d = 0.0,
+        }
+    });
+    (
+        bader_density.into(),
+        bader_volume.into(),
+        bader_radius.into(),
+        bader_error.into(),
+    )
 }
 
 /// Calculates the volume and radius of each Bader atom.
@@ -212,12 +281,10 @@ pub fn calculate_bader_volumes_and_radii(
                         let p = index * chunk.len() + voxel_index;
                         match vm.maxima_to_voxel(*maxima) {
                             Voxel::Boundary(weights) => {
-                                for weight in weights.iter() {
-                                    let m = *weight as usize;
-                                    let w = weight - (m as f64);
-                                    let (m, _) =
-                                        voxel_map.grid.decode_maxima(m);
-                                    bv[m] += w;
+                                for (m, w) in weights.into_iter() {
+                                    let m =
+                                        EncodedData::decode_maxima(m).0 as usize;
+                                    bv[m] += w as f64;
                                     let atom_number = vm.maxima_to_atom(m);
                                     let p_c = vm.grid.to_cartesian(p as isize);
                                     let p_lll_c = atoms.lattice.cartesian_to_reduced(p_c);
@@ -226,8 +293,8 @@ pub fn calculate_bader_volumes_and_radii(
                                 }
                             }
                             Voxel::Maxima(m) => {
-                                    let (m, _) =
-                                        voxel_map.grid.decode_maxima(m);
+                                    let m =
+                                        EncodedData::decode_maxima(m as u32).0 as usize;
                                 bv[m] += 1.0;
                             }
                             Voxel::Vacuum => {
@@ -383,7 +450,7 @@ pub fn nuclei_ordering(
     nuclei.iter().for_each(|cp| {
         let p = cp.position;
         let rho = density[p as usize];
-        let atom_num = cp.atoms[0];
+        let atom_num = cp.atoms[0] as usize;
         if let CriticalPointKind::Blank = ordered_nuclei[atom_num].kind {
             ordered_nuclei[atom_num] =
                 CriticalPoint::new(cp.position, cp.kind, cp.atoms.clone());
@@ -399,7 +466,6 @@ pub fn nuclei_ordering(
 pub fn bond_pruning(
     bonds: &[CriticalPoint],
     density: &[f64],
-    grid: &Grid,
     visible_bar: bool,
 ) -> Vec<CriticalPoint> {
     let progress_bar: Box<dyn ProgressBar> = match visible_bar {
@@ -416,34 +482,27 @@ pub fn bond_pruning(
             pbar.tick();
             let mut origin_flag = false;
             cp.atoms.iter().for_each(|a| {
-                let (_, image) = grid.decode_maxima(*a);
-                if image[0].abs() + image[1].abs() + image[2].abs() == 0 {
+                let image =
+                    EncodedData::decode_image(EncodedData::decode_maxima(*a).1);
+                if image[0] != 0 || image[1] != 0 || image[2] != 0 {
                     origin_flag = true;
                 }
             });
             let rho = density[cp.position as usize];
             let atom_num = match origin_flag {
                 true => FxHashSet::from_iter(vec![cp.atoms.to_vec()]),
+                // need to subtract image from the current cp image
                 false => cp
                     .atoms
                     .iter()
                     .map(|a| {
-                        let (_, image) = grid.decode_maxima(*a);
+                        let image = EncodedData::decode_image(
+                            EncodedData::decode_maxima(*a).1,
+                        );
                         cp.atoms
                             .iter()
-                            .map(|a| {
-                                let (a, i) = grid.decode_maxima(*a);
-                                grid.encode_maxima(
-                                    a,
-                                    i.into_iter()
-                                        .zip(image.iter())
-                                        .map(|(i, ii)| i - *ii)
-                                        .collect::<Vec<i8>>()
-                                        .try_into()
-                                        .unwrap(),
-                                )
-                            })
-                            .collect::<Vec<usize>>()
+                            .map(|a| EncodedData::subtract_image(*a, image))
+                            .collect::<Vec<u32>>()
                     })
                     .collect(),
             };
@@ -451,30 +510,24 @@ pub fn bond_pruning(
                 let pt = cp_t.position;
                 let mut origin_flag_t = false;
                 cp_t.atoms.iter().for_each(|a| {
-                    let (_, image) = grid.decode_maxima(*a);
-                    if image[0].abs() + image[1].abs() + image[2].abs() == 0 {
+                    let image = EncodedData::decode_image(
+                        EncodedData::decode_maxima(*a).1,
+                    );
+                    if image[0] != 0 || image[1] != 0 || image[2] != 0 {
                         origin_flag_t = true;
                     }
                 });
                 let atom_num_t = match origin_flag_t {
                     true => FxHashSet::from_iter(vec![cp_t.atoms.to_vec()]),
+                    // again need to remove current image
                     false => FxHashSet::from_iter(cp_t.atoms.iter().map(|a| {
-                        let (_, image) = grid.decode_maxima(*a);
-                        cp_t.atoms
+                        let image = EncodedData::decode_image(
+                            EncodedData::decode_maxima(*a).1,
+                        );
+                        cp.atoms
                             .iter()
-                            .map(|a| {
-                                let (a, i) = grid.decode_maxima(*a);
-                                grid.encode_maxima(
-                                    a,
-                                    i.into_iter()
-                                        .zip(image.iter())
-                                        .map(|(i, ii)| i - *ii)
-                                        .collect::<Vec<i8>>()
-                                        .try_into()
-                                        .unwrap(),
-                                )
-                            })
-                            .collect::<Vec<usize>>()
+                            .map(|a| EncodedData::subtract_image(*a, image))
+                            .collect::<Vec<u32>>()
                     })),
                 };
                 for an in atom_num.iter() {
@@ -519,10 +572,12 @@ pub fn ring_pruning(
             let positions = cp.atoms[..3]
                 .iter()
                 .map(|a| {
-                    let (atom_num, image) = grid.decode_maxima(*a);
+                    let (atom_num, image) = EncodedData::decode_maxima(*a);
+                    let atom_num = atom_num as usize;
+                    let image = EncodedData::decode_image(image);
                     folded_atom_nums.push(atom_num);
                     atom_images.push(image);
-                    if image[0].abs() + image[1].abs() + image[2].abs() == 0 {
+                    if image[0] != 0 || image[1] != 0 || image[2] != 0 {
                         origin_flag = true;
                     }
                     let image_shift = dot(
@@ -558,8 +613,10 @@ pub fn ring_pruning(
                     .unwrap();
                 // check if every other atom falls on that plane
                 for a in cp.atoms[3..].iter() {
-                    let (atom_num, image) = grid.decode_maxima(*a);
-                    if image[0].abs() + image[1].abs() + image[2].abs() == 0 {
+                    let (atom_num, image) = EncodedData::decode_maxima(*a);
+                    let atom_num = atom_num as usize;
+                    let image = EncodedData::decode_image(image);
+                    if image[0] != 0 || image[1] != 0 || image[2] != 0 {
                         origin_flag = true;
                     }
                     let image_shift = dot(
