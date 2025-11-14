@@ -410,17 +410,19 @@ pub fn minima_finder(
                             // never be and return it
                             // TODO: This needs to check if the cage is actually a boundary and if
                             // not complain that the weight tolerance is too high
-                            Some(CriticalPoint::new(
-                                *p as isize,
-                                CriticalPointKind::Cage,
-                                voxel_map
-                                    .maxima_to_weight(
-                                        voxel_map.maxima_get(*p as isize),
-                                    )
-                                    .into_iter()
-                                    .map(|(u, _)| u)
-                                    .collect(),
-                            ))
+                            if let Voxel::Boundary(weights) =
+                                voxel_map.voxel_get(*p as isize)
+                            {
+                                return Some(CriticalPoint::new(
+                                    *p as isize,
+                                    CriticalPointKind::Cage,
+                                    weights
+                                        .into_iter()
+                                        .map(|(u, _)| u)
+                                        .collect(),
+                                ));
+                            }
+                            None
                         })
                         .collect::<Vec<CriticalPoint>>()
                 })
@@ -436,6 +438,7 @@ pub fn minima_finder(
     })
     .unwrap(); // There is no panic option in the threads that isn't covered
     bader_minima.shrink_to_fit();
+    println!("minimas: {}", bader_minima.len());
     bader_minima
 }
 

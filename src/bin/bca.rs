@@ -1,6 +1,6 @@
 use bader::analysis::{
-    bond_pruning, cage_pruning, calculate_bader_density, calculate_bader_error,
-    calculate_bader_volumes_and_radii, nuclei_ordering, ring_pruning,
+    bond_pruning, cage_pruning, calculate_bader_density, nuclei_ordering,
+    ring_pruning,
 };
 use bader::arguments::App;
 use bader::errors::ArgumentError;
@@ -101,38 +101,15 @@ fn main() {
         !args.silent,
     );
     // sum the densities and then write the charge partition files
-    let (atoms_volume, atoms_radius) = calculate_bader_volumes_and_radii(
-        &voxel_map,
-        &atoms,
-        args.threads,
-        !args.silent,
-    );
-    let mut atoms_density =
-        vec![vec![0.0; densities.len()]; atoms_volume.len()];
-    densities.iter().enumerate().for_each(|(i, density)| {
-        atoms_density
-            .iter_mut()
-            .zip(
-                calculate_bader_density(
-                    density,
-                    &voxel_map,
-                    &atoms,
-                    args.threads,
-                    !args.silent,
-                )
-                .iter(),
-            )
-            .for_each(|(ad, bd)| ad[i] += bd);
-    });
-    let atoms_error = calculate_bader_error(
-        reference,
-        &voxel_map,
-        &atoms,
-        args.threads,
-        !args.silent,
-    );
-    let bonds =
-        bond_pruning(&bonds, reference, voxel_map.grid_get(), !args.silent);
+    let (atoms_density, atoms_volume, atoms_radius, atoms_error) =
+        calculate_bader_density(
+            &densities,
+            &voxel_map,
+            &atoms,
+            args.threads,
+            !args.silent,
+        );
+    let bonds = bond_pruning(&bonds, reference, !args.silent);
     let rings = ring_pruning(
         &rings,
         &nuclei,
@@ -156,7 +133,7 @@ fn main() {
         rings.len(),
         cages.len()
     );
-    /*
+    let critical_points = (nuclei, bonds, rings, cages);
     critical_points.0.iter().for_each(|cp| {
         let [x, y, z] = voxel_map.grid.to_3d(cp.position);
         let x = x as f64 / voxel_map.grid.size.x as f64;
@@ -189,7 +166,6 @@ fn main() {
         let (x, y, z) = file_type.coordinate_format([x, y, z]);
         println!("{} {} {}        {:?}", x, y, z, cp.atoms);
     });
-    */
     // prepare the positions for writing out
     let positions = atoms
         .positions

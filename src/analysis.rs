@@ -53,49 +53,55 @@ use rustc_hash::{FxHashMap, FxHashSet};
 /// );
 /// ```
 pub fn calculate_bader_density(
-    density: &[f64],
+    density: &[Vec<f64>],
     voxel_map: &VoxelMap,
     atoms: &Atoms,
     threads: usize,
     visible_bar: bool,
-) -> (Box<[f64]>, Box<[f64]>, Box<[f64]>, Box<[f64]>) {
+) -> (Box<[Box<[f64]>]>, Box<[f64]>, Box<[f64]>, Box<[f64]>) {
     let progress_bar: Box<dyn ProgressBar> = match visible_bar {
         false => Box::new(HiddenBar {}),
         true => Box::new(Bar::new(
-            density.len(),
+            density[0].len(),
             String::from("Summing Bader Density"),
         )),
     };
     let pbar = &progress_bar;
-    let mut bader_density = vec![0.0; atoms.positions.len() + 1];
+    let mut bader_density =
+        vec![vec![0.0; density.len()]; atoms.positions.len() + 1];
     let mut bader_volume = vec![0.0; atoms.positions.len() + 1];
     let mut bader_radius = vec![f64::INFINITY; atoms.positions.len()];
     let mut bader_error = vec![0.0; atoms.positions.len() + 1];
     let vm = &voxel_map;
     // Calculate the size of the vector to be passed to each thread.
     let chunk_size =
-        (density.len() / threads) + (density.len() % threads).min(1);
+        (density[0].len() / threads) + (density[0].len() % threads).min(1);
     thread::scope(|s| {
         let spawned_threads = voxel_map
             .maxima_chunks(chunk_size)
             .enumerate()
             .map(|(index, chunk)| {
                 s.spawn(move |_| {
-                    let mut bd = vec![0.0; atoms.positions.len() + 1];
+                    let mut bd = vec![
+                        vec![0.0; density.len()];
+                        atoms.positions.len() + 1
+                    ];
                     let mut bv = vec![0.0; atoms.positions.len() + 1];
                     let mut br = vec![f64::INFINITY; atoms.positions.len()];
                     let mut be = vec![0.0; atoms.positions.len() + 1];
                     chunk.iter().enumerate().for_each(
                         |(voxel_index, maxima)| {
                             let p = index * chunk.len() + voxel_index;
-                            let lapl = laplacian(p, density, &vm.grid);
+                            let lapl = laplacian(p, &density[0], &vm.grid);
                             match vm.maxima_to_voxel(*maxima) {
                                 Voxel::Maxima(m) => {
                                     let m = EncodedData::decode_maxima(m as u32)
                                         .0
                                         as usize;
                                     // Bader density
-                                    bd[m] += density[p];
+                                    for (i, rho) in density.iter().enumerate() {
+                                        bd[m][i] += rho[p];
+                                    }
                                     // Bader Volume
                                     bv[m] += 1.0;
                                     // Bader Error
@@ -107,7 +113,11 @@ pub fn calculate_bader_density(
                                             as usize;
                                         let w = w as f64;
                                         // Bader density
-                                        bd[m] += w * density[p];
+                                        for (i, rho) in
+                                            density.iter().enumerate()
+                                        {
+                                            bd[m][i] += w * rho[p];
+                                        }
                                         // Bader radius
                                         let atom_number = vm.maxima_to_atom(m);
                                         let p_c =
@@ -131,7 +141,9 @@ pub fn calculate_bader_density(
                                 }
                                 Voxel::Vacuum => {
                                     // Bader Density
-                                    bd[atoms.positions.len()] += density[p];
+                                    for (i, rho) in density.iter().enumerate() {
+                                        bd[atoms.positions.len()][i] += rho[p];
+                                    }
                                     // Bader Volume
                                     bv[atoms.positions.len()] += 1.0;
                                     // Bader Error
@@ -153,7 +165,7 @@ pub fn calculate_bader_density(
             if let Ok((tmp_bd, tmp_bv, tmp_br, tmp_be)) = thread.join() {
                 bader_density.iter_mut().zip(tmp_bd.into_iter()).for_each(
                     |(a, b)| {
-                        *a += b;
+                        a.iter_mut().zip(b).for_each(|(c, d)| *c += d);
                     },
                 );
                 bader_volume.iter_mut().zip(tmp_bv.into_iter()).for_each(
@@ -179,7 +191,8 @@ pub fn calculate_bader_density(
     .unwrap();
     // The final result needs to be converted to a charge rather than a density.
     bader_density.iter_mut().for_each(|a| {
-        *a *= voxel_map.grid_get().voxel_lattice.volume;
+        a.iter_mut()
+            .for_each(|b| *b *= voxel_map.grid_get().voxel_lattice.volume);
     });
     // The distance isn't square rooted in the calcation of distance to save time.
     // As we need to filter out the infinite distances (atoms with no assigned maxima)
@@ -194,234 +207,14 @@ pub fn calculate_bader_density(
         }
     });
     (
-        bader_density.into(),
+        bader_density
+            .into_iter()
+            .map(|bd| bd.into_boxed_slice())
+            .collect(),
         bader_volume.into(),
         bader_radius.into(),
         bader_error.into(),
     )
-}
-
-/// Calculates the volume and radius of each Bader atom.
-///
-/// #Example:
-/// ```
-/// use bader::analysis::calculate_bader_volumes_and_radii;
-/// use bader::atoms::{Atoms, Lattice};
-/// use bader::grid::Grid;
-/// use bader::voxel_map::VoxelMap;
-///
-/// // Intialise Atoms and VoxelMap structs as well as a density to sum.
-/// let lattice =
-///     Lattice::new([[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]]);
-/// let atoms = Atoms::new(
-///     lattice,
-///     vec![[0.0, 0.0, 0.0], [1.5, 1.5, 1.5]],
-///     String::from(""),
-/// );
-/// let grid = Grid::new(
-///     [10, 10, 10],
-///     [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
-///     [0.0, 0.0, 0.0],
-/// );
-/// // each atom gets 500 voxels all of value 1
-/// let mut voxel_map = (0..1000).map(|i| i / 500).collect::<Vec<isize>>();
-/// // add some vacuum meaning atom 2 has 499 voxels
-/// voxel_map[600] = -1;
-/// // add a weighted voxel meaning atom 1 now has 499.7 voxels and atom 2 has 499.3
-/// // this is the only factor in determining the radius; 2 * (a + b + c) for atom 1
-/// // and 3 * (a + b + c) for atom 2.
-/// voxel_map[222] = -2;
-/// let weight_map: Vec<Box<[f64]>> = vec![vec![0.7, 1.3].into(); 1];
-/// let voxel_map = VoxelMap::new(voxel_map, weight_map, grid);
-///
-/// let (volumes, radii) = calculate_bader_volumes_and_radii(&voxel_map, &atoms, 1, false);
-/// let volume = voxel_map.grid_get().voxel_lattice.volume;
-/// let a_b_c = (0.3_f64.powi(2) + 0.3_f64.powi(2) + 0.3_f64.powi(2)).powf(0.5);
-/// assert_eq!(
-///     volumes,
-///     vec![
-///         499.7 * volume,
-///         499.3 * volume,
-///         volume
-///     ]
-///     .into()
-/// );
-/// assert!(radii[0] - (2.0 * a_b_c) <= f64::EPSILON);
-/// assert!(radii[1] - (3.0 * a_b_c) <= f64::EPSILON);
-/// ```
-pub fn calculate_bader_volumes_and_radii(
-    voxel_map: &VoxelMap,
-    atoms: &Atoms,
-    threads: usize,
-    visible_bar: bool,
-) -> (Box<[f64]>, Box<[f64]>) {
-    let progress_bar: Box<dyn ProgressBar> = match visible_bar {
-        false => Box::new(HiddenBar {}),
-        true => Box::new(Bar::new(
-            voxel_map.maxima_len(),
-            String::from("Calculating Volumes"),
-        )),
-    };
-    let pbar = &progress_bar;
-    let mut bader_radius = vec![f64::INFINITY; atoms.positions.len()];
-    let mut bader_volume = vec![0.0; atoms.positions.len() + 1];
-    let vm = &voxel_map;
-    // Calculate the size of the vector to be passed to each thread.
-    let chunk_size = (voxel_map.maxima_len() / threads)
-        + (voxel_map.maxima_len() % threads).min(1);
-    thread::scope(|s| {
-        let spawned_threads = voxel_map
-            .maxima_chunks(chunk_size)
-            .enumerate()
-            .map(|(index, chunk)| {
-                s.spawn(move |_| {
-                    let mut br = vec![f64::INFINITY; atoms.positions.len()];
-                    let mut bv = vec![0.0; atoms.positions.len() + 1];
-                    chunk.iter().enumerate().for_each(|(voxel_index, maxima)| {
-                        let p = index * chunk.len() + voxel_index;
-                        match vm.maxima_to_voxel(*maxima) {
-                            Voxel::Boundary(weights) => {
-                                for (m, w) in weights.into_iter() {
-                                    let m =
-                                        EncodedData::decode_maxima(m).0 as usize;
-                                    bv[m] += w as f64;
-                                    let atom_number = vm.maxima_to_atom(m);
-                                    let p_c = vm.grid.to_cartesian(p as isize);
-                                    let p_lll_c = atoms.lattice.cartesian_to_reduced(p_c);
-                                    let atom = atoms.reduced_positions[atom_number];
-                                    br[atom_number] = atoms.lattice.minimum_distance(p_lll_c, atom, Some(br[atom_number]));
-                                }
-                            }
-                            Voxel::Maxima(m) => {
-                                    let m =
-                                        EncodedData::decode_maxima(m as u32).0 as usize;
-                                bv[m] += 1.0;
-                            }
-                            Voxel::Vacuum => {
-                                bv[atoms.positions.len()] += 1.0;
-                            }
-                        };
-                        pbar.tick();
-                    });
-                    (bv, br)
-                })
-            })
-            .collect::<Vec<_>>();
-        // Join each thread and collect the results.
-        // If one thread terminates before the other this is not operated on first.
-        // Either use the sorted index to remove vacuum from the summation or
-        // find a way to operate on finshed threads first (ideally both).
-        for thread in spawned_threads {
-            if let Ok((tmp_bv, tmp_br)) = thread.join() {
-                bader_volume
-                    .iter_mut()
-                    .zip(tmp_bv.into_iter())
-                    .for_each(|(a, b)| {
-                        *a += b;
-                    });
-                bader_radius
-                    .iter_mut()
-                    .zip(tmp_br.into_iter())
-                    .for_each(|(a, b)| {
-                        *a = a.min(b);
-                    });
-            } else {
-                panic!("Unable to join thread in calculate_bader_volumes_and_radii.")
-            };
-        }
-    })
-    .unwrap();
-    // The distance isn't square rooted in the calcation of distance to save time.
-    // As we need to filter out the infinite distances (atoms with no assigned maxima)
-    // we can square root here also.
-    bader_volume.iter_mut().for_each(|a| {
-        *a *= voxel_map.grid_get().voxel_lattice.volume;
-    });
-    bader_radius.iter_mut().for_each(|d| {
-        match (*d).partial_cmp(&f64::INFINITY) {
-            Some(std::cmp::Ordering::Less) => *d = d.powf(0.5),
-            _ => *d = 0.0,
-        }
-    });
-    (bader_volume.into(), bader_radius.into())
-}
-
-/// calcuate the error associated with each atom from the Laplacian
-pub fn calculate_bader_error(
-    density: &[f64],
-    voxel_map: &VoxelMap,
-    atoms: &Atoms,
-    threads: usize,
-    visible_bar: bool,
-) -> Box<[f64]> {
-    let progress_bar: Box<dyn ProgressBar> = match visible_bar {
-        false => Box::new(HiddenBar {}),
-        true => Box::new(Bar::new(
-            voxel_map.maxima_len(),
-            String::from("Calculating Errors"),
-        )),
-    };
-    let pbar = &progress_bar;
-    let mut bader_error = vec![0.0; atoms.positions.len() + 1];
-    let vm = &voxel_map;
-    // Calculate the size of the vector to be passed to each thread.
-    let chunk_size =
-        (density.len() / threads) + (density.len() % threads).min(1);
-    thread::scope(|s| {
-        let spawned_threads = voxel_map
-            .maxima_chunks(chunk_size)
-            .enumerate()
-            .map(|(index, chunk)| {
-                s.spawn(move |_| {
-                    let mut bd = vec![0.0; atoms.positions.len() + 1];
-                    chunk.iter().enumerate().for_each(
-                        |(voxel_index, maxima)| {
-                            let p = index * chunk.len() + voxel_index;
-                            let lapl = laplacian(p, density, &vm.grid);
-                            match vm.maxima_to_voxel(*maxima) {
-                                Voxel::Maxima(m) => {
-                                    let (m, _) =
-                                        voxel_map.grid.decode_maxima(m);
-                                    bd[m] += lapl;
-                                }
-                                Voxel::Boundary(weights) => {
-                                    for weight in weights.iter() {
-                                        let m = *weight as usize;
-                                        let w = weight - (m as f64);
-                                        let (m, _) =
-                                            voxel_map.grid.decode_maxima(m);
-                                        bd[m] += w * lapl;
-                                    }
-                                }
-                                Voxel::Vacuum => {
-                                    bd[atoms.positions.len()] += lapl
-                                }
-                            };
-                            pbar.tick();
-                        },
-                    );
-                    bd
-                })
-            })
-            .collect::<Vec<_>>();
-        // Join each thread and collect the results.
-        // If one thread terminates before the other this is not operated on first.
-        // Either use the sorted index to remove vacuum from the summation or
-        // find a way to operate on finshed threads first (ideally both).
-        for thread in spawned_threads {
-            if let Ok(tmp_bd) = thread.join() {
-                bader_error.iter_mut().zip(tmp_bd.into_iter()).for_each(
-                    |(a, b)| {
-                        *a += b;
-                    },
-                );
-            } else {
-                panic!("Unable to join thread in sum_bader_densities.")
-            };
-        }
-    })
-    .unwrap();
-    bader_error.into()
 }
 
 pub fn nuclei_ordering(
@@ -478,20 +271,25 @@ pub fn bond_pruning(
     let pbar = &progress_bar;
     bonds
         .iter()
+        // We want to remove duplicate bonds
         .filter_map(|cp| {
             pbar.tick();
             let mut origin_flag = false;
+            // check if any of the atoms are in the unit cell
             cp.atoms.iter().for_each(|a| {
                 let image =
                     EncodedData::decode_image(EncodedData::decode_maxima(*a).1);
-                if image[0] != 0 || image[1] != 0 || image[2] != 0 {
+                if image[0] == 0 && image[1] == 0 && image[2] == 0 {
                     origin_flag = true;
                 }
             });
             let rho = density[cp.position as usize];
+            // if atoms are out of unit cell wrap them back in.
+            // TODO: why is this done in two loops, is it because we produce multiple for each?
+            // why are we putting in HashSet?
             let atom_num = match origin_flag {
                 true => FxHashSet::from_iter(vec![cp.atoms.to_vec()]),
-                // need to subtract image from the current cp image
+                // need to subtract all image from the cps so they are with respect to unit cell
                 false => cp
                     .atoms
                     .iter()
@@ -501,11 +299,14 @@ pub fn bond_pruning(
                         );
                         cp.atoms
                             .iter()
-                            .map(|a| EncodedData::subtract_image(*a, image))
+                            .map(|b| EncodedData::subtract_image(*b, image))
                             .collect::<Vec<u32>>()
                     })
                     .collect(),
             };
+            // Iter over the collection of bonds again to check if any match with the ones we have
+            // just stored
+            // TODO: why isn't this combitorial
             for cp_t in bonds.iter() {
                 let pt = cp_t.position;
                 let mut origin_flag_t = false;
@@ -513,7 +314,7 @@ pub fn bond_pruning(
                     let image = EncodedData::decode_image(
                         EncodedData::decode_maxima(*a).1,
                     );
-                    if image[0] != 0 || image[1] != 0 || image[2] != 0 {
+                    if image[0] == 0 && image[1] == 0 && image[2] == 0 {
                         origin_flag_t = true;
                     }
                 });
@@ -530,6 +331,8 @@ pub fn bond_pruning(
                             .collect::<Vec<u32>>()
                     })),
                 };
+                // If the bonds are the same we need to remove this one only if it is lower density
+                // TODO: why are the original vectors not stored as HashMaps?
                 for an in atom_num.iter() {
                     let an = FxHashSet::from_iter(an);
                     for ant in atom_num_t.iter() {
@@ -569,6 +372,7 @@ pub fn ring_pruning(
                 Vec::<usize>::with_capacity(cp.atoms.len());
             let mut atom_images = Vec::<[i8; 3]>::with_capacity(cp.atoms.len());
             let mut origin_flag = false;
+            // only do 3 as this is all required to form a plane
             let positions = cp.atoms[..3]
                 .iter()
                 .map(|a| {
@@ -577,7 +381,7 @@ pub fn ring_pruning(
                     let image = EncodedData::decode_image(image);
                     folded_atom_nums.push(atom_num);
                     atom_images.push(image);
-                    if image[0] != 0 || image[1] != 0 || image[2] != 0 {
+                    if image[0] == 0 && image[1] == 0 && image[2] == 0 {
                         origin_flag = true;
                     }
                     let image_shift = dot(
@@ -616,7 +420,7 @@ pub fn ring_pruning(
                     let (atom_num, image) = EncodedData::decode_maxima(*a);
                     let atom_num = atom_num as usize;
                     let image = EncodedData::decode_image(image);
-                    if image[0] != 0 || image[1] != 0 || image[2] != 0 {
+                    if image[0] == 0 && image[1] == 0 && image[2] == 0 {
                         origin_flag = true;
                     }
                     let image_shift = dot(
@@ -675,23 +479,12 @@ pub fn ring_pruning(
                 // these are all the unique collections of atoms that are shifted by the images
                 let pbc_atoms =
                     FxHashSet::from_iter(cp.atoms.iter().map(|a| {
-                        let (_, image) = grid.decode_maxima(*a);
+                        let (_, image) = EncodedData::decode_maxima(*a);
+                        let image = EncodedData::decode_image(image);
                         cp.atoms
                             .iter()
-                            .map(|a| {
-                                let (pbc_a, pbc_image) = grid.decode_maxima(*a);
-                                grid.encode_maxima(
-                                    pbc_a,
-                                    pbc_image
-                                        .into_iter()
-                                        .zip(image.iter())
-                                        .map(|(pbc_i, i)| pbc_i - i)
-                                        .collect::<Vec<i8>>()
-                                        .try_into()
-                                        .unwrap(),
-                                )
-                            })
-                            .collect::<Vec<usize>>()
+                            .map(|a| EncodedData::subtract_image(*a, image))
+                            .collect::<Vec<u32>>()
                     }));
                 pbc_rings.push((
                     CriticalPoint::new(cp.position, cp.kind, cp.atoms.clone()),
@@ -815,7 +608,9 @@ pub fn cage_pruning(
                 let positions = cp.atoms[..3]
                     .iter()
                     .map(|a| {
-                        let (atom_num, image) = grid.decode_maxima(*a);
+                        let (atom_num, image) = EncodedData::decode_maxima(*a);
+                        let atom_num = atom_num as usize;
+                        let image = EncodedData::decode_image(image);
                         let image_shift = dot(
                             image
                                 .into_iter()
@@ -849,7 +644,9 @@ pub fn cage_pruning(
                 // check every other atom against this plane, at least one should not be in the
                 // plane
                 for a in cp.atoms[3..].iter() {
-                    let (atom_num, image) = grid.decode_maxima(*a);
+                    let (atom_num, image) = EncodedData::decode_maxima(*a);
+                    let atom_num = atom_num as usize;
+                    let image = EncodedData::decode_image(image);
                     let image_shift = dot(
                         image
                             .into_iter()
@@ -934,8 +731,8 @@ pub fn calculate_bond_strengths(
         if let std::cmp::Ordering::Equal = weights.len().cmp(&2) {
             let atom_nums = weights
                 .iter()
-                .map(|w| {
-                    let n = *w as usize;
+                .map(|(n, _)| {
+                    let n = *n as usize;
                     let atom = atoms.reduced_positions[n];
                     let mut min_distance = f64::INFINITY;
                     let mut atom_image = 0;

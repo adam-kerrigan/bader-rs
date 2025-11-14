@@ -5,7 +5,7 @@ use std::io::Write;
 /// Create the partitioned charge files using an optional atom map to decide the format
 pub fn partitions_file(
     positions: Vec<(String, String, String)>,
-    partitioned_density: &[Vec<f64>],
+    partitioned_density: &[Box<[f64]>],
     partitioned_volume: &[f64],
     radius: &[f64],
     errors: &[f64],
