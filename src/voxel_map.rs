@@ -1,8 +1,10 @@
 use crate::grid::Grid;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::UnsafeCell;
+use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 
 pub struct EncodedData(u64);
 
@@ -114,35 +116,6 @@ pub enum Voxel {
     Vacuum,
 }
 
-/// A lock guard for write access to [`VoxelMap.weight_map`].
-pub struct Lock<'a> {
-    data: &'a BlockingVoxelMap,
-}
-
-unsafe impl Sync for Lock<'_> {}
-
-/// Deref only exposes the weight_map field of a [`VoxelMap`].
-impl Deref for Lock<'_> {
-    type Target = Vec<Box<[EncodedData]>>;
-    fn deref(&self) -> &Vec<Box<[EncodedData]>> {
-        unsafe { &*self.data.weight_map.get() }
-    }
-}
-
-/// DerefMut only exposes the weight_map field of a [`VoxelMap`].
-impl DerefMut for Lock<'_> {
-    fn deref_mut(&mut self) -> &mut Vec<Box<[EncodedData]>> {
-        unsafe { &mut *self.data.weight_map.get() }
-    }
-}
-
-/// Make sure to free the lock when the struct is dropped.
-impl Drop for Lock<'_> {
-    fn drop(&mut self) {
-        self.data.lock.store(false, Ordering::SeqCst);
-    }
-}
-
 /// A structure for building and processing the map between voxel and maxima.
 /// Bader maxima are stored in the voxel_map whilst the contributing weights are
 /// stored in the weight_map. The weight_map is only written to once by each
@@ -172,13 +145,11 @@ impl Drop for Lock<'_> {
 /// }
 /// ```
 pub struct BlockingVoxelMap {
-    weight_map: UnsafeCell<Vec<Box<[EncodedData]>>>,
-    voxel_map: Vec<AtomicIsize>,
+    weight_map: Arc<[MaybeUninit<Box<[EncodedData]>>]>,
+    voxel_map: Arc<[AtomicIsize]>,
     pub grid: Grid,
-    lock: AtomicBool,
+    weight_counter: AtomicUsize,
 }
-
-unsafe impl Sync for BlockingVoxelMap {}
 
 impl BlockingVoxelMap {
     /// Initialises a [`BlockingVoxelMap`] and the [`Grid`] that will faciliate movemoment around the
@@ -191,17 +162,19 @@ impl BlockingVoxelMap {
         let grid = Grid::new(grid, lattice, voxel_origin);
         let size = grid.size.total;
         // For mapping the the voxels
-        let weight_map =
-            UnsafeCell::new(Vec::<Box<[EncodedData]>>::with_capacity(size));
+        let mut weight_map = Vec::with_capacity(size);
+        weight_map.resize_with(size, || MaybeUninit::uninit());
+        let weight_map = Arc::from(weight_map.into_boxed_slice());
         let mut voxel_map = Vec::with_capacity(size);
         voxel_map.resize_with(size, || AtomicIsize::new(-1));
-        let lock = AtomicBool::new(false);
+        let voxel_map = Arc::from(voxel_map.into_boxed_slice());
+        let weight_counter = AtomicUsize::new(0);
         // For post processing
         Self {
             weight_map,
             voxel_map,
             grid,
-            lock,
+            weight_counter,
         }
     }
 
@@ -211,7 +184,7 @@ impl BlockingVoxelMap {
     /// as a voxel is considered stored once voxel_map\[p\] > -1.
     pub fn weight_get(&self, i: isize) -> FxHashMap<u32, f32> {
         let i = -2 - i;
-        (unsafe { &*self.weight_map.get() })[i as usize]
+        (unsafe { self.weight_map.get_unchecked(i as usize).assume_init_ref() })
             .iter()
             .map(|u| u.decode_self())
             .collect()
@@ -220,8 +193,8 @@ impl BlockingVoxelMap {
     /// Atomic loading of voxel, p, from voxel_map blocks if maxima == -1
     pub fn maxima_get(&self, p: isize) -> isize {
         loop {
-            match self.voxel_map[p as usize].load(Ordering::Relaxed) {
-                -1 => (),
+            match self.voxel_map[p as usize].load(Ordering::Acquire) {
+                -1 => std::thread::yield_now(),
                 x => break x,
             }
         }
@@ -229,21 +202,11 @@ impl BlockingVoxelMap {
     ///
     /// Atomic loading of voxel, p, from voxel_map blocks if maxima == -1
     pub fn voxel_get(&self, p: isize) -> Voxel {
-        loop {
-            match self.voxel_map[p as usize].load(Ordering::Relaxed) {
-                -1 => (),
-                x => {
-                    return match x.cmp(&-1) {
-                        std::cmp::Ordering::Less => {
-                            Voxel::Boundary(self.weight_get(x))
-                        }
-                        std::cmp::Ordering::Equal => Voxel::Vacuum,
-                        std::cmp::Ordering::Greater => {
-                            Voxel::Maxima(x as usize)
-                        }
-                    };
-                }
-            }
+        let i = self.maxima_get(p);
+        match i.cmp(&-1) {
+            std::cmp::Ordering::Less => Voxel::Boundary(self.weight_get(i)),
+            std::cmp::Ordering::Equal => Voxel::Vacuum,
+            std::cmp::Ordering::Greater => Voxel::Maxima(i as usize),
         }
     }
 
@@ -257,30 +220,33 @@ impl BlockingVoxelMap {
 
     /// Stores the maxima of voxel, p, in the voxel_map.
     pub fn maxima_store(&self, p: isize, maxima: isize) {
-        self.voxel_map[p as usize].store(maxima, Ordering::Relaxed);
+        self.voxel_map[p as usize].store(maxima, Ordering::Release);
     }
 
     /// Stores the index of p's weight contributions in weight_map into the
     /// weight_index.
     pub fn weight_store(&self, p: isize, weights: Box<[EncodedData]>) {
-        let mut weight = self.lock();
-        let i = weight.len();
-        (*weight).push(weights);
+        let i = self.weight_counter.fetch_add(1, Ordering::Relaxed);
+        unsafe {
+            let ptr: *mut Box<[EncodedData]> =
+                self.weight_map.get_unchecked(i) as *const _ as *mut _;
+            ptr.write(weights)
+        }
         self.maxima_store(p, -2 - (i as isize));
-    }
-
-    /// Locks the structure for write access unlock occurs when the returned
-    /// Lock is dropped.
-    pub fn lock(&self) -> Lock {
-        while self.lock.swap(true, Ordering::SeqCst) {}
-        Lock { data: self }
     }
 
     /// Extract the voxel map data.
     pub fn into_inner(self) -> (Vec<isize>, Vec<Box<[EncodedData]>>, Grid) {
         (
-            self.voxel_map.into_iter().map(|x| x.into_inner()).collect(),
-            self.weight_map.into_inner(),
+            self.voxel_map
+                .into_iter()
+                .map(|x| x.load(Ordering::Relaxed))
+                .collect(),
+            self.weight_map
+                .into_iter()
+                .take(self.weight_counter.into_inner())
+                .map(|mu| unsafe { mu.assume_init_read() })
+                .collect(),
             self.grid,
         )
     }

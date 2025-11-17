@@ -283,10 +283,6 @@ pub fn weight(
         }
     })
     .unwrap();
-    {
-        let mut weights = voxel_map.lock();
-        weights.shrink_to_fit();
-    }
     critical_points.0.shrink_to_fit();
     critical_points.1.shrink_to_fit();
     critical_points
@@ -438,7 +434,6 @@ pub fn minima_finder(
     })
     .unwrap(); // There is no panic option in the threads that isn't covered
     bader_minima.shrink_to_fit();
-    println!("minimas: {}", bader_minima.len());
     bader_minima
 }
 
