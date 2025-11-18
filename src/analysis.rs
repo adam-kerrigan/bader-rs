@@ -4,8 +4,8 @@ use crate::methods::{CriticalPoint, CriticalPointKind, laplacian};
 use crate::progress::{Bar, HiddenBar, ProgressBar};
 use crate::utils::{cross, dot, norm, subtract, vdot};
 use crate::voxel_map::{EncodedData, Voxel, VoxelMap};
-use crossbeam_utils::thread;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::thread;
 
 /// Sums the densities of each Bader volume.
 ///
@@ -81,7 +81,7 @@ pub fn calculate_bader_density(
             .maxima_chunks(chunk_size)
             .enumerate()
             .map(|(index, chunk)| {
-                s.spawn(move |_| {
+                s.spawn(move || {
                     let mut bd = vec![
                         vec![0.0; density.len()];
                         atoms.positions.len() + 1
@@ -187,8 +187,7 @@ pub fn calculate_bader_density(
                 panic!("Unable to join thread in sum_bader_densities.")
             };
         }
-    })
-    .unwrap();
+    });
     // The final result needs to be converted to a charge rather than a density.
     bader_density.iter_mut().for_each(|a| {
         a.iter_mut()
@@ -730,8 +729,8 @@ pub fn calculate_bond_strengths(
         // If the weight is two atoms it's a bond > 2 is a ring?
         if let std::cmp::Ordering::Equal = weights.len().cmp(&2) {
             let atom_nums = weights
-                .iter()
-                .map(|(n, _)| {
+                .keys()
+                .map(|n| {
                     let n = *n as usize;
                     let atom = atoms.reduced_positions[n];
                     let mut min_distance = f64::INFINITY;

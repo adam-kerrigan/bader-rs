@@ -1,10 +1,8 @@
 use crate::grid::Grid;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::UnsafeCell;
 use std::mem::MaybeUninit;
-use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
 pub struct EncodedData(u64);
 
@@ -94,7 +92,7 @@ impl EncodedData {
         image
             .into_iter()
             .enumerate()
-            .fold(0, |acc, (i, img)| acc | (((img as u16) & 0x1F) << i * 5))
+            .fold(0, |acc, (i, img)| acc | (((img as u16) & 0x1F) << (i * 5)))
     }
 
     pub fn decode_self(&self) -> (u32, f32) {
@@ -163,7 +161,7 @@ impl BlockingVoxelMap {
         let size = grid.size.total;
         // For mapping the the voxels
         let mut weight_map = Vec::with_capacity(size);
-        weight_map.resize_with(size, || MaybeUninit::uninit());
+        weight_map.resize_with(size, MaybeUninit::uninit);
         let weight_map = Arc::from(weight_map.into_boxed_slice());
         let mut voxel_map = Vec::with_capacity(size);
         voxel_map.resize_with(size, || AtomicIsize::new(-1));
@@ -239,11 +237,11 @@ impl BlockingVoxelMap {
     pub fn into_inner(self) -> (Vec<isize>, Vec<Box<[EncodedData]>>, Grid) {
         (
             self.voxel_map
-                .into_iter()
+                .iter()
                 .map(|x| x.load(Ordering::Relaxed))
                 .collect(),
             self.weight_map
-                .into_iter()
+                .iter()
                 .take(self.weight_counter.into_inner())
                 .map(|mu| unsafe { mu.assume_init_read() })
                 .collect(),

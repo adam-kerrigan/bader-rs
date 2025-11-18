@@ -3,10 +3,10 @@ use crate::errors::MaximaError;
 use crate::grid::Grid;
 use crate::progress::{Bar, HiddenBar, ProgressBar};
 use crate::voxel_map::{BlockingVoxelMap, EncodedData, Voxel, VoxelMap};
-use crossbeam_utils::thread;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::thread;
 
 /// Result of a Weight step.
 ///
@@ -221,7 +221,7 @@ pub fn weight(
         // Assign the remaining voxels to Bader maxima
         let th = (0..threads)
             .map(|_| {
-                s.spawn(|_| {
+                s.spawn(|| {
                     let mut c_ps = (vec![], vec![]);
                     loop {
                         let p = {
@@ -281,8 +281,7 @@ pub fn weight(
                 critical_points.1.extend(c_ps.1);
             }
         }
-    })
-    .unwrap();
+    });
     critical_points.0.shrink_to_fit();
     critical_points.1.shrink_to_fit();
     critical_points
@@ -311,7 +310,7 @@ pub fn maxima_finder(
         let th = index
             .chunks(chunk_size)
             .map(|chunk| {
-                s.spawn(|_| {
+                s.spawn(|| {
                     chunk
                         .iter()
                         .filter_map(|p| {
@@ -360,8 +359,7 @@ pub fn maxima_finder(
             };
         }
         Ok(())
-    })
-    .unwrap()?; // There is no panic option in the threads that isn't covered
+    });
     bader_maxima.shrink_to_fit();
     Ok(bader_maxima)
 }
@@ -386,7 +384,7 @@ pub fn minima_finder(
         let th = index
             .chunks(chunk_size)
             .map(|chunk| {
-                s.spawn(|_| {
+                s.spawn(|| {
                     chunk
                         .iter()
                         .filter_map(|p| {
@@ -412,10 +410,7 @@ pub fn minima_finder(
                                 return Some(CriticalPoint::new(
                                     *p as isize,
                                     CriticalPointKind::Cage,
-                                    weights
-                                        .into_iter()
-                                        .map(|(u, _)| u)
-                                        .collect(),
+                                    weights.into_keys().collect(),
                                 ));
                             }
                             None
@@ -431,8 +426,7 @@ pub fn minima_finder(
                 panic!("Failed to join thread in manima finder.")
             };
         }
-    })
-    .unwrap(); // There is no panic option in the threads that isn't covered
+    });
     bader_minima.shrink_to_fit();
     bader_minima
 }
