@@ -39,7 +39,7 @@ where
             Some(h) => h.join().unwrap(),
             None => panic!(""),
         };
-        for handle in handle_iter.into_iter() {
+        for handle in handle_iter {
             reduce_op(&mut global_state, handle.join().unwrap());
         }
         global_state
@@ -60,7 +60,7 @@ where
         // Items
         critical_points,
         // Init
-        || FxHashMap::default(),
+        FxHashMap::default,
         // Map
         |local_state, cp| {
             if validator(cp) {

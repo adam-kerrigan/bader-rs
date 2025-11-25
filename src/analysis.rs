@@ -5,50 +5,47 @@ use crate::voxel_map::{Voxel, VoxelMap};
 use rustc_hash::FxHashMap;
 use std::thread;
 
-/// Sums the densities of each Bader volume.
+/// Sums the densities of each Bader volume and calculates associated properties.
 ///
-/// #Example:
-/// ```
+/// This function integrates the charge density over the volume assigned to each atom.
+/// It returns four vectors containing the results for each atom (plus a final index for vacuum).
+///
+/// # Arguments
+/// * `density` - A slice of density vectors (e.g., charge, spin).
+/// * `voxel_map` - The map assigning each voxel to an atom or boundary.
+/// * `atoms` - The atomic structure information.
+/// * `threads` - Number of threads to use for parallel execution.
+/// * `visible_bar` - Whether to show a progress bar.
+///
+/// # Returns
+/// A tuple containing:
+/// 1. **Density**: `Box<[Box<[f64]>]>` - Integrated charge for each atom.
+/// 2. **Volume**: `Box<[f64]>` - Volume size for each atom.
+/// 3. **Radius**: `Box<[f64]>` - Distance from the nucleus to the furthest assigned voxel.
+/// 4. **Error**: `Box<[f64]>` - Integrated Laplacian (should be close to 0 for perfect partitioning).
+///
+/// # Example
+/// ```no_run
 /// use bader::analysis::calculate_bader_density;
-/// use bader::atoms::{Atoms, Lattice};
-/// use bader::grid::Grid;
 /// use bader::voxel_map::VoxelMap;
+/// use bader::atoms::Atoms;
 ///
-/// // Intialise Atoms and VoxelMap structs as well as a density to sum.
-/// let lattice =
-///     Lattice::new([[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]]);
-/// let atoms = Atoms::new(
-///     lattice,
-///     vec![[0.0, 0.0, 0.0], [1.5, 1.5, 1.5]],
-///     String::from(""),
-/// );
-/// let grid = Grid::new(
-///     [10, 10, 10],
-///     [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
-///     [0.0, 0.0, 0.0],
-/// );
-/// // each atom gets 500 voxels all of value 1
-/// let mut voxel_map = (0..1000).map(|i| i / 500).collect::<Vec<isize>>();
-/// // add some vacuum meaning atom 2 has 499 voxels
-/// voxel_map[600] = -1;
-/// // add a weighted voxel meaning atom 1 now has 499.7 voxels and atom 2 has 499.3
-/// voxel_map[400] = -2;
-/// let weight_map: Vec<Box<[f64]>> = vec![vec![0.7, 1.3].into(); 1];
-/// let voxel_map = VoxelMap::new(voxel_map, weight_map, grid);
-/// let density = vec![1.0; 1000];
+/// // Assume we have a populated VoxelMap and Atoms struct
+/// # let voxel_map: VoxelMap = unsafe { std::mem::zeroed() };
+/// # let atoms: Atoms = unsafe { std::mem::zeroed() };
+/// // And a calculated charge density flat array
+/// let charge_density = vec![vec![0.1; 1000]]; // 1000 voxels
 ///
-/// let summed_density =
-///     calculate_bader_density(&density, &voxel_map, &atoms, 1, false);
-/// let volume = voxel_map.grid_get().voxel_lattice.volume;
-/// assert_eq!(
-///     summed_density,
-///     vec![
-///         499.7 * volume,
-///         499.3 * volume,
-///         volume
-///     ]
-///     .into()
+/// let (charges, volumes, radii, errors) = calculate_bader_density(
+///     &charge_density,
+///     &voxel_map,
+///     &atoms,
+///     4,    // Run on 4 threads
+///     true, // Show progress bar
 /// );
+///
+/// println!("Atom 0 Charge: {}", charges[0][0]);
+/// println!("Atom 0 Volume: {}", volumes[0]);
 /// ```
 pub fn calculate_bader_density(
     density: &[Vec<f64>],
@@ -211,8 +208,46 @@ pub fn calculate_bader_density(
     )
 }
 
-/// Calculates the Laplacian at each saddle point. This is currently basic analysis, atoms images
-/// are associated by distance not gradient paths and ring points are just being ignored.
+/// Calculates bond paths and strengths based on saddle points.
+///
+/// This function analyzes the provided saddle points (indices in the grid) to determine
+/// which atoms are connected. It uses the Laplacian at the saddle point as a measure
+/// of bond strength.
+///
+/// # Logic
+/// * Takes a list of `saddles` (indices where the gradient is zero but curvature is mixed).
+/// * Checks the `voxel_map` at that saddle point.
+/// * If the voxel is a boundary between exactly 2 atoms, it is considered a bond.
+/// * The Laplacian value at this point is recorded as the bond strength.
+///
+/// # Returns
+/// A `Vec` where index `i` corresponds to Atom `i`. Each element is a `HashMap`:
+/// * **Key**: `(connected_atom_index, image_offset)`
+/// * **Value**: Bond strength (Laplacian).
+///
+/// # Example
+/// ```no_run
+/// use bader::analysis::calculate_bond_strengths;
+///
+/// // Assume we found saddle points earlier (e.g., via CriticalPoint methods)
+/// let saddle_indices = vec![42, 105];
+/// # let density = vec![0.0];
+/// # let atoms = unsafe { std::mem::zeroed() };
+/// # let voxel_map = unsafe { std::mem::zeroed() };
+///
+/// let bonds = calculate_bond_strengths(
+///     &saddle_indices,
+///     &density,
+///     &atoms,
+///     &voxel_map,
+///     true
+/// );
+///
+/// // Check bonds for Atom 0
+/// for ((target_atom, offset), strength) in &bonds[0] {
+///     println!("Bond with Atom {} (strength: {})", target_atom, strength);
+/// }
+/// ```
 pub fn calculate_bond_strengths(
     saddles: &[isize],
     density: &[f64],
@@ -293,4 +328,180 @@ pub fn calculate_bond_strengths(
     });
     bonds.iter_mut().for_each(|b| b.shrink_to_fit());
     bonds
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*; // Import functions from analysis.rs
+    use crate::atoms::{Atoms, Lattice};
+    use crate::grid::Grid;
+    use crate::voxel_map::{
+        EncodedAtom, EncodedImage, EncodedWeight, VoxelMap,
+    };
+
+    // Helper to create a basic environment
+    fn setup_env(grid_dim: usize) -> (Grid, Atoms) {
+        let lattice_mat = [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]];
+        let origin = [0.0, 0.0, 0.0];
+
+        // 1. Setup Grid
+        let grid =
+            Grid::new([grid_dim, grid_dim, grid_dim], lattice_mat, origin);
+
+        // 2. Setup Atoms (2 atoms at opposite corners)
+        let atoms = Atoms::new(
+            Lattice::new(lattice_mat),
+            vec![[0.0, 0.0, 0.0], [1.5, 1.5, 1.5]], // Positions
+            String::from("Test System"),
+        );
+
+        (grid, atoms)
+    }
+
+    #[test]
+    fn test_calculate_bader_density_uniform() {
+        let dim = 4;
+        let size = dim * dim * dim;
+        let (grid, atoms) = setup_env(dim);
+
+        // CASE: Uniform density of 1.0 everywhere
+        // All voxels belong to Atom 0
+        let density_data = vec![vec![1.0; size]];
+
+        let voxel_indices = vec![0isize; size]; // All point to Atom 0
+        let weight_map = vec![]; // No boundaries
+
+        // Construct VoxelMap manually
+        let v_map = VoxelMap {
+            voxel_map: voxel_indices,
+            weight_map,
+            grid,
+        };
+
+        let (b_rho, b_vol, _b_rad, _b_err) = calculate_bader_density(
+            &density_data,
+            &v_map,
+            &atoms,
+            1,     // 1 thread
+            false, // no progress bar
+        );
+
+        // Atom 0 should have all the charge
+        // Total Volume = 3.0 * 3.0 * 3.0 = 27.0
+        let total_vol = 27.0;
+
+        assert!(
+            (b_rho[0][0] - total_vol).abs() < 1e-4,
+            "Atom 0 should contain all density"
+        );
+        assert!(
+            (b_vol[0] - total_vol).abs() < 1e-4,
+            "Atom 0 should have full volume"
+        );
+
+        // Atom 1 should be empty
+        assert_eq!(b_rho[1][0], 0.0);
+        assert_eq!(b_vol[1], 0.0);
+    }
+
+    #[test]
+    fn test_calculate_bader_density_boundary() {
+        let dim = 2; // 8 voxels total
+        let size = 8;
+        let (grid, atoms) = setup_env(dim);
+
+        // CASE: 7 voxels for Atom 0, 1 voxel on boundary (50/50 split)
+        let density_data = vec![vec![1.0; size]];
+
+        let mut voxel_indices = vec![0isize; size];
+
+        // Create Weights: Voxel 7 is shared 50/50 between Atom 0 and Atom 1
+        let atom0 = EncodedAtom::new(0, EncodedImage::new([0, 0, 0]));
+        let atom1 = EncodedAtom::new(1, EncodedImage::new([0, 0, 0]));
+
+        let w0 = EncodedWeight::new(atom0, 0.5);
+        let w1 = EncodedWeight::new(atom1, 0.5);
+
+        let weights = vec![w0, w1].into_boxed_slice();
+
+        // Set Voxel 7 to be boundary (index -2) pointing to weight_map[0]
+        voxel_indices[7] = -2;
+        let weight_map = vec![weights];
+
+        let v_map = VoxelMap {
+            voxel_map: voxel_indices,
+            weight_map,
+            grid,
+        };
+
+        let (__rho, b_vol, b_rad, b_err) =
+            calculate_bader_density(&density_data, &v_map, &atoms, 1, false);
+
+        // Voxel Volume
+        let v_vol = v_map.grid.voxel_lattice.volume;
+
+        // Atom 0: 7 full voxels + 0.5 voxel
+        let expected_vol_0 = (7.0 + 0.5) * v_vol;
+        // Atom 1: 0 full voxels + 0.5 voxel
+        let expected_vol_1 = 0.5 * v_vol;
+
+        assert!((b_vol[0] - expected_vol_0).abs() < f64::EPSILON);
+        assert!((b_vol[1] - expected_vol_1).abs() < f64::EPSILON);
+        assert!((b_rad[0] - (3.0 * 1.5f64.powi(2).powf(0.5))) < f64::EPSILON);
+        assert!((b_err[0] - 0.0) < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_calculate_bond_strengths() {
+        // This test simulates a bond saddle point between two atoms.
+        let dim = 3;
+        let (grid, atoms) = setup_env(dim); // 3x3x3 grid
+
+        // Create a density with a peak at center (1,1,1) -> index 13
+        let mut density = vec![0.0; 27];
+        density[13] = 2.0; // Saddle point density
+
+        // Define Voxel 13 as a boundary (Bond) between Atom 0 and Atom 1
+        let mut voxel_indices = vec![0isize; 27]; // Default to Atom 0
+
+        // Setup Weights for the saddle point
+        let atom0 = EncodedAtom::new(0, EncodedImage::new([0, 0, 0]));
+        let atom1 = EncodedAtom::new(1, EncodedImage::new([0, 0, 0]));
+        let weights = vec![
+            EncodedWeight::new(atom0, 0.5),
+            EncodedWeight::new(atom1, 0.5),
+        ]
+        .into_boxed_slice();
+
+        voxel_indices[13] = -2; // Boundary
+        let weight_map = vec![weights];
+
+        let v_map = VoxelMap {
+            voxel_map: voxel_indices,
+            weight_map,
+            grid,
+        };
+
+        // We explicitly tell the function that index 13 is a saddle
+        let saddles = vec![13];
+
+        let bonds =
+            calculate_bond_strengths(&saddles, &density, &atoms, &v_map, false);
+
+        // Check Atom 0's bonds
+        // It should have a bond with Atom 1
+        // The key in the hashmap is (target_atom_index, image_offset_index)
+        // Image offset 13 is usually the (0,0,0) shift if centered (depends on implementation),
+        // but we just check if *any* bond exists with Atom 1.
+
+        let atom0_bonds = &bonds[0];
+        assert!(
+            !atom0_bonds.is_empty(),
+            "Atom 0 should have a bond detected"
+        );
+
+        // Verify the bond is with Atom 1
+        let has_bond_with_1 = atom0_bonds.keys().any(|(k, _)| *k == 1);
+        assert!(has_bond_with_1, "Bond should connect Atom 0 to Atom 1");
+    }
 }

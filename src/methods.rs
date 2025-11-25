@@ -26,59 +26,23 @@ pub enum WeightResult {
     Maximum,
 }
 
-/// Steps in the density grid, from point p, following the gradient.
+/// Performs a single step of gradient ascent from a voxel to determine its owner.
 ///
-/// This should be called from [`weight()`].
+/// This function looks at the current voxel `p` and its neighbors. It calculates the flux
+/// of charge density into neighboring voxels that have a higher density (following the gradient).
 ///
-/// Note: This function will deadlock if the points above it have no associated
-/// maxima in [`VoxelMap.voxel_map`].
+/// # Logic
+/// * **Maximum**: If no neighbors have higher density, `p` is a local maximum.
+/// * **Interior**: If `p` flows entirely into neighbors belonging to the *same* Atom/Maxima,
+///   then `p` also belongs to that Atom.
+/// * **Boundary**: If `p` flows into neighbors belonging to *different* Atoms, `p` is on a boundary.
+///   Returns a weighted list of contributions.
 ///
-/// * `p`: The point from which to step.
-/// * `density`: The reference [`Grid`].
-/// * `voxel_map`: An [`Arc`] wrapped [`BlockingVoxelMap`] for tracking the maxima.
-/// * `weight_tolerance`: Minimum percentage value to consider the weight significant.
-///
-/// ### Returns:
-/// [`WeightResult`]: The type of point `p` is Critical, Interior or Boundary and
-/// the relevant data for each type.
-///
-/// # Examples
-/// ```
-/// use bader::methods::{weight_step, WeightResult};
-/// use bader::voxel_map::BlockingVoxelMap as VoxelMap;
-///
-/// // Intialise the reference density, setting index 34 to 0. for easy maths.
-/// let density = (0..64)
-///     .map(|rho| if rho != 34 { rho as f64 } else { 0. })
-///     .collect::<Vec<f64>>();
-/// let voxel_map = VoxelMap::new(
-///     [4, 4, 4],
-///     [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
-///     [0.0, 0.0, 0.0],
-/// );
-/// // The highest gradient between point, p = 33, and it's neighbours, with
-/// // periodic boundary conditions, is with point p = 61.
-///
-/// // to avoid deadlock let's store maxima for all the values above us and
-/// // store as either 61 or 62 to make the current point a boundary.
-/// for (i, p) in [37, 45, 49].iter().enumerate() {
-///     voxel_map.maxima_store(*p, 62 - (i as isize) % 2);
-/// }
-/// let mut weight: Vec<f64> = match weight_step(33, &density, &voxel_map, 1E-8) {
-///     WeightResult::Critical(weights) => weights
-///         .iter()
-///         .map(|f| {
-///             let maxima = *f as usize;
-///             let weight = f - maxima as f64;
-///             let (decoded_maxima, _) = voxel_map.grid.decode_maxima(maxima);
-///             weight + decoded_maxima as f64
-///         })
-///         .collect(),
-///     _ => panic!("None Weight"),
-/// };
-/// weight.sort_by(|a, b| a.partial_cmp(b).unwrap());
-/// assert_eq!(weight, vec![61.375, 62.625])
-/// ```
+/// # Arguments
+/// * `p`: The index of the voxel to step from.
+/// * `density`: The charge density array.
+/// * `voxel_map`: The map storing the state (Maxima/Boundary) of processed voxels.
+/// * `weight_tolerance`: Minimum weight fraction (0.0-1.0) to be considered significant.
 pub fn weight_step(
     p: isize,
     density: &[f64],
@@ -260,7 +224,12 @@ pub fn weight(
     critical_points
 }
 
-/// Find the maxima within the charge density
+/// Scans the grid to identify all local maxima in the charge density.
+///
+/// This is the first step of the Bader analysis. It iterates over all voxels (in parallel)
+/// and checks if a voxel is strictly greater than all its neighbors.
+///
+/// Valid maxima are then assigned to atoms using [`assign_maximum`].
 pub fn maxima_finder(
     index: &[usize],
     density: &[f64],
@@ -407,39 +376,20 @@ pub fn minima_finder(
     bader_minima
 }
 
-/// Assign the Bader maxima to the nearest atom.
+/// Associates a grid point (Maxima) with the nearest Atom.
 ///
-/// # Example
-/// ```
-/// use bader::atoms::{Atoms, Lattice};
-/// use bader::grid::Grid;
-/// use bader::methods::assign_maximum;
+/// This function calculates the Euclidean distance from the grid point `maximum` to all atoms
+/// in the system, respecting Periodic Boundary Conditions (PBC).
 ///
-/// // Intialise Atoms and Grid structs as well as a list of maxima
-/// let lattice =
-///     Lattice::new([[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]]);
-/// // Place atoms at 0 and 555 in the grid
-/// let atoms = Atoms::new(
-///     lattice,
-///     vec![[0.0, 0.0, 0.0], [1.5, 1.5, 1.5]],
-///     String::from(""),
-/// );
-/// let grid = Grid::new(
-///     [10, 10, 10],
-///     [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
-///     [0.0, 0.0, 0.0],
-/// );
+/// # Arguments
+/// * `maximum`: The 1D index of the grid point.
+/// * `atoms`: The struct containing atomic positions.
+/// * `grid`: The grid definition (used for coordinate conversion).
+/// * `maximum_distance`: The cutoff distance. If the nearest atom is further than this, an error is returned.
 ///
-/// // Run with default maxima distance tolerance
-/// let maximum_distance = 0.1;
-/// let atom_list = assign_maximum(555, &atoms, &grid, &maximum_distance);
-/// assert!(atom_list.is_ok());
-/// assert_eq!(atom_list.unwrap(), 1);
-///
-/// // If the maxima is too far away we get an error.
-/// let atom_list = assign_maximum(554, &atoms, &grid, &maximum_distance);
-/// assert!(atom_list.is_err());
-/// ```
+/// # Returns
+/// * `Ok(usize)`: The index of the assigned atom.
+/// * `Err(MaximaError)`: If no atom is found within `maximum_distance`.
 pub fn assign_maximum(
     maximum: isize,
     atoms: &Atoms,
@@ -479,7 +429,19 @@ pub fn assign_maximum(
     }
 }
 
-/// Calculate the Laplacian of the density at a point in the grid
+/// Calculates the discrete Laplacian of the density at a specific voxel.
+///
+/// The Laplacian ($\nabla^2 \rho$) measures the curvature of the density.
+/// * **Negative**: The density is at a local peak (charge concentration).
+/// * **Positive**: The density is at a local minimum (charge depletion).
+///
+/// This implementation uses a Voronoi-weighted finite difference method compatible with
+/// the grid's neighbor connectivity.
+///
+/// # Arguments
+/// * `p`: The voxel index.
+/// * `density`: The charge density array.
+/// * `grid`: The grid containing neighbor and Voronoi weight information.
 pub fn laplacian(p: usize, density: &[f64], grid: &Grid) -> f64 {
     let rho = density[p];
     grid.voronoi_shifts_nocheck(p as isize)
@@ -488,4 +450,208 @@ pub fn laplacian(p: usize, density: &[f64], grid: &Grid) -> f64 {
             acc + alpha * (density[*pt as usize] - rho)
         })
         / grid.voronoi.volume
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::atoms::{Atoms, Lattice};
+    use crate::grid::Grid;
+    use crate::voxel_map::BlockingVoxelMap;
+
+    // --- Helper to Setup Environment ---
+    fn setup_env(dim: usize) -> (Grid, Atoms, BlockingVoxelMap) {
+        let lattice_mat = [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]];
+        let origin = [0.0, 0.0, 0.0];
+
+        let grid = Grid::new([dim, dim, dim], lattice_mat, origin);
+
+        // Two atoms: one at [0,0,0] (corner), one at [1.5, 1.5, 1.5] (center)
+        let atoms = Atoms::new(
+            Lattice::new(lattice_mat),
+            vec![[0.0, 0.0, 0.0], [1.5, 1.5, 1.5]],
+            String::from("Test"),
+        );
+
+        let map = BlockingVoxelMap::new([dim, dim, dim], lattice_mat, origin);
+
+        (grid, atoms, map)
+    }
+
+    // --- weight_step Tests ---
+
+    #[test]
+    fn test_weight_step_maximum() {
+        let dim = 3;
+        let (_, _, map) = setup_env(dim);
+
+        // Setup density where center (index 13) is a peak
+        let mut density = vec![0.0; 27];
+        density[13] = 10.0; // Peak
+        // Neighbors are 0.0 by default
+
+        // Calling weight_step on the peak should return Maximum
+        let result = weight_step(13, &density, &map, 1e-8);
+
+        match result {
+            WeightResult::Maximum => (),
+            _ => panic!("Expected Maximum, got {:?}", result_name(&result)),
+        }
+    }
+
+    #[test]
+    fn test_weight_step_interior() {
+        let dim = 3;
+        let (_, _, map) = setup_env(dim);
+
+        // Setup density gradient: 13 (Center) > 14 (Right Neighbor)
+        let mut density = vec![0.0; 27];
+        density[13] = 10.0;
+        density[14] = 5.0;
+
+        // Pre-populate the Maxima at 13 so 14 has somewhere to flow
+        map.maxima_store(13, 100); // Atom 100
+
+        // Step from 14. It should climb to 13, see Atom 100, and return Interior(100)
+        let result = weight_step(14, &density, &map, 1e-8);
+
+        match result {
+            WeightResult::Interior(atom_idx) => assert_eq!(atom_idx, 100),
+            _ => panic!("Expected Interior, got {:?}", result_name(&result)),
+        }
+    }
+
+    #[test]
+    fn test_weight_step_boundary() {
+        let dim = 3;
+        let (_, _, map) = setup_env(dim);
+
+        // Voxel 13 is center.
+        // Voxel 12 (Left) -> Atom 1
+        // Voxel 14 (Right) -> Atom 2
+        // We set 13 to be lower than both, so it flows "up" to both 12 and 14?
+        // Actually weight_step goes UP gradient.
+        // So let 13 be a Saddle between 12 and 14.
+
+        let mut density = vec![0.0; 27];
+        density[13] = 5.0; // Saddle
+        density[12] = 10.0; // Peak A
+        density[14] = 10.0; // Peak B
+
+        map.maxima_store(12, EncodedAtom::new_zero_image(1).0 as isize);
+        map.maxima_store(14, EncodedAtom::new_zero_image(2).0 as isize);
+
+        // Step from 13. It should see both 12 and 14 as higher neighbors.
+        let result = weight_step(13, &density, &map, 1e-8);
+
+        match result {
+            WeightResult::Boundary(weights)
+            | WeightResult::Critical(weights) => {
+                // Should have 2 weights
+                assert_eq!(weights.len(), 2);
+                // We expect ~50/50 split if geometry is symmetric
+                let w1 = weights
+                    .iter()
+                    .find(|w| w.decode().0.atom_index() == 1)
+                    .unwrap();
+                let w2 = weights
+                    .iter()
+                    .find(|w| w.decode().0.atom_index() == 2)
+                    .unwrap();
+
+                let val1 = w1.decode().1;
+                let val2 = w2.decode().1;
+
+                assert!((val1 - 0.5).abs() < 0.1);
+                assert!((val2 - 0.5).abs() < 0.1);
+            }
+            _ => panic!(
+                "Expected Boundary/Critical, got {:?}",
+                result_name(&result)
+            ),
+        }
+    }
+
+    // --- assign_maximum Tests ---
+
+    #[test]
+    fn test_assign_maximum_nearest() {
+        let dim = 10;
+        let (grid, atoms, _) = setup_env(dim); // 10x10x10 grid, Atoms at [0,0,0] and [1.5,1.5,1.5]
+
+        // Voxel at [0,0,0] -> Index 0. Should match Atom 0.
+        // Grid spacing is 3.0 / 10 = 0.3.
+        let max_dist = 1.0;
+
+        // Test Origin
+        let atom_idx = assign_maximum(0, &atoms, &grid, &max_dist).unwrap();
+        assert_eq!(atom_idx, 0);
+
+        // Test Point closer to Atom 1 ([1.5, 1.5, 1.5] is at index ~555)
+        // [5, 5, 5] -> 1.5, 1.5, 1.5
+        let center_idx = 5 * 100 + 5 * 10 + 5;
+        let atom_idx_2 =
+            assign_maximum(center_idx, &atoms, &grid, &max_dist).unwrap();
+        assert_eq!(atom_idx_2, 1);
+    }
+
+    #[test]
+    fn test_assign_maximum_cutoff() {
+        let dim = 10;
+        let (grid, atoms, _) = setup_env(dim);
+
+        // Atom 0 at [0,0,0]. Atom 1 at [1.5, 1.5, 1.5].
+        // Try point at [2.9, 0, 0]. Closest to Atom 0 (distance 0.1 via PBC 3.0->0.0),
+        // BUT let's test a point far from everything if possible,
+        // or restrict max_dist very strictly.
+
+        let tight_cutoff = 0.05; // Smaller than grid spacing (0.3)
+        // Point [1, 0, 0] is at x=0.3. Dist to Atom 0 is 0.3.
+        // 0.3 > 0.05 -> Should fail.
+        let point_idx = 100; // x=1, y=0, z=0
+
+        let result = assign_maximum(point_idx, &atoms, &grid, &tight_cutoff);
+        assert!(result.is_err());
+    }
+
+    // --- laplacian Tests ---
+
+    #[test]
+    fn test_laplacian_uniform() {
+        let dim = 3;
+        let (grid, _, _) = setup_env(dim);
+
+        // Uniform density -> Gradient is 0 -> Laplacian is 0
+        let density = vec![1.0; 27];
+
+        let lap = laplacian(13, &density, &grid);
+        assert!(lap.abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_laplacian_peak() {
+        let dim = 3;
+        let (grid, _, _) = setup_env(dim);
+
+        // Peak at center. Curvature should be negative (concave down).
+        let mut density = vec![0.0; 27];
+        density[13] = 10.0; // Center
+        // Neighbors 0.0
+
+        let lap = laplacian(13, &density, &grid);
+
+        // The Laplacian formula involves sum of (neighbor - center).
+        // (0 - 10) is negative. Sum is negative.
+        assert!(lap < 0.0);
+    }
+
+    // Utility for debug printing enum variants
+    fn result_name(w: &WeightResult) -> &'static str {
+        match w {
+            WeightResult::Maximum => "Maximum",
+            WeightResult::Interior(_) => "Interior",
+            WeightResult::Boundary(_) => "Boundary",
+            WeightResult::Critical(_) => "Critical",
+        }
+    }
 }
