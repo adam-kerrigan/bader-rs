@@ -116,6 +116,10 @@ impl Lattice {
         self.cartesian_to_reduced(utils::dot(p, self.to_cartesian))
     }
 
+    pub fn fractional_to_cartesian(&self, p: [f64; 3]) -> [f64; 3] {
+        utils::dot(p, self.to_cartesian)
+    }
+
     /// Map Cartesian coordinates into the reduced basis.
     pub fn cartesian_to_reduced(&self, p: [f64; 3]) -> [f64; 3] {
         let pn = utils::dot(p, self.reduced_to_fractional)

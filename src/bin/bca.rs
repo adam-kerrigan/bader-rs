@@ -1,8 +1,9 @@
-use bader::analysis::{
-    bond_pruning, cage_pruning, calculate_bader_density, nuclei_ordering,
+use bader::analysis::calculate_bader_density;
+use bader::arguments::App;
+use bader::critical::{
+    bond_pruning, cage_pruning, critical_point_merge, nuclei_ordering,
     ring_pruning,
 };
-use bader::arguments::App;
 use bader::errors::ArgumentError;
 use bader::io::{self, FileFormat, FileType, WriteType};
 use bader::methods::{maxima_finder, minima_finder, weight};
@@ -76,7 +77,7 @@ fn main() {
     };
     // input the maxima as atoms into the voxel map
     nuclei.iter().for_each(|maximum| {
-        voxel_map.maxima_store(maximum.position, maximum.atoms[0] as isize);
+        voxel_map.maxima_store(maximum.position, maximum.atoms[0].0 as isize);
     });
     let n_bader_maxima = nuclei.len();
     let nuclei =
@@ -109,23 +110,32 @@ fn main() {
             args.threads,
             !args.silent,
         );
-    let bonds = bond_pruning(&bonds, reference, !args.silent);
-    let rings = ring_pruning(
+    println!(
+        "{} {} {} {}",
+        nuclei.len(),
+        bonds.len(),
+        rings.len(),
+        cages.len()
+    );
+    let bonds = bond_pruning(&bonds, reference, args.threads, !args.silent);
+    let rings = critical_point_merge(ring_pruning(
         &rings,
         &nuclei,
         reference,
         &atoms,
         voxel_map.grid_get(),
+        args.threads,
         !args.silent,
-    );
-    let cages = cage_pruning(
+    ));
+    let cages = critical_point_merge(cage_pruning(
         &cages,
         &nuclei,
         reference,
         &atoms,
         voxel_map.grid_get(),
+        args.threads,
         !args.silent,
-    );
+    ));
     println!(
         "{} {} {} {}",
         nuclei.len(),

@@ -1,6 +1,7 @@
 use crate::atoms::Lattice;
 use crate::utils::dot;
 use crate::voronoi::Voronoi;
+use crate::voxel_map::EncodedImage;
 
 /// Structure for managing the movement within the reference density.
 pub struct Grid {
@@ -84,17 +85,22 @@ impl Grid {
     }
 
     /// Shifts a point, p, by a single voronoi vector.
-    pub fn voronoi_shifts(&self, p: isize) -> Vec<((isize, [i8; 3]), f64)> {
+    pub fn voronoi_shifts(
+        &self,
+        p: isize,
+    ) -> Vec<((isize, EncodedImage), f64)> {
         self.voronoi
             .vectors
             .iter()
             .map(|shifts| {
-                shifts.iter().fold((p, [0; 3]), |(pn, pbc), p_shift| {
-                    let (shift, pbc_t) = self.shift.get(pn);
-                    let pt = pn + shift[*p_shift];
-                    let [x, y, z] = pbc_t[*p_shift];
-                    (pt, [pbc[0] + x, pbc[1] + y, pbc[2] + z])
-                })
+                shifts.iter().fold(
+                    (p, EncodedImage::new([0; 3])),
+                    |(pn, pbc), p_shift| {
+                        let (shift, pbc_t) = self.shift.get(pn);
+                        let pt = pn + shift[*p_shift];
+                        (pt, pbc.image_add(pbc_t[*p_shift]))
+                    },
+                )
             })
             .zip(self.voronoi.alphas.iter().copied())
             .collect()

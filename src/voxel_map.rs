@@ -1,115 +1,139 @@
 use crate::grid::Grid;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::mem::MaybeUninit;
+use std::ops::{Add, Sub};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
-pub struct EncodedData(u64);
+/// An [i4; 3] stored as a single u16
+#[derive(Clone, Copy, Debug)]
+pub struct EncodedImage(u16);
 
-impl EncodedData {
-    pub fn new(encoded_maxima: u32, weight: f32) -> Self {
-        Self(u64::from_le_bytes(
-            [encoded_maxima.to_le_bytes(), weight.to_le_bytes()]
-                .concat()
-                .try_into()
-                .unwrap(),
-        ))
+impl EncodedImage {
+    const BIAS: i8 = 8;
+    const BITS: usize = 4;
+    const MASK: u16 = 2u16.pow(Self::BITS as u32) - 1; // 4 bits
+    const ZERO: u16 = ((Self::BIAS as u16) & Self::MASK)
+        | (((Self::BIAS as u16) & Self::MASK) << Self::BITS)
+        | (((Self::BIAS as u16) & Self::MASK) << (2 * Self::BITS));
+
+    /// Create a new encoded image from an [i8; 3]
+    pub fn new(image: [i8; 3]) -> Self {
+        let mut encoded: u16 = 0;
+        image.iter().enumerate().for_each(|(i, img)| {
+            let biased = (img + Self::BIAS) as u16;
+            debug_assert!(biased <= Self::MASK, "Image out of encoding range");
+            encoded |= (biased & Self::MASK) << (i * Self::BITS);
+        });
+        Self(encoded)
     }
 
-    pub fn decode_maxima(encoded_maxima: u32) -> (u16, u16) {
-        let bytes = encoded_maxima.to_le_bytes();
+    /// Decode to an [i8; 3]
+    pub fn decode(self) -> [i8; 3] {
+        let mut image = [0; 3];
+        image.iter_mut().enumerate().for_each(|(i, img)| {
+            let biased = (self.0 >> (i * Self::BITS)) & Self::MASK;
+            *img = (biased as i8) - Self::BIAS;
+        });
+        return image;
+    }
+
+    pub fn image_add(self, b: [i8; 3]) -> Self {
+        let a = self.decode();
+        Self::new([a[0] + b[0], a[1] + b[1], a[2] + b[2]])
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.0 == Self::ZERO
+    }
+}
+
+impl Add for EncodedImage {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        let a = self.decode();
+        let b = rhs.decode();
+        Self::new([a[0] + b[0], a[1] + b[1], a[2] + b[2]])
+    }
+}
+impl Sub for EncodedImage {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self {
+        let a = self.decode();
+        let b = rhs.decode();
+        Self::new([a[0] - b[0], a[1] - b[1], a[2] - b[2]])
+    }
+}
+
+/// An encoded atom number and image.
+///
+/// [Atom Number: 20 bits] | [Image: 12 bits]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[repr(transparent)]
+pub struct EncodedAtom(pub u32);
+
+impl EncodedAtom {
+    const SHIFT: usize = EncodedImage::BITS * 3;
+    const MASK: u32 = 2u32.pow(Self::SHIFT as u32) - 1;
+    const BITS: u32 = 20;
+    const MAX_ATOM: u32 = 2u32.pow(Self::BITS) - 1;
+
+    pub fn new(atom: u32, image: EncodedImage) -> Self {
+        debug_assert!(
+            atom < Self::MAX_ATOM,
+            "Atom Number out of EncodedAtom Range"
+        );
+        Self((atom << Self::SHIFT) | (image.0) as u32)
+    }
+
+    pub fn atom_index(&self) -> u32 {
+        self.0 >> Self::SHIFT
+    }
+
+    pub fn image(&self) -> EncodedImage {
+        EncodedImage((self.0 & Self::MASK) as u16)
+    }
+
+    pub fn image_add(self, image: EncodedImage) -> Self {
+        Self::new(self.atom_index(), self.image() + image)
+    }
+
+    pub fn image_sub(self, image: EncodedImage) -> Self {
+        Self::new(self.atom_index(), self.image() - image)
+    }
+
+    pub fn decode_partial(self) -> (u32, EncodedImage) {
+        (self.atom_index(), self.image())
+    }
+
+    pub fn decode_full(self) -> (u32, [i8; 3]) {
+        (self.atom_index(), self.image().decode())
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct EncodedWeight(u64);
+
+impl EncodedWeight {
+    pub fn new(encoded_atom: EncodedAtom, weight: f32) -> Self {
+        Self((encoded_atom.0 as u64) | ((weight.to_bits() as u64) << 32))
+    }
+
+    pub fn decode(self) -> (EncodedAtom, f32) {
         (
-            u16::from_le_bytes(bytes[0..2].try_into().unwrap()),
-            u16::from_le_bytes(bytes[2..4].try_into().unwrap()),
+            EncodedAtom(self.0 as u32),
+            f32::from_bits((self.0 >> 32) as u32),
         )
-    }
-    pub fn encode_maxima(maxima: u16, encoded_image: u16) -> u32 {
-        u32::from_le_bytes(
-            [maxima.to_le_bytes(), encoded_image.to_le_bytes()]
-                .concat()
-                .try_into()
-                .unwrap(),
-        )
-    }
-
-    pub fn add_image(encoded_maxima: u32, other_image: [i8; 3]) -> u32 {
-        let (maxima, image) = Self::decode_maxima(encoded_maxima);
-        let decoded_image = Self::decode_image(image);
-        let encoded_image = Self::encode_image(
-            decoded_image
-                .into_iter()
-                .zip(other_image)
-                .map(|(i, ii)| i + ii)
-                .collect::<Vec<i8>>()
-                .try_into()
-                .unwrap(),
-        );
-        Self::encode_maxima(maxima, encoded_image)
-    }
-    pub fn subtract_image(encoded_maxima: u32, other_image: [i8; 3]) -> u32 {
-        let (maxima, image) = Self::decode_maxima(encoded_maxima);
-        let decoded_image = Self::decode_image(image);
-        let encoded_image = Self::encode_image(
-            decoded_image
-                .into_iter()
-                .zip(other_image)
-                .map(|(i, ii)| i - ii)
-                .collect::<Vec<i8>>()
-                .try_into()
-                .unwrap(),
-        );
-        Self::encode_maxima(maxima, encoded_image)
-    }
-
-    pub fn add_encoded_image(encoded_maxima: u32, other_image: u16) -> u32 {
-        let (maxima, image) = Self::decode_maxima(encoded_maxima);
-        let decoded_image = Self::decode_image(image);
-        let decoded_other_image = Self::decode_image(other_image);
-        let encoded_image = Self::encode_image(
-            decoded_image
-                .into_iter()
-                .zip(decoded_other_image)
-                .map(|(i, ii)| i + ii)
-                .collect::<Vec<i8>>()
-                .try_into()
-                .unwrap(),
-        );
-        Self::encode_maxima(maxima, encoded_image)
-    }
-
-    pub fn decode_image(encoded_image: u16) -> [i8; 3] {
-        (0..15)
-            .step_by(5)
-            .map(|shift: u16| {
-                (((encoded_image >> shift) & 0x1F) as i8) << 3 >> 3
-            })
-            .collect::<Vec<i8>>()
-            .try_into()
-            .unwrap()
-    }
-
-    pub fn encode_image(image: [i8; 3]) -> u16 {
-        image
-            .into_iter()
-            .enumerate()
-            .fold(0, |acc, (i, img)| acc | (((img as u16) & 0x1F) << (i * 5)))
-    }
-
-    pub fn decode_self(&self) -> (u32, f32) {
-        let bytes: [u8; 8] = self.0.to_le_bytes();
-        let maxima = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-        let weight = f32::from_le_bytes(bytes[4..8].try_into().unwrap());
-        (maxima, weight)
     }
 }
 
 /// Describes the state of the voxel.
 pub enum Voxel {
     /// Contians the position of the voxel's maxima.
-    Maxima(usize),
+    Maxima(EncodedAtom),
     /// Contians a vector of the maxima the current voxel contributes to and
     /// their weights.
-    Boundary(FxHashMap<u32, f32>),
+    Boundary(FxHashMap<EncodedAtom, f32>),
     /// A voxel beneath the vacuum tolerance and not contributing to any maxima.
     Vacuum,
 }
@@ -143,7 +167,7 @@ pub enum Voxel {
 /// }
 /// ```
 pub struct BlockingVoxelMap {
-    weight_map: Arc<[MaybeUninit<Box<[EncodedData]>>]>,
+    weight_map: Arc<[MaybeUninit<Box<[EncodedWeight]>>]>,
     voxel_map: Arc<[AtomicIsize]>,
     pub grid: Grid,
     weight_counter: AtomicUsize,
@@ -180,11 +204,11 @@ impl BlockingVoxelMap {
     /// in the VoxelMap and then return either a `Voxel::Maxima` or `Voxel::Weight`.
     /// Calling this on a voxel, p, that is below the vacuum_tolerance will deadlock
     /// as a voxel is considered stored once voxel_map\[p\] > -1.
-    pub fn weight_get(&self, i: isize) -> FxHashMap<u32, f32> {
+    pub fn weight_get(&self, i: isize) -> FxHashMap<EncodedAtom, f32> {
         let i = -2 - i;
         (unsafe { self.weight_map.get_unchecked(i as usize).assume_init_ref() })
             .iter()
-            .map(|u| u.decode_self())
+            .map(|u| u.decode())
             .collect()
     }
 
@@ -204,7 +228,7 @@ impl BlockingVoxelMap {
         match i.cmp(&-1) {
             std::cmp::Ordering::Less => Voxel::Boundary(self.weight_get(i)),
             std::cmp::Ordering::Equal => Voxel::Vacuum,
-            std::cmp::Ordering::Greater => Voxel::Maxima(i as usize),
+            std::cmp::Ordering::Greater => Voxel::Maxima(EncodedAtom(i as u32)),
         }
     }
 
@@ -223,10 +247,10 @@ impl BlockingVoxelMap {
 
     /// Stores the index of p's weight contributions in weight_map into the
     /// weight_index.
-    pub fn weight_store(&self, p: isize, weights: Box<[EncodedData]>) {
+    pub fn weight_store(&self, p: isize, weights: Box<[EncodedWeight]>) {
         let i = self.weight_counter.fetch_add(1, Ordering::Relaxed);
         unsafe {
-            let ptr: *mut Box<[EncodedData]> =
+            let ptr: *mut Box<[EncodedWeight]> =
                 self.weight_map.get_unchecked(i) as *const _ as *mut _;
             ptr.write(weights)
         }
@@ -234,7 +258,7 @@ impl BlockingVoxelMap {
     }
 
     /// Extract the voxel map data.
-    pub fn into_inner(self) -> (Vec<isize>, Vec<Box<[EncodedData]>>, Grid) {
+    pub fn into_inner(self) -> (Vec<isize>, Vec<Box<[EncodedWeight]>>, Grid) {
         (
             self.voxel_map
                 .iter()
@@ -255,7 +279,7 @@ pub struct VoxelMap {
     /// The vector mapping the voxel to a maxima.
     pub voxel_map: Vec<isize>,
     /// The vector containing the weights for boundary voxels.
-    pub weight_map: Vec<Box<[EncodedData]>>,
+    pub weight_map: Vec<Box<[EncodedWeight]>>,
     /// The Grid used to navigate the VoxelMap.
     pub grid: Grid,
 }
@@ -264,7 +288,7 @@ impl VoxelMap {
     /// Create a new [`VoxelMap`]
     pub fn new(
         voxel_map: Vec<isize>,
-        weight_map: Vec<Box<[EncodedData]>>,
+        weight_map: Vec<Box<[EncodedWeight]>>,
         grid: Grid,
     ) -> Self {
         Self {
@@ -281,7 +305,7 @@ impl VoxelMap {
     }
 
     /// Produce an Iter over the boundary voxels.
-    pub fn weight_iter(&self) -> std::slice::Iter<'_, Box<[EncodedData]>> {
+    pub fn weight_iter(&self) -> std::slice::Iter<'_, Box<[EncodedWeight]>> {
         self.weight_map.iter()
     }
 
@@ -304,7 +328,9 @@ impl VoxelMap {
     pub fn maxima_to_voxel(&self, maxima: isize) -> Voxel {
         match maxima.cmp(&-1) {
             std::cmp::Ordering::Equal => Voxel::Vacuum,
-            std::cmp::Ordering::Greater => Voxel::Maxima(maxima as usize),
+            std::cmp::Ordering::Greater => {
+                Voxel::Maxima(EncodedAtom(maxima as u32))
+            }
             std::cmp::Ordering::Less => {
                 Voxel::Boundary(self.maxima_to_weight(maxima))
             }
@@ -312,10 +338,13 @@ impl VoxelMap {
     }
 
     /// Return a reference to the weights from the given maxima, Note: maxima here must be < -1.
-    pub fn maxima_to_weight(&self, maxima: isize) -> FxHashMap<u32, f32> {
+    pub fn maxima_to_weight(
+        &self,
+        maxima: isize,
+    ) -> FxHashMap<EncodedAtom, f32> {
         self.weight_map[(-2 - maxima) as usize]
             .iter()
-            .map(|ed| ed.decode_self())
+            .map(|ed| ed.decode())
             .collect()
     }
 
@@ -358,7 +387,7 @@ impl VoxelMap {
                     for (m, weight) in
                         self.maxima_to_weight(*maxima).into_iter()
                     {
-                        if (m as isize) == volume_number {
+                        if (m.atom_index() as isize) == volume_number {
                             w = Some(weight as f64);
                             break;
                         }
@@ -384,7 +413,7 @@ impl VoxelMap {
                     for (m, weight) in
                         self.maxima_to_weight(*maxima).into_iter()
                     {
-                        if volume_numbers.contains(&(m as isize)) {
+                        if volume_numbers.contains(&(m.atom_index() as isize)) {
                             w += weight as f64;
                         }
                     }

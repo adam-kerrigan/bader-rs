@@ -1,8 +1,11 @@
 use crate::atoms::Atoms;
+use crate::critical::{CriticalPoint, CriticalPointKind};
 use crate::errors::MaximaError;
 use crate::grid::Grid;
 use crate::progress::{Bar, HiddenBar, ProgressBar};
-use crate::voxel_map::{BlockingVoxelMap, EncodedData, Voxel, VoxelMap};
+use crate::voxel_map::{
+    BlockingVoxelMap, EncodedAtom, EncodedImage, EncodedWeight, Voxel, VoxelMap,
+};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -14,43 +17,13 @@ use std::thread;
 pub enum WeightResult {
     /// Length of the Box dictates the type of Critical Point, 1 -> Maxima, 2 -> Saddle,
     /// 3+ -> Saddle or minima. Critical Points with >=2 will be on boundaries.
-    Critical(Box<[EncodedData]>),
+    Critical(Box<[EncodedWeight]>),
     /// Entirely assigned to a single Bader atom.
     Interior(usize),
     /// Meeting point at the edge of 2 or more Bader atoms.
-    Boundary(Box<[EncodedData]>),
+    Boundary(Box<[EncodedWeight]>),
     /// Maximum
     Maximum,
-}
-
-#[derive(Clone)]
-pub struct CriticalPoint {
-    pub position: isize,
-    pub kind: CriticalPointKind,
-    pub atoms: Box<[u32]>,
-}
-
-impl CriticalPoint {
-    pub fn new(
-        position: isize,
-        kind: CriticalPointKind,
-        atoms: Box<[u32]>,
-    ) -> Self {
-        CriticalPoint {
-            position,
-            kind,
-            atoms,
-        }
-    }
-}
-
-#[derive(Eq, Ord, PartialEq, PartialOrd, Debug, Clone, Copy)]
-pub enum CriticalPointKind {
-    Nuclei,
-    Bond,
-    Ring,
-    Cage,
-    Blank,
 }
 
 /// Steps in the density grid, from point p, following the gradient.
@@ -115,7 +88,7 @@ pub fn weight_step(
     let control = density[p as usize];
     let grid = &voxel_map.grid;
     let mut t_sum = 0.;
-    let mut weights = FxHashMap::<u32, f64>::default();
+    let mut weights = FxHashMap::<EncodedAtom, f64>::default();
     let mut weight_count = 0;
     // colllect the shift and distances and iterate over them.
     grid.voronoi_shifts(p)
@@ -132,9 +105,9 @@ pub fn weight_step(
                     Voxel::Boundary(weight_map) => {
                         weight_count = weight_map.len().max(weight_count);
                         weight_map.into_iter().for_each(|(maxima, weight)| {
-                            let maxima = match image {
-                                [0, 0, 0] => maxima,
-                                _ => EncodedData::add_image(maxima, image),
+                            let maxima = match image.is_zero() {
+                                true => maxima,
+                                false => maxima.image_add(image),
                             };
                             let w = weights.entry(maxima).or_insert(0.);
                             *w += weight as f64 * rho
@@ -142,9 +115,9 @@ pub fn weight_step(
                     },
                     // interior point
                     Voxel::Maxima(maxima) => {
-                        let maxima = match image {
-                            [0, 0, 0] => maxima as u32,
-                            _ => EncodedData::add_image(maxima as u32, image),
+                        let maxima = match image.is_zero() {
+                            true => maxima,
+                            false => maxima.image_add(image),
                         };
                         let w = weights.entry(maxima).or_insert(0.);
                         *w += rho
@@ -171,13 +144,13 @@ pub fn weight_step(
                         None
                     }
                 })
-                .collect::<Vec<(u32, f32)>>();
+                .collect::<Vec<(EncodedAtom, f32)>>();
             // still more than one weight then readjust the weights so that they sum to 1
             if let std::cmp::Ordering::Greater = weights.len().cmp(&1) {
                 let weights = weights
                     .into_iter()
-                    .map(|(maxima, w)| EncodedData::new(maxima, w))
-                    .collect::<Box<[EncodedData]>>();
+                    .map(|(maxima, w)| EncodedWeight::new(maxima, w))
+                    .collect::<Box<[EncodedWeight]>>();
                 // check if new maxima has joined the weights -> Critical Point (saddle/ring/cage)
                 if weights.len() > weight_count {
                     WeightResult::Critical(weights)
@@ -185,12 +158,12 @@ pub fn weight_step(
                     WeightResult::Boundary(weights)
                 }
             } else {
-                WeightResult::Interior(weights[0].0 as usize)
+                WeightResult::Interior(weights[0].0.0 as usize)
             }
         }
         // only feeds one atom means interior voxel
         std::cmp::Ordering::Equal => {
-            WeightResult::Interior(*weights.keys().next().unwrap() as usize)
+            WeightResult::Interior(weights.keys().next().unwrap().0 as usize)
         }
         // no flux out means maximum
         std::cmp::Ordering::Less => WeightResult::Maximum,
@@ -249,9 +222,9 @@ pub fn weight(
                             }
                             WeightResult::Critical(weights) => {
                                 // length = 1 is a maxima and doesn't need storing.
-                                let atoms: Vec<u32> = weights
+                                let atoms: Vec<EncodedAtom> = weights
                                     .iter()
-                                    .map(|ed| ed.decode_self().0)
+                                    .map(|ed| ed.decode().0)
                                     .collect();
                                 voxel_map.weight_store(p, weights);
                                 if atoms.len() < 3 {
@@ -339,7 +312,10 @@ pub fn maxima_finder(
                                     CriticalPoint::new(
                                         *p as isize,
                                         CriticalPointKind::Nuclei,
-                                        Box::new([atom as u32]),
+                                        Box::new([EncodedAtom::new(
+                                            atom as u32,
+                                            EncodedImage::new([0; 3]),
+                                        )]),
                                     )
                                 }),
                             )
@@ -359,7 +335,7 @@ pub fn maxima_finder(
             };
         }
         Ok(())
-    });
+    })?;
     bader_maxima.shrink_to_fit();
     Ok(bader_maxima)
 }
