@@ -5,6 +5,8 @@ use crate::voxel_map::{Voxel, VoxelMap};
 use rustc_hash::FxHashMap;
 use std::thread;
 
+type BaderResult = (Box<[Box<[f64]>]>, Box<[f64]>, Box<[f64]>, Box<[f64]>);
+
 /// Sums the densities of each Bader volume and calculates associated properties.
 ///
 /// This function integrates the charge density over the volume assigned to each atom.
@@ -53,7 +55,7 @@ pub fn calculate_bader_density(
     atoms: &Atoms,
     threads: usize,
     visible_bar: bool,
-) -> (Box<[Box<[f64]>]>, Box<[f64]>, Box<[f64]>, Box<[f64]>) {
+) -> BaderResult {
     let progress_bar: Box<dyn ProgressBar> = match visible_bar {
         false => Box::new(HiddenBar {}),
         true => Box::new(Bar::new(

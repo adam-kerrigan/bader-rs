@@ -134,10 +134,72 @@ pub fn weight_step(
     }
 }
 
-/// Assigns a maxima to the points within index.
+/// Assigns every voxel in the sorted `index` list to a Bader volume (atom) or boundary.
 ///
-/// Note: This function will deadlock if the points above it have no associated
-/// maxima in [`VoxelMap.voxel_map`]. As such make sure index is sorted.
+/// This function iterates through the density grid (following the order in `index`) and uses
+/// gradient ascent to determine which atom(s) each voxel belongs to. It populates the
+/// `voxel_map` in-place and identifies Critical Points (saddles) found during the process.
+///
+/// # Thread Safety & Deadlocks
+/// This function spawns multiple threads to process the voxels.
+/// **Crucial**: The `index` slice **must** be sorted in descending order of charge density.
+/// The algorithm relies on the fact that when processing a voxel `p`, all voxels `q` with
+/// $\rho(q) > \rho(p)$ (i.e., further up the gradient path) have already been processed and
+/// assigned. Violating this order will result in deadlocks or incorrect assignments.
+///
+/// # Arguments
+/// * `density`: The full flattened charge density array.
+/// * `voxel_map`: The thread-safe map where results (Maxima/Weights) will be stored.
+/// * `index`: A list of voxel indices sorted by density (Highest $\to$ Lowest).
+/// * `weight_tolerance`: Minimum contribution required for a boundary weight (typically `1e-6` to `1e-3`).
+/// * `visible_bar`: If `true`, displays a progress bar to `stdout`.
+/// * `threads`: The number of worker threads to spawn.
+///
+/// # Returns
+/// A tuple containing two vectors of [`CriticalPoint`]:
+/// 1. **Bond Points**: Critical points connecting exactly 2 atoms.
+/// 2. **Ring/Cage Points**: Critical points connecting 3 or more atoms.
+///
+/// # Example
+/// ```
+/// use bader::methods::weight;
+/// use bader::voxel_map::{BlockingVoxelMap, VoxelMap, EncodedAtom};
+///
+/// // 1. Setup Data
+/// let density = vec![2.0, 2.0, 12.0, 2.0, 2.0, 11.0, 1.0, 2.0, 6.0, 1.0, 1.0, 5.0]; // 1 atom at voxel 2
+/// // Sorted indices: 3 (10.0) -> 2 (2.0) -> 1 (1.0) -> 0 (0.0)
+/// let sorted_indices = vec![2, 5, 8, 11, 0, 1, 3, 4, 7, 6, 9, 10];
+///
+/// // 2. Setup Map
+/// let map = BlockingVoxelMap::new(
+///     [2, 2, 3],
+///     [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]],
+///     [0.0, 0.0, 0.0]
+/// );
+/// // Pre-assign the maxima (index 2) to Atom 0
+/// map.maxima_store(2, EncodedAtom::new_zero_image(0).0 as isize);
+///
+/// // 3. Run Partitioning
+/// // processing indices (skipping 2 as it's already done)
+/// let (bonds, rings) = weight(
+///     &density,
+///     &map,
+///     &sorted_indices[1..], // Skip the maxima itself
+///     1e-6,
+///     false, // No progress bar
+///     1      // Single thread
+/// );
+///
+/// // 4. Check Results
+/// // Voxel 1 should have flowed up to Voxel 3 (Atom 0)
+/// let map = VoxelMap::from_blocking_voxel_map(map);
+/// use bader::voxel_map::Voxel;
+/// if let Voxel::Maxima(atom) = map.voxel_get(1) {
+///     assert_eq!(atom.atom_index(), 0);
+/// } else {
+///     panic!("Voxel 1 should be assigned to Atom 1");
+/// }
+/// ```
 pub fn weight(
     density: &[f64],
     voxel_map: &BlockingVoxelMap,
