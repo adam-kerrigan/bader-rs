@@ -382,7 +382,10 @@ impl App {
     }
 
     /// Parse arguments from flags and values.
-    pub fn parse_args(&self, args: Vec<&str>) -> Result<Args, ArgumentError<'_>> {
+    pub fn parse_args(
+        &self,
+        args: Vec<&str>,
+    ) -> Result<Args, ArgumentError<'_>> {
         let mut arguments = FxHashMap::<String, String>::default();
         let mut multi_arguments = FxHashMap::<String, Vec<String>>::default();
         args.iter().enumerate()
