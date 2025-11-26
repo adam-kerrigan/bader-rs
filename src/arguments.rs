@@ -353,7 +353,7 @@ impl App {
     fn get_option_from_short_flag(
         &self,
         f: char,
-    ) -> Result<&Arg, ArgumentError> {
+    ) -> Result<&Arg, ArgumentError<'_>> {
         if f == self.help.short_flag {
             return Err(ArgumentError::ShortHelp(self));
         }
@@ -369,7 +369,7 @@ impl App {
     fn get_option_from_long_flag(
         &self,
         f: String,
-    ) -> Result<&Arg, ArgumentError> {
+    ) -> Result<&Arg, ArgumentError<'_>> {
         if f == self.help.long_flag {
             return Err(ArgumentError::LongHelp(self));
         }
@@ -382,7 +382,7 @@ impl App {
     }
 
     /// Parse arguments from flags and values.
-    pub fn parse_args(&self, args: Vec<&str>) -> Result<Args, ArgumentError> {
+    pub fn parse_args(&self, args: Vec<&str>) -> Result<Args, ArgumentError<'_>> {
         let mut arguments = FxHashMap::<String, String>::default();
         let mut multi_arguments = FxHashMap::<String, Vec<String>>::default();
         args.iter().enumerate()
