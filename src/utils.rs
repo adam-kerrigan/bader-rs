@@ -17,7 +17,7 @@ pub fn subtract(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 /// compute the dot product between a vector and a matrix
 pub fn dot(v: [f64; 3], m: [[f64; 3]; 3]) -> [f64; 3] {
     (0..3)
-        .map(|i| (v[0] * m[0][i] + v[1] * m[1][i] + v[2] * m[2][i]))
+        .map(|i| v[0] * m[0][i] + v[1] * m[1][i] + v[2] * m[2][i])
         .collect::<Vec<f64>>()
         .try_into()
         .unwrap() // safe to unwrap as is size 3
