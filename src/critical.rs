@@ -45,9 +45,9 @@ pub enum CriticalPointKind {
 
 /// A canonical key for identifying unique critical points based on their atom list.
 ///
-/// This struct handles the normalization of atom lists to ensure that:
+/// This struct handles the normalisation of atom lists to ensure that:
 /// 1. Order doesn't matter (sorted internally).
-/// 2. Translational symmetry is respected (images are normalized relative to the first atom).
+/// 2. Translational symmetry is respected (images are normalised relative to the first atom).
 ///
 /// This allows for hashing and sets to identify duplicate points.
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -74,7 +74,7 @@ impl CriticalPointKey {
 /// Filters and orders nuclear critical points.
 ///
 /// In the raw output, a single atom might be associated with multiple "maxima" candidates due
-/// to grid discretization noise. This function groups candidates by their assigned Atom ID
+/// to grid discretisation noise. This function groups candidates by their assigned Atom ID
 /// and selects the one with the highest charge density as the true nucleus position.
 ///
 /// # Arguments
@@ -124,6 +124,21 @@ pub fn nuclei_ordering(
     ordered_nuclei
 }
 
+/// Filters and deduplicates Bond Critical Points (3, -1).
+///
+/// Bonds are defined by the two atoms they connect. In the raw analysis, multiple voxels
+/// along the boundary between two atoms might be flagged as saddle points.
+///
+/// # Logic
+/// 1. **Deduplication**: Uses [`parallel_prune`] to group points by their atom pair.
+///    For each pair, only the point with the **highest charge density** is retained.
+///    This corresponds to the true saddle point on the gradient path.
+///
+/// # Arguments
+/// * `bonds`: The raw list of candidate bond points.
+/// * `density`: The charge density grid.
+/// * `threads`: Number of threads to use.
+/// * `visible_bar`: Whether to display a progress bar.
 pub fn bond_pruning(
     bonds: &[CriticalPoint],
     density: &[f64],
@@ -140,6 +155,24 @@ pub fn bond_pruning(
     parallel_prune(bonds, density, |_| true, threads, progress_bar)
 }
 
+/// Filters Ring Critical Points (3, +1) and enforces planarity.
+///
+/// A Ring Critical Point must connect at least 3 atoms and those atoms must lie approximately
+/// on a single plane. Points that fail this geometric check are discarded.
+///
+/// # Logic
+/// 1. **Size Check**: Must have $\ge$ 3 atoms.
+/// 2. **Planarity Check**: Calculates the normal vector of the plane formed by the first 3 atoms.
+///    Then verifies that all subsequent atoms lie on this plane (tolerance ~5.7°).
+///    - If atoms are **not** coplanar, the point is rejected.
+/// 3. **Deduplication**: Groups by atom list and keeps the candidate with the highest density.
+///
+/// # Arguments
+/// * `rings`: The raw list of candidate ring points.
+/// * `ordered_nuclei`: The list of definitive nucleus positions (used to get atom coordinates).
+/// * `density`: The charge density grid.
+/// * `atoms`: The system geometry (lattice/positions).
+/// * `grid`: The voxel grid (for coordinate conversion).
 pub fn ring_pruning(
     rings: &[CriticalPoint],
     ordered_nuclei: &[CriticalPoint],
@@ -223,6 +256,25 @@ pub fn ring_pruning(
     )
 }
 
+/// Filters Cage Critical Points (3, +3) and enforces 3D structure.
+///
+/// A Cage Critical Point must connect at least 4 atoms and those atoms must **not** be coplanar
+/// (they must enclose a volume).
+///
+/// # Logic
+/// 1. **Size Check**: Must have $\ge$ 4 atoms.
+/// 2. **Volumetric Check**: Calculates the plane formed by the first 3 atoms.
+///    Scans the remaining atoms; if **any** atom lies significantly off this plane,
+///    the point is accepted as a valid cage.
+///    - If all atoms are coplanar, the point is rejected.
+/// 3. **Deduplication**: Groups by atom list and keeps the candidate with the highest density.
+///
+/// # Arguments
+/// * `cages`: The raw list of candidate cage points.
+/// * `ordered_nuclei`: The list of definitive nucleus positions.
+/// * `density`: The charge density grid.
+/// * `atoms`: The system geometry.
+/// * `grid`: The voxel grid.
 pub fn cage_pruning(
     cages: &[CriticalPoint],
     ordered_nuclei: &[CriticalPoint],
@@ -419,11 +471,11 @@ mod tests {
 
         let key = CriticalPointKey::from_cp(cp);
 
-        // Both images should be [0,0,0] after normalization (subtracted the first one's image)
+        // Both images should be [0,0,0] after normalisation (subtracted the first one's image)
         for atom in key.into_box().iter() {
             assert!(
                 atom.image().is_zero(),
-                "Image should be normalized to zero"
+                "Image should be normalised to zero"
             );
         }
     }

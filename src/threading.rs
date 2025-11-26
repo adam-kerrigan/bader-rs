@@ -13,7 +13,7 @@ use std::thread;
 /// # Type Parameters
 /// * `State`: The type of the accumulator
 /// * `Item`: The type of the input data items.
-/// * `Init`: Function to initialize the thread-local state.
+/// * `Init`: Function to initialise the thread-local state.
 /// * `Map`: Function to process a single item and update the local state.
 /// * `Reduce`: Function to merge a thread-local state into the global state.
 ///
@@ -165,13 +165,13 @@ mod tests {
     use super::*;
     use crate::critical::{CriticalPoint, CriticalPointKind};
     use crate::progress::HiddenBar;
-    use crate::voxel_map::{EncodedAtom, EncodedImage};
+    use crate::voxel_map::EncodedAtom;
 
     // --- Helper to create a basic CriticalPoint ---
     fn create_cp(pos: isize, atoms: &[u32]) -> CriticalPoint {
         let atoms_enc = atoms
             .iter()
-            .map(|&id| EncodedAtom::new(id, EncodedImage::new([0, 0, 0])))
+            .map(|&id| EncodedAtom::new_zero_image(id))
             .collect::<Vec<_>>()
             .into_boxed_slice();
         CriticalPoint::new(pos, CriticalPointKind::Bond, atoms_enc)

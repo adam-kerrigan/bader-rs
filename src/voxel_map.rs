@@ -122,8 +122,7 @@ impl EncodedAtom {
     }
 
     pub fn new_zero_image(atom: u32) -> Self {
-        let image = EncodedImage::new([0; 3]);
-        Self::new(atom, image)
+        Self((atom << Self::SHIFT) | (EncodedImage::ZERO) as u32)
     }
 
     pub fn atom_index(&self) -> u32 {
@@ -154,7 +153,7 @@ impl EncodedAtom {
 /// A compact representation of an atom and its associated weight.
 ///
 /// This structure packs an [`EncodedAtom`] and a `f32` weight into a single `u64`
-/// to minimize memory usage when storing millions of boundary weights.
+/// to minimise memory usage when storing millions of boundary weights.
 ///
 /// # Layout
 /// | Component | Bits | Description |
@@ -204,7 +203,7 @@ pub enum Voxel {
     Vacuum,
 }
 
-/// A thread-safe, write-optimized map for populating Bader volumes.
+/// A thread-safe, write-optimised map for populating Bader volumes.
 ///
 /// Designed for concurrent generation of voxel assignments. Threads can safely
 /// store "Maxima" (integer IDs) or "Weights" (boundary contributions) without
@@ -345,7 +344,7 @@ impl BlockingVoxelMap {
     }
 }
 
-/// A read-optimized, non-blocking map for analyzing Bader partitions.
+/// A read-optimised, non-blocking map for analysing Bader partitions.
 ///
 /// While [`BlockingVoxelMap`] is designed for concurrent *write* operations during the
 /// partitioning phase, `VoxelMap` is designed for efficient *read* operations during
@@ -376,7 +375,7 @@ impl BlockingVoxelMap {
 ///
 /// // 3. ... (Perform charge summing and critical point analysis) ...
 ///
-/// // 4. Analyze volumes
+/// // 4. Analyse volumes
 /// let atom_volume = map.volume_map(0); // Get contributions for Atom 0
 /// ```
 pub struct VoxelMap {
@@ -590,6 +589,16 @@ mod tests {
         let (id, img) = encoded.decode_full();
         assert_eq!(id, atom_id);
         assert_eq!(img, [1, -1, 0]);
+    }
+
+    #[test]
+    fn test_encoded_atom_zero_round_trip() {
+        let atom_id = 12345;
+        let encoded = EncodedAtom::new_zero_image(atom_id);
+
+        let (id, img) = encoded.decode_full();
+        assert_eq!(id, atom_id);
+        assert_eq!(img, [0, 0, 0]);
     }
 
     #[test]

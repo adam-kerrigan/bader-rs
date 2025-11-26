@@ -54,7 +54,7 @@ impl Atoms {
 
 /// Manages the crystal lattice, coordinate transformations, and Periodic Boundary Conditions (PBC).
 ///
-/// Upon initialization, this struct automatically performs LLL reduction to find a
+/// Upon initialisation, this struct automatically performs LLL reduction to find a
 /// "better" (more orthogonal/shorter) basis set. This reduced basis is used for
 /// internal algorithms to improve numerical stability and neighbor finding.
 ///
@@ -95,7 +95,7 @@ pub struct Lattice {
 }
 
 impl Lattice {
-    /// Initializes a new Lattice from a 3x3 matrix.
+    /// Initialises a new Lattice from a 3x3 matrix.
     ///
     /// The input matrix `lattice` should be provided as `[a, b, c]` row vectors.
     ///
@@ -492,7 +492,7 @@ mod tests {
     // --- Atoms Tests ---
 
     #[test]
-    fn test_atoms_initialization() {
+    fn test_atoms_initialisation() {
         let matrix = [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]];
         let lattice = Lattice::new(matrix);
 

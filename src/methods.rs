@@ -4,7 +4,7 @@ use crate::errors::MaximaError;
 use crate::grid::Grid;
 use crate::progress::{Bar, HiddenBar, ProgressBar};
 use crate::voxel_map::{
-    BlockingVoxelMap, EncodedAtom, EncodedImage, EncodedWeight, Voxel, VoxelMap,
+    BlockingVoxelMap, EncodedAtom, EncodedWeight, Voxel, VoxelMap,
 };
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -343,10 +343,11 @@ pub fn maxima_finder(
                                     CriticalPoint::new(
                                         *p as isize,
                                         CriticalPointKind::Nuclei,
-                                        Box::new([EncodedAtom::new(
-                                            atom as u32,
-                                            EncodedImage::new([0; 3]),
-                                        )]),
+                                        Box::new([
+                                            EncodedAtom::new_zero_image(
+                                                atom as u32,
+                                            ),
+                                        ]),
                                     )
                                 }),
                             )

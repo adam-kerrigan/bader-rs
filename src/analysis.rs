@@ -212,7 +212,7 @@ pub fn calculate_bader_density(
 
 /// Calculates bond paths and strengths based on saddle points.
 ///
-/// This function analyzes the provided saddle points (indices in the grid) to determine
+/// This function analyses the provided saddle points (indices in the grid) to determine
 /// which atoms are connected. It uses the Laplacian at the saddle point as a measure
 /// of bond strength.
 ///
