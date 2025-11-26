@@ -18,6 +18,7 @@ pub enum Reference {
 }
 
 /// Defualt values for arguments.
+#[derive(Debug)]
 enum DefaultValue {
     /// None
     None,
@@ -28,6 +29,7 @@ enum DefaultValue {
 }
 
 /// Allowed values for arguments.
+#[derive(Debug)]
 enum AllowedValue {
     /// Anything
     None,
@@ -35,7 +37,11 @@ enum AllowedValue {
     Strs(Vec<String>),
 }
 
-/// Everything an argument needs.
+/// The validated configuration for a Bader analysis run.
+///
+/// This struct is produced by `App::parse_args` and contains all the settings required
+/// to execute the analysis, including file paths, thread counts, and physical tolerances.
+#[derive(Debug)]
 struct Arg {
     /// Name of the argument.
     name: String,
@@ -57,7 +63,29 @@ struct Arg {
     allowed_values: AllowedValue,
 }
 
-/// Everything about the bca app.
+/// The main configuration parser for the application.
+///
+/// This struct defines the available command-line arguments and handles the logic
+/// for parsing the raw argument vector into a structured `Args` object.
+///
+/// # Logic
+/// It supports:
+/// * **Short Flags**: Single character (e.g., `-h`).
+/// * **Long Flags**: Full name (e.g., `--help`).
+/// * **Clusters**: Combining boolean short flags (e.g., `-xvi` equivalent to `-x -v ...`).
+/// * **Positional Arguments**: Identifying the input filename amidst flags.
+///
+/// # Examples
+/// ```
+/// use bader::arguments::App;
+///
+/// let app = App::new();
+/// let args = vec!["bca", "CHGCAR", "-t", "4"];
+/// let parsed = app.parse_args(args).expect("Failed to parse args");
+///
+/// assert_eq!(parsed.file, "CHGCAR");
+/// assert_eq!(parsed.threads, 4);
+/// ```
 pub struct App {
     /// What arguments it can take, [OPTIONS] in the help.
     options: Vec<Arg>,
@@ -1030,5 +1058,50 @@ mod tests {
         let _ = app
             .parse_args(v)
             .unwrap_or_else(|e| panic!("An error occurs: {}", e));
+    }
+
+    #[test]
+    fn test_app_creation() {
+        let app = App::new();
+        assert!(!app.options.is_empty());
+    }
+
+    #[test]
+    fn test_positional_file_parsing() {
+        let app = App::new();
+        // File at end
+        let v1 = vec!["bca", "-t", "4", "CHGCAR"];
+        let args1 = app.parse_args(v1).unwrap();
+        assert_eq!(args1.file, "CHGCAR");
+        assert_eq!(args1.threads, 4);
+
+        // File in middle
+        let v2 = vec!["bca", "-t", "2", "CHGCAR", "-x"];
+        let args2 = app.parse_args(v2).unwrap();
+        assert_eq!(args2.file, "CHGCAR");
+        assert_eq!(args2.threads, 2);
+
+        // File at start
+        let v2 = vec!["bca", "CHGCAR", "-t", "2"];
+        let args2 = app.parse_args(v2).unwrap();
+        assert_eq!(args2.file, "CHGCAR");
+        assert_eq!(args2.threads, 2);
+    }
+
+    #[test]
+    fn test_short_flag_cluster() {
+        let app = App::new();
+        // -x (silent), -a (aec) are booleans.
+        // We can combine them: -xa
+        let v = vec!["bca", "CHGCAR", "-xa"];
+
+        let args = app.parse_args(v).unwrap();
+        match args.reference {
+            Reference::Two(a, b) => {
+                assert_eq!(a, "AECCAR0");
+                assert_eq!(b, "AECCAR2");
+            }
+            _ => panic!("Expected AECCAR reference from -a flag"),
+        }
     }
 }
