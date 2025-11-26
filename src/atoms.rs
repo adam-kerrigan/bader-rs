@@ -306,6 +306,7 @@ impl Lattice {
 }
 
 /// Calculates the lll reduction of a lattice.
+#[allow(clippy::needless_range_loop)] // This is pure stupid stuff
 pub fn lll_lattice(lattice: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
     let delta = 0.75;
     let mut a = lattice;
