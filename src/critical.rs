@@ -281,12 +281,12 @@ pub fn cage_pruning(
 
 pub fn critical_point_merge(mut cps: Vec<CriticalPoint>) -> Vec<CriticalPoint> {
     cps.sort_unstable_by(|a, b| b.atoms.len().cmp(&a.atoms.len()));
-    let mut merged_points = Vec::with_capacity(cps.len());
+    let mut merged_points: Vec<CriticalPoint> = Vec::with_capacity(cps.len());
     let mut inverted_index: FxHashMap<u32, Vec<usize>> = FxHashMap::default();
-    for cp in cps {
+    'critical: for cp in cps.iter() {
         let mut superset: Option<FxHashSet<usize>> = None;
         'atom: for atom in cp.atoms.iter() {
-            if let Some(matches) = inverted_index.get(&atom.0) {
+            if let Some(matches) = inverted_index.get(&atom.atom_index()) {
                 match superset {
                     None => superset = Some(matches.iter().copied().collect()),
                     Some(ref mut set) => {
@@ -302,13 +302,28 @@ pub fn critical_point_merge(mut cps: Vec<CriticalPoint>) -> Vec<CriticalPoint> {
                 break 'atom;
             }
         }
-        if superset.is_none() {
-            let i = merged_points.len();
-            cp.atoms.iter().for_each(|atom| {
-                inverted_index.entry(atom.0).or_default().push(i);
-            });
-            merged_points.push(cp);
+        if let Some(set) = superset {
+            for index in set.iter() {
+                let set_sub = FxHashSet::from_iter(cp.atoms.iter().copied());
+                let cp_super = &merged_points[*index];
+                for encoded_atom in cp_super.atoms.iter() {
+                    let new_anchor = encoded_atom.image();
+                    let rotated_super = cp_super
+                        .atoms
+                        .iter()
+                        .map(|a| a.image_sub(new_anchor))
+                        .collect::<FxHashSet<EncodedAtom>>();
+                    if set_sub.is_subset(&rotated_super) {
+                        continue 'critical;
+                    }
+                }
+            }
         }
+        let i = merged_points.len();
+        cp.atoms.iter().for_each(|atom| {
+            inverted_index.entry(atom.atom_index()).or_default().push(i);
+        });
+        merged_points.push(cp.clone());
     }
     merged_points
 }
