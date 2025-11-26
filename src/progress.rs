@@ -28,7 +28,7 @@ impl Bar {
                 } else {
                     break;
                 }
-                thread::sleep(Duration::from_millis(100));
+                thread::sleep(Duration::from_millis(20));
             }
             eprint!("\r{: <width$}\r", " ", width = text.len() + 44);
         });
