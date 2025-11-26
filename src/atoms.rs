@@ -1,7 +1,26 @@
 use crate::utils;
 use std::cmp::Ordering::Less;
 
-/// struct for containing the information about the atoms.
+/// Stores the configuration of the atomic system.
+///
+/// This structure holds both the physical positions of atoms (in Cartesian coordinates)
+/// and their positions in the reduced lattice basis (used for internal calculations).
+///
+/// # Examples
+/// ```
+/// use bader::atoms::{Atoms, Lattice};
+///
+/// let lattice = Lattice::new([[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]);
+/// let positions = vec![[15.0, 5.0, 5.0]];
+///
+/// let atoms = Atoms::new(lattice, positions, "".to_string());
+///
+/// // Original Cartesian positions
+/// assert_eq!(atoms.positions[0], [15.0, 5.0, 5.0]);
+///
+/// // Reduced positions (wrapped into the LLL-reduced lattice)
+/// assert_eq!(atoms.reduced_positions[0], [5.0, 5.0, 5.0]);
+/// ```
 pub struct Atoms {
     /// The lattice of the structure.
     pub lattice: Lattice,
@@ -33,10 +52,20 @@ impl Atoms {
     }
 }
 
-/// Lattice - structure for containing information on the cell
+/// Manages the crystal lattice, coordinate transformations, and Periodic Boundary Conditions (PBC).
 ///
-/// <pre class="rust">
-/// shift matrix ordering:
+/// Upon initialisation, this struct automatically performs LLL reduction to find a
+/// "better" (more orthogonal/shorter) basis set. This reduced basis is used for
+/// internal algorithms to improve numerical stability and neighbor finding.
+///
+/// # Key Features
+/// * **Shift Matrices**: Pre-calculated vectors for visiting 26 nearest neighbors (PBC aware).
+/// * **LLL Reduction**: Automatic basis reduction.
+/// * **Coordinate Transforms**: Cartesian <-> Fractional <-> Reduced.
+///
+/// # Shift Matrix Ordering
+/// Neighbors are indexed 0-26. Center (0,0,0) is index 13.
+/// <pre>
 ///     0 -> (-1,-1,-1)   7 -> (-1, 1, 0)  14 -> (0, 0, 1)  21 -> (1, 0,-1)
 ///     1 -> (-1,-1, 0)   8 -> (-1, 1, 1)  15 -> (0, 1,-1)  22 -> (1, 0, 0)
 ///     2 -> (-1,-1, 1)   9 -> (0,-1,-1)   16 -> (0, 1, 0)  23 -> (1, 0, 1)
@@ -66,16 +95,18 @@ pub struct Lattice {
 }
 
 impl Lattice {
-    /// Initialises the structure. Builds all the fields of the lattice structure
-    /// from a 2d vector in the form:
+    /// Initialises a new Lattice from a 3x3 matrix.
     ///
-    /// <pre class="rust">
-    /// [
-    ///     [ax, ay, az],
-    ///     [bx, by, bz],
-    ///     [cx, cy, cz],
-    /// ]
-    /// </pre>
+    /// The input matrix `lattice` should be provided as `[a, b, c]` row vectors.
+    ///
+    /// # Panics
+    /// Panics if the provided lattice vectors are linearly dependent (volume is zero),
+    /// meaning they do not span 3D space.
+    ///
+    /// # Logic
+    /// 1. Computes the inverse and volume of the input lattice.
+    /// 2. Performs LLL reduction to create a `reduced_lattice`.
+    /// 3. Generates shift matrices for finding neighbors in the reduced basis.
     pub fn new(lattice: [[f64; 3]; 3]) -> Self {
         let cartesian_shift_matrix =
             Lattice::create_cartesian_shift_matrix(&lattice);
@@ -116,6 +147,10 @@ impl Lattice {
         self.cartesian_to_reduced(utils::dot(p, self.to_cartesian))
     }
 
+    pub fn fractional_to_cartesian(&self, p: [f64; 3]) -> [f64; 3] {
+        utils::dot(p, self.to_cartesian)
+    }
+
     /// Map Cartesian coordinates into the reduced basis.
     pub fn cartesian_to_reduced(&self, p: [f64; 3]) -> [f64; 3] {
         let pn = utils::dot(p, self.reduced_to_fractional)
@@ -127,7 +162,18 @@ impl Lattice {
         utils::dot(pn, self.reduced_to_cartesian)
     }
 
-    // Calculates the minimum distance between two points, with an optional upper bound.
+    /// Calculates the shortest distance between two points under Periodic Boundary Conditions.
+    ///
+    /// This method checks the distance between `a` and `b` as well as all 26 periodic
+    /// images of `b` defined by the reduced shift matrix.
+    ///
+    /// # Arguments
+    /// * `a` - Point A (Cartesian).
+    /// * `b` - Point B (Cartesian).
+    /// * `min_dist` - An initial upper bound.
+    ///
+    /// # Returns
+    /// The scalar Euclidean distance.
     pub fn minimum_distance(
         &self,
         a: [f64; 3],
@@ -260,6 +306,7 @@ impl Lattice {
 }
 
 /// Calculates the lll reduction of a lattice.
+#[allow(clippy::needless_range_loop)] // This is pure stupid stuff
 pub fn lll_lattice(lattice: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
     let delta = 0.75;
     let mut a = lattice;
@@ -318,24 +365,152 @@ fn gram_schmidt(v: &[[f64; 3]; 3]) -> ([[f64; 3]; 3], [[f64; 3]; 3]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils;
+
+    // --- Lattice Tests ---
 
     #[test]
-    fn atoms_new() {
-        let positions = vec![[0.; 3]];
-        let lattice = Lattice::new([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]);
-        let text = String::new();
-        let atoms = Atoms::new(lattice, positions, text);
-        let positions = vec![[0.; 3]];
-        let lattice = Lattice::new([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]);
-        let text = String::new();
-        assert_eq!(atoms.lattice.to_cartesian, lattice.to_cartesian);
-        assert_eq!(atoms.positions, positions);
-        assert_eq!(atoms.text, text);
+    fn test_lattice_cubic() {
+        // Simple cubic lattice 10x10x10
+        let matrix = [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]];
+        let lattice = Lattice::new(matrix);
+
+        assert_eq!(lattice.volume, 1000.0);
+
+        // In a cubic lattice, reduced basis is identical to input
+        assert_eq!(lattice.to_cartesian, lattice.reduced_to_cartesian);
     }
 
     #[test]
-    #[should_panic]
-    fn lattice_new_non_invert() {
-        let _ = Lattice::new([[1., 0., 0.], [1., 0., 0.], [0., 0., 2.]]);
+    #[should_panic(expected = "Supplied lattice does not span 3d space")]
+    fn test_lattice_singular_panic() {
+        // Two vectors are identical -> Volume 0 -> Singular
+        Lattice::new([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]);
+    }
+
+    #[test]
+    fn test_coordinate_transformations() {
+        let matrix = [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]];
+        let lattice = Lattice::new(matrix);
+
+        // 1. Fractional to Cartesian
+        let frac = [0.5, 0.5, 0.5];
+        let cart = lattice.fractional_to_cartesian(frac);
+        assert_eq!(cart, [1.0, 1.0, 1.0]);
+
+        // 2. Cartesian to Reduced
+        // For a cubic lattice, reduced basis == original basis.
+        // Input: [1.0, 1.0, 1.0] (Center of box)
+        // Reduced: Should be the same Cartesian vector [1.0, 1.0, 1.0]
+        let p_cart = [1.0, 1.0, 1.0];
+        let p_red = lattice.cartesian_to_reduced(p_cart);
+        assert_eq!(p_red, [1.0, 1.0, 1.0]);
+
+        // 3. Cartesian to Reduced (PBC Wrapping)
+        // Input: [3.0, 1.0, 1.0] (Outside box in X)
+        // Reduced: Should wrap back to [1.0, 1.0, 1.0] inside the 2x2x2 cell
+        let p_outside = [3.0, 1.0, 1.0];
+        let p_wrapped = lattice.cartesian_to_reduced(p_outside);
+        assert!((p_wrapped[0] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_minimum_distance_pbc() {
+        // 10x10x10 box
+        let matrix = [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]];
+        let lattice = Lattice::new(matrix);
+
+        let p1 = [1.0, 1.0, 1.0];
+        let p2 = [9.0, 1.0, 1.0];
+
+        // Real distance is 8.0, but PBC distance is 2.0 (wrapping around x)
+        let dist = lattice.minimum_distance(p1, p2, None).powf(0.5);
+        assert!(
+            (dist - 2.0).abs() < 1e-6,
+            "PBC distance failed, got {}",
+            dist
+        );
+    }
+
+    // --- LLL Reduction Test (Wikipedia Example) ---
+
+    #[test]
+    fn test_lll_reduction_wikipedia() {
+        // From Wikipedia: "Lenstra–Lenstra–Lovász lattice basis reduction algorithm"
+        // Basis given by COLUMNS of:
+        // [ 1, -1, 3 ]
+        // [ 1,  0, 5 ]
+        // [ 1,  2, 6 ]
+        //
+        // Transposing to Row-Major format for our struct:
+        let input_lattice = [
+            [1.0, 1.0, 1.0],  // Col 1
+            [-1.0, 0.0, 2.0], // Col 2
+            [3.0, 5.0, 6.0],  // Col 3
+        ];
+
+        // Expected Reduced Basis given by COLUMNS of:
+        // [ 0, 1, -1 ]
+        // [ 1, 0,  0 ]
+        // [ 0, 1,  2 ]
+        //
+        // Transposing to Row-Major format:
+        // Row 1: [0, 1, 0]
+        // Row 2: [1, 0, 1]
+        // Row 3: [-1, 0, 2]
+
+        let lattice = Lattice::new(input_lattice);
+        let reduced = lattice.reduced_to_cartesian;
+
+        // Note: The LLL algorithm guarantees a specific reduced quality, but the
+        // ordering of vectors might vary slightly depending on implementation details
+        // (though usually standard LLL is deterministic).
+        // We check if the rows match the expected set.
+
+        let expected_rows =
+            vec![[0.0, 1.0, 0.0], [1.0, 0.0, 1.0], [-1.0, 0.0, 2.0]];
+
+        for row in reduced.iter() {
+            let found = expected_rows.iter().any(|exp| {
+                // Check for equality (allowing for sign flips on the whole vector)
+                let diff_pos = utils::subtract(*row, *exp);
+                let diff_neg =
+                    utils::subtract(*row, [-exp[0], -exp[1], -exp[2]]);
+
+                utils::vdot(diff_pos, diff_pos) < 1e-6
+                    || utils::vdot(diff_neg, diff_neg) < 1e-6
+            });
+
+            assert!(found, "Unexpected reduced vector: {:?}", row);
+        }
+
+        // Check volumes match (determinant invariant)
+        // Vol input = |1(0-10) - 1(-6-6) + 1(-5-0)| = |-10 + 12 - 5| = |-3| = 3.0
+        // Vol output = 1.0 * 1.0 * sqrt(5) ... easier to just check lattice.volume
+        assert!((lattice.volume - 3.0).abs() < 1e-6);
+    }
+
+    // --- Atoms Tests ---
+
+    #[test]
+    fn test_atoms_initialisation() {
+        let matrix = [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]];
+        let lattice = Lattice::new(matrix);
+
+        // Atom at [15.0, 5.0, 5.0] (Outside the 10x10x10 box)
+        let positions = vec![[15.0, 5.0, 5.0]];
+        let text = "Test Atom".to_string();
+
+        let atoms = Atoms::new(lattice, positions.clone(), text.clone());
+
+        // 1. Check stored Cartesian positions (Unchanged)
+        assert_eq!(atoms.positions, positions);
+
+        // 2. Check Reduced Positions (Cartesian coordinates in reduced cell)
+        // Should wrap 15.0 -> 5.0
+        let red = atoms.reduced_positions[0];
+        assert!((red[0] - 5.0).abs() < 1e-6);
+        assert!((red[1] - 5.0).abs() < 1e-6);
+        assert!((red[2] - 5.0).abs() < 1e-6);
     }
 }

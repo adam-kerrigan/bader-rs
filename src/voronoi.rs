@@ -1,7 +1,25 @@
 use crate::atoms::Lattice;
 use crate::utils::{cross, invert_lattice, vdot};
 
-/// Holds information on the Voronoi vectors.
+/// Manages the geometric weights for calculating gradients and fluxes on the grid.
+///
+/// To integrate charge density in a grid-agnostic way, we partition space using **Voronoi cells**
+/// (Wigner-Seitz cells). This structure calculates the flux of charge density between a voxel
+/// and its neighbors.
+///
+/// # The Flux Equation
+/// The flux $J$ between two voxels separated by a vector $\vec{d}$ is:
+/// $$ J \propto \alpha \cdot (\rho_{neighbor} - \rho_{self}) $$
+///
+/// The weight $\alpha$ is derived from the geometry of the Voronoi face shared by the voxels:
+/// $$ \alpha = \frac{A}{|\vec{d}|} $$
+/// * $A$: Area of the shared Voronoi face.
+/// * $|\vec{d}|$: Distance between the voxel centers.
+///
+/// # Fields
+/// * `vectors`: Indices of the neighbors (relative shifts) that share a face with the central voxel.
+/// * `alphas`: The pre-calculated weight $\alpha$ for each neighbor vector.
+/// * `volume`: The total volume of the Voronoi cell (must match the lattice cell volume).
 pub struct Voronoi {
     /// Voronoi vectors as indices in a shift matrix.
     pub vectors: Vec<Vec<usize>>,
@@ -156,6 +174,82 @@ impl Voronoi {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::atoms::Lattice;
+
+    #[test]
+    fn test_voronoi_cubic() {
+        // 1. Setup a Simple Cubic Lattice (10x10x10)
+        // The Voronoi cell (Wigner-Seitz cell) of a cubic lattice is a cube.
+        // It should have 6 faces (neighbors): ±x, ±y, ±z.
+        let matrix = [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]];
+        let lattice = Lattice::new(matrix);
+
+        let voronoi = Voronoi::new(&lattice);
+
+        // 2. Check Volume
+        // Voronoi volume must equal Lattice volume
+        assert!((voronoi.volume - 1000.0).abs() < 1e-6, "Volume mismatch");
+
+        // 3. Check Vectors
+        // We expect 6 neighbors for a simple cubic lattice.
+        // However, the implementation might store them as 6 unique vectors or more depending on how it iterates.
+        // Let's verify we have vectors and non-zero alphas.
+        assert!(!voronoi.vectors.is_empty());
+        assert_eq!(voronoi.vectors.len(), voronoi.alphas.len());
+
+        // 4. Check Alphas (Weights)
+        // For a cubic lattice of side L=10:
+        // Neighbor distance |d| = 10.
+        // Face area A = 10 * 10 = 100.
+        // Alpha = Area / Distance = 100 / 10 = 10.0.
+
+        for &alpha in &voronoi.alphas {
+            assert!(
+                (alpha - 10.0).abs() < 1e-6,
+                "Expected alpha 10.0, got {}",
+                alpha
+            );
+        }
+    }
+
+    #[test]
+    fn test_voronoi_orthorhombic() {
+        // Orthorhombic: [2, 0, 0], [0, 3, 0], [0, 0, 4]
+        // Volume = 2 * 3 * 4 = 24.
+        let matrix = [[2.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 4.0]];
+        let lattice = Lattice::new(matrix);
+        let voronoi = Voronoi::new(&lattice);
+
+        // Check Volume
+        assert!((voronoi.volume - 24.0).abs() < 1e-6);
+
+        // We expect 3 distinct alpha values corresponding to the 3 axis lengths.
+        // Alpha_x = (3*4) / 2 = 6.0
+        // Alpha_y = (2*4) / 3 = 2.666...
+        // Alpha_z = (2*3) / 4 = 1.5
+
+        let mut found_6 = false;
+        let mut found_2_6 = false;
+        let mut found_1_5 = false;
+
+        for &alpha in &voronoi.alphas {
+            if (alpha - 6.0).abs() < 1e-4 {
+                found_6 = true;
+            }
+            if (alpha - (8.0 / 3.0)).abs() < 1e-4 {
+                found_2_6 = true;
+            }
+            if (alpha - 1.5).abs() < 1e-4 {
+                found_1_5 = true;
+            }
+        }
+
+        assert!(
+            found_6 && found_2_6 && found_1_5,
+            "Missing expected face weights"
+        );
+    }
+
     #[test]
     fn test_voronoi_vectors() {
         let lattice =

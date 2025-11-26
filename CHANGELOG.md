@@ -4,6 +4,9 @@
 - Atoms can now be bonded to images of themselves.
 ### Changes
 - Voronoi shift has been changed to include the passing of periodic boundaries, a no check version has been added to perform as previously.
+- The weight storage has changed adding EncodedWeight, EncodedAtom and EncodedImage.
+- Added helper functions for parallelising.
+- Removed crossbeam from dependencies.
 ## v0.4.8
 ### Changes
 - Opt -> Arg in arguments.
@@ -17,11 +20,11 @@
 - Added way to calculate the error in the partitioning from the Laplacian.
 ### Changes
 - Voronoi now stores the volume of the Voronoi cell.
-- Removed clap as a dependancy.
+- Removed clap as a dependency.
 - Changed the flags for file type to -f --file_type from -t --type.
 - Changed the short flag for threads to -t from -J.
-- Removed indicatif and atomic-counter as dependancies.
-- Removed regex from dependancies.
+- Removed indicatif and atomic-counter as dependencies.
+- Removed regex from dependencies.
 - Progress bars are now created inside functions and whether they are shown is optional.
 - Added a new silent flag: -x --silent.
 ## v0.4.5
@@ -46,7 +49,7 @@
 - Split out sum_bader_densities to calculate_bader_density and calculate_bader_volume_radius
 ## v0.4.2
 ### Changes
-- Updated dependancies and fixed the breaking changes associated with them.
+- Updated dependencies and fixed the breaking changes associated with them.
 - Bumped the minimum rust version required.
 ## v0.4.1
 ### Changes
@@ -95,7 +98,7 @@
 ### Bug Fixes
 - Fixed SegFault at high thread count by pre-allocating weight_map ([issue: #19](https://github.com/kerrigoon/bader-rs/issues/19)).
 ### Feature Changes
-- Added a cap of 12 to the amount of threads distrubuted over by default.
+- Added a cap of 12 to the amount of threads distributed over by default.
 ## v0.2.1
 ### Bug Fixes
 - Added a lock to maxima_get() in VoxelMap and made a maxima_non_blocking_get(), unsure if this would ever be a problem due to the lock on index.pop() but better safe than sorry.
@@ -113,7 +116,7 @@
 - '--spin, -s' has been added for spin output on cube files.
 ### Library Changes
 - I/O now has a trait for standardising implementation of new file types.
-- I/O modules now contribute to the formating of ACF and BCF files (maybe units in future).
+- I/O modules now contribute to the formatting of ACF and BCF files (maybe units in future).
 - VoxelMap now controls the population and processing of the voxel maps.
 - Custom Lock introduced to speed up threading.
 ## v0.1.1

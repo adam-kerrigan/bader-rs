@@ -1,8 +1,9 @@
-use bader::analysis::{
-    bond_pruning, cage_pruning, calculate_bader_density, calculate_bader_error,
-    calculate_bader_volumes_and_radii, nuclei_ordering, ring_pruning,
-};
+use bader::analysis::calculate_bader_density;
 use bader::arguments::App;
+use bader::critical::{
+    bond_pruning, cage_pruning, critical_point_merge, nuclei_ordering,
+    ring_pruning,
+};
 use bader::errors::ArgumentError;
 use bader::io::{self, FileFormat, FileType, WriteType};
 use bader::methods::{maxima_finder, minima_finder, weight};
@@ -76,7 +77,7 @@ fn main() {
     };
     // input the maxima as atoms into the voxel map
     nuclei.iter().for_each(|maximum| {
-        voxel_map.maxima_store(maximum.position, maximum.atoms[0] as isize);
+        voxel_map.maxima_store(maximum.position, maximum.atoms[0].0 as isize);
     });
     let n_bader_maxima = nuclei.len();
     let nuclei =
@@ -101,54 +102,33 @@ fn main() {
         !args.silent,
     );
     // sum the densities and then write the charge partition files
-    let (atoms_volume, atoms_radius) = calculate_bader_volumes_and_radii(
-        &voxel_map,
-        &atoms,
-        args.threads,
-        !args.silent,
-    );
-    let mut atoms_density =
-        vec![vec![0.0; densities.len()]; atoms_volume.len()];
-    densities.iter().enumerate().for_each(|(i, density)| {
-        atoms_density
-            .iter_mut()
-            .zip(
-                calculate_bader_density(
-                    density,
-                    &voxel_map,
-                    &atoms,
-                    args.threads,
-                    !args.silent,
-                )
-                .iter(),
-            )
-            .for_each(|(ad, bd)| ad[i] += bd);
-    });
-    let atoms_error = calculate_bader_error(
-        reference,
-        &voxel_map,
-        &atoms,
-        args.threads,
-        !args.silent,
-    );
-    let bonds =
-        bond_pruning(&bonds, reference, voxel_map.grid_get(), !args.silent);
-    let rings = ring_pruning(
+    let (atoms_density, atoms_volume, atoms_radius, atoms_error) =
+        calculate_bader_density(
+            &densities,
+            &voxel_map,
+            &atoms,
+            args.threads,
+            !args.silent,
+        );
+    let bonds = bond_pruning(&bonds, reference, args.threads, !args.silent);
+    let rings = critical_point_merge(ring_pruning(
         &rings,
         &nuclei,
         reference,
         &atoms,
         voxel_map.grid_get(),
+        args.threads,
         !args.silent,
-    );
-    let cages = cage_pruning(
+    ));
+    let cages = critical_point_merge(cage_pruning(
         &cages,
         &nuclei,
         reference,
         &atoms,
         voxel_map.grid_get(),
+        args.threads,
         !args.silent,
-    );
+    ));
     println!(
         "{} {} {} {}",
         nuclei.len(),
@@ -157,38 +137,39 @@ fn main() {
         cages.len()
     );
     /*
-    critical_points.0.iter().for_each(|cp| {
-        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
-        let x = x as f64 / voxel_map.grid.size.x as f64;
-        let y = y as f64 / voxel_map.grid.size.y as f64;
-        let z = z as f64 / voxel_map.grid.size.z as f64;
-        let (x, y, z) = file_type.coordinate_format([x, y, z]);
-        println!("{} {} {}        {:?}", x, y, z, cp.atoms);
-    });
-    critical_points.1.iter().for_each(|cp| {
-        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
-        let x = x as f64 / voxel_map.grid.size.x as f64;
-        let y = y as f64 / voxel_map.grid.size.y as f64;
-        let z = z as f64 / voxel_map.grid.size.z as f64;
-        let (x, y, z) = file_type.coordinate_format([x, y, z]);
-        println!("{} {} {}        {:?}", x, y, z, cp.atoms);
-    });
-    critical_points.2.iter().for_each(|cp| {
-        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
-        let x = x as f64 / voxel_map.grid.size.x as f64;
-        let y = y as f64 / voxel_map.grid.size.y as f64;
-        let z = z as f64 / voxel_map.grid.size.z as f64;
-        let (x, y, z) = file_type.coordinate_format([x, y, z]);
-        println!("{} {} {}        {:?}", x, y, z, cp.atoms);
-    });
-    critical_points.3.iter().for_each(|cp| {
-        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
-        let x = x as f64 / voxel_map.grid.size.x as f64;
-        let y = y as f64 / voxel_map.grid.size.y as f64;
-        let z = z as f64 / voxel_map.grid.size.z as f64;
-        let (x, y, z) = file_type.coordinate_format([x, y, z]);
-        println!("{} {} {}        {:?}", x, y, z, cp.atoms);
-    });
+        let critical_points = (nuclei, bonds, rings, cages);
+        critical_points.0.iter().for_each(|cp| {
+            let [x, y, z] = voxel_map.grid.to_3d(cp.position);
+            let x = x as f64 / voxel_map.grid.size.x as f64;
+            let y = y as f64 / voxel_map.grid.size.y as f64;
+            let z = z as f64 / voxel_map.grid.size.z as f64;
+            let (x, y, z) = file_type.coordinate_format([x, y, z]);
+            println!("{} {} {}        {:?}", x, y, z, cp.atoms);
+        });
+        critical_points.1.iter().for_each(|cp| {
+            let [x, y, z] = voxel_map.grid.to_3d(cp.position);
+            let x = x as f64 / voxel_map.grid.size.x as f64;
+            let y = y as f64 / voxel_map.grid.size.y as f64;
+            let z = z as f64 / voxel_map.grid.size.z as f64;
+            let (x, y, z) = file_type.coordinate_format([x, y, z]);
+            println!("{} {} {}        {:?}", x, y, z, cp.atoms);
+        });
+        critical_points.2.iter().for_each(|cp| {
+            let [x, y, z] = voxel_map.grid.to_3d(cp.position);
+            let x = x as f64 / voxel_map.grid.size.x as f64;
+            let y = y as f64 / voxel_map.grid.size.y as f64;
+            let z = z as f64 / voxel_map.grid.size.z as f64;
+            let (x, y, z) = file_type.coordinate_format([x, y, z]);
+            println!("{} {} {}        {:?}", x, y, z, cp.atoms);
+        });
+        critical_points.3.iter().for_each(|cp| {
+            let [x, y, z] = voxel_map.grid.to_3d(cp.position);
+            let x = x as f64 / voxel_map.grid.size.x as f64;
+            let y = y as f64 / voxel_map.grid.size.y as f64;
+            let z = z as f64 / voxel_map.grid.size.z as f64;
+            let (x, y, z) = file_type.coordinate_format([x, y, z]);
+            println!("{} {} {}        {:?}", x, y, z, cp.atoms);
+        });
     */
     // prepare the positions for writing out
     let positions = atoms

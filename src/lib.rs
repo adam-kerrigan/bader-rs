@@ -79,6 +79,8 @@ pub mod arguments;
 /// in the calculation. Also contains [Lattice](atoms::Lattice) and
 /// for storing information about the cell in which the density is stored.
 pub mod atoms;
+/// Provides structures for critical point analysis.
+pub mod critical;
 /// Provides custom errors types.
 pub mod errors;
 /// Contains [Grid](grid::Grid) for managing the movement around the grid on
@@ -94,6 +96,8 @@ pub mod methods;
 /// Provides a [visible](progress::Bar) and [hidden](progress::HiddenBar) implementation of the
 /// trait [ProgressBar](progress::ProgressBar).
 pub mod progress;
+// Handles thread merging and helper functions.
+pub mod threading;
 /// Misc functions mainly for vector and matrix manipulation.
 pub mod utils;
 /// Calculates the Voronoi vectors, and their alpha values for the weight method,

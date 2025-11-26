@@ -9,7 +9,7 @@ pub fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     ]
 }
 
-/// subtract two [f64;3] vectors
+/// subtract two \[f64; 3\] vectors
 pub fn subtract(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
@@ -17,7 +17,7 @@ pub fn subtract(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 /// compute the dot product between a vector and a matrix
 pub fn dot(v: [f64; 3], m: [[f64; 3]; 3]) -> [f64; 3] {
     (0..3)
-        .map(|i| (v[0] * m[0][i] + v[1] * m[1][i] + v[2] * m[2][i]))
+        .map(|i| v[0] * m[0][i] + v[1] * m[1][i] + v[2] * m[2][i])
         .collect::<Vec<f64>>()
         .try_into()
         .unwrap() // safe to unwrap as is size 3
@@ -187,5 +187,47 @@ mod tests {
         let index = (0..60).rev().collect::<Vec<usize>>();
         let i = vacuum_index(&data, &index, None).unwrap();
         assert_eq!(i, 60)
+    }
+
+    #[test]
+    fn utils_cross_product() {
+        let a = [1.0, 0.0, 0.0];
+        let b = [0.0, 1.0, 0.0];
+        assert_eq!(cross(a, b), [0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn utils_matrix_dot() {
+        let v = [1.0, 1.0, 0.0];
+        let m = [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]];
+        // Vector * Matrix
+        assert_eq!(dot(v, m), [2.0, 2.0, 0.0]);
+    }
+
+    #[test]
+    fn utils_idot_rounding() {
+        // Test that floating point coordinates round correctly to integer shifts
+        let v_approx = [0.99, 1.01, -0.01];
+        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+
+        // Should round to [1, 1, 0]
+        assert_eq!(idot(v_approx, identity), [1, 1, 0]);
+    }
+
+    #[test]
+    fn utils_invert_lattice() {
+        // 1. Identity
+        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let inv = invert_lattice(&identity).unwrap();
+        assert_eq!(inv, identity);
+
+        // 2. Scaling (Inverse of 2I is 0.5I)
+        let scaled = [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]];
+        let inv_scaled = invert_lattice(&scaled).unwrap();
+        assert!((inv_scaled[0][0] - 0.5).abs() < 1e-9);
+
+        // 3. Singular (Determinant = 0)
+        let singular = [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+        assert!(invert_lattice(&singular).is_none());
     }
 }
