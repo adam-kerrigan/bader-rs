@@ -313,7 +313,7 @@ pub fn cage_pruning(
 /// # Logic
 /// 1. Sorts critical points by the number of associated atoms (descending).
 /// 2. Iterates through them. If a point's atoms are a **subset** of an already existing
-///    point's atoms (e.g., a Ring [1,2,3] is likely charge fluctuation before the Ring [1,2,3,4]),
+///    point's atoms (e.g., a Ring \[1,2,3\] is likely charge fluctuation before the Ring \[1,2,3,4\]),
 ///    it is discarded/merged.
 ///
 /// # Returns
