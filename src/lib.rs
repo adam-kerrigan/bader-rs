@@ -86,7 +86,7 @@ pub mod errors;
 /// Contains [Grid](grid::Grid) for managing the movement around the grid on
 /// which the density is stored.
 pub mod grid;
-/// Custom hashing for u32 keys.
+/// Custom hashing for u32 int and slice keys.
 pub mod hash;
 /// Handles the File I/O for both the density file and result files.
 /// Provides a [FileFormat](io::FileFormat) trait to be implemented by modules designed to
