@@ -1,7 +1,6 @@
-use rustc_hash::{FxHashMap, FxHashSet};
-
 use crate::atoms::Atoms;
 use crate::grid::Grid;
+use crate::hash::{IntMap, IntSet};
 use crate::progress::{Bar, HiddenBar, ProgressBar};
 use crate::threading::parallel_prune;
 use crate::utils::{cross, norm, subtract, vdot};
@@ -373,9 +372,9 @@ pub fn cage_pruning(
 pub fn critical_point_merge(mut cps: Vec<CriticalPoint>) -> Vec<CriticalPoint> {
     cps.sort_unstable_by(|a, b| b.atoms.len().cmp(&a.atoms.len()));
     let mut merged_points: Vec<CriticalPoint> = Vec::with_capacity(cps.len());
-    let mut inverted_index: FxHashMap<u32, Vec<usize>> = FxHashMap::default();
+    let mut inverted_index: IntMap<u32, Vec<usize>> = IntMap::default();
     'critical: for cp in cps.iter() {
-        let mut superset: Option<FxHashSet<usize>> = None;
+        let mut superset: Option<IntSet<usize>> = None;
         'atom: for atom in cp.atoms.iter() {
             if let Some(matches) = inverted_index.get(&atom.atom_index()) {
                 match superset {
@@ -395,7 +394,7 @@ pub fn critical_point_merge(mut cps: Vec<CriticalPoint>) -> Vec<CriticalPoint> {
         }
         if let Some(set) = superset {
             for index in set.iter() {
-                let set_sub = FxHashSet::from_iter(cp.atoms.iter().copied());
+                let set_sub = IntSet::from_iter(cp.atoms.iter().copied());
                 let cp_super = &merged_points[*index];
                 for encoded_atom in cp_super.atoms.iter() {
                     let new_anchor = encoded_atom.image();
@@ -403,7 +402,7 @@ pub fn critical_point_merge(mut cps: Vec<CriticalPoint>) -> Vec<CriticalPoint> {
                         .atoms
                         .iter()
                         .map(|a| a.image_sub(new_anchor))
-                        .collect::<FxHashSet<EncodedAtom>>();
+                        .collect::<IntSet<EncodedAtom>>();
                     if set_sub.is_subset(&rotated_super) {
                         continue 'critical;
                     }

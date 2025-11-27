@@ -1,8 +1,8 @@
 use crate::{
     errors::ArgumentError,
+    hash::SliceMap,
     io::{FileType, WriteType},
 };
-use rustc_hash::FxHashMap;
 use std::fmt::{Debug, Display, Write};
 use std::thread::available_parallelism;
 
@@ -386,8 +386,8 @@ impl App {
         &self,
         args: Vec<&str>,
     ) -> Result<Args, ArgumentError<'_>> {
-        let mut arguments = FxHashMap::<String, String>::default();
-        let mut multi_arguments = FxHashMap::<String, Vec<String>>::default();
+        let mut arguments = SliceMap::<String, String>::default();
+        let mut multi_arguments = SliceMap::<String, Vec<String>>::default();
         args.iter().enumerate()
                    .try_for_each(|(i, flag)| {
                        match flag.strip_prefix('-') {

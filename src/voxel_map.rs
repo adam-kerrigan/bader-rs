@@ -1,5 +1,5 @@
 use crate::grid::Grid;
-use rustc_hash::{FxHashMap, FxHashSet};
+use crate::hash::{IntMap, IntSet};
 use std::mem::MaybeUninit;
 use std::ops::{Add, Sub};
 use std::sync::Arc;
@@ -198,7 +198,7 @@ pub enum Voxel {
     Maxima(EncodedAtom),
     /// Contians a vector of the maxima the current voxel contributes to and
     /// their weights.
-    Boundary(FxHashMap<EncodedAtom, f32>),
+    Boundary(IntMap<EncodedAtom, f32>),
     /// A voxel beneath the vacuum tolerance and not contributing to any maxima.
     Vacuum,
 }
@@ -273,7 +273,7 @@ impl BlockingVoxelMap {
     /// in the VoxelMap and then return either a `Voxel::Maxima` or `Voxel::Weight`.
     /// Calling this on a voxel, p, that is below the vacuum_tolerance will deadlock
     /// as a voxel is considered stored once voxel_map\[p\] > -1.
-    pub fn weight_get(&self, i: isize) -> FxHashMap<EncodedAtom, f32> {
+    pub fn weight_get(&self, i: isize) -> IntMap<EncodedAtom, f32> {
         let i = -2 - i;
         (unsafe { self.weight_map.get_unchecked(i as usize).assume_init_ref() })
             .iter()
@@ -441,10 +441,7 @@ impl VoxelMap {
     }
 
     /// Return a reference to the weights from the given maxima, Note: maxima here must be < -1.
-    pub fn maxima_to_weight(
-        &self,
-        maxima: isize,
-    ) -> FxHashMap<EncodedAtom, f32> {
+    pub fn maxima_to_weight(&self, maxima: isize) -> IntMap<EncodedAtom, f32> {
         self.weight_map[(-2 - maxima) as usize]
             .iter()
             .map(|ed| ed.decode())
@@ -505,7 +502,7 @@ impl VoxelMap {
     /// Produce a mask for a collection volume numbers.
     pub fn multi_volume_map(
         &self,
-        volume_numbers: &FxHashSet<isize>,
+        volume_numbers: &IntSet<isize>,
     ) -> Vec<Option<f64>> {
         self.maxima_iter()
             .map(|maxima| {
@@ -532,7 +529,7 @@ impl VoxelMap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustc_hash::FxHashSet;
+    use crate::hash::IntSet;
 
     // --- EncodedImage Tests ---
 
@@ -714,7 +711,7 @@ mod tests {
         assert_eq!(volumes[2], None); // Vacuum
 
         // Test Multi-Volume Map (e.g. Atoms 1 and 2 combined)
-        let mut set = FxHashSet::default();
+        let mut set = IntSet::default();
         set.insert(1);
         set.insert(2);
 
