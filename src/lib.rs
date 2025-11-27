@@ -86,6 +86,8 @@ pub mod errors;
 /// Contains [Grid](grid::Grid) for managing the movement around the grid on
 /// which the density is stored.
 pub mod grid;
+/// Custom hashing for u32 keys.
+pub mod hash;
 /// Handles the File I/O for both the density file and result files.
 /// Provides a [FileFormat](io::FileFormat) trait to be implemented by modules designed to
 /// cover a specific file format of a density file.
@@ -96,7 +98,7 @@ pub mod methods;
 /// Provides a [visible](progress::Bar) and [hidden](progress::HiddenBar) implementation of the
 /// trait [ProgressBar](progress::ProgressBar).
 pub mod progress;
-// Handles thread merging and helper functions.
+/// Handles thread merging and helper functions.
 pub mod threading;
 /// Misc functions mainly for vector and matrix manipulation.
 pub mod utils;

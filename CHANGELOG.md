@@ -7,6 +7,8 @@
 - The weight storage has changed adding EncodedWeight, EncodedAtom and EncodedImage.
 - Added helper functions for parallelising.
 - Removed crossbeam from dependencies.
+- Removed rustc_hash from dependencies.
+- Add own hash functions.
 ## v0.4.8
 ### Changes
 - Opt -> Arg in arguments.

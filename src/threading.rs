@@ -1,8 +1,8 @@
 use crate::{
     critical::{CriticalPoint, CriticalPointKey},
+    hash::SliceMap,
     progress::ProgressBar,
 };
-use rustc_hash::FxHashMap;
 use std::thread;
 
 /// A generic parallel Map-Reduce implementation using `std::thread::scope`.
@@ -119,7 +119,7 @@ where
         // Items
         critical_points,
         // Init
-        FxHashMap::default,
+        SliceMap::default,
         // Map
         |local_state, cp| {
             if validator(cp) {

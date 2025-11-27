@@ -2,11 +2,11 @@ use crate::atoms::Atoms;
 use crate::critical::{CriticalPoint, CriticalPointKind};
 use crate::errors::MaximaError;
 use crate::grid::Grid;
+use crate::hash::IntMap;
 use crate::progress::{Bar, HiddenBar, ProgressBar};
 use crate::voxel_map::{
     BlockingVoxelMap, EncodedAtom, EncodedWeight, Voxel, VoxelMap,
 };
-use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::thread;
@@ -52,7 +52,7 @@ pub fn weight_step(
     let control = density[p as usize];
     let grid = &voxel_map.grid;
     let mut t_sum = 0.;
-    let mut weights = FxHashMap::<EncodedAtom, f64>::default();
+    let mut weights = IntMap::<EncodedAtom, f64>::default();
     let mut weight_count = 0;
     // colllect the shift and distances and iterate over them.
     grid.voronoi_shifts(p)

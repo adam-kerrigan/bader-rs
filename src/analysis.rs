@@ -2,7 +2,6 @@ use crate::atoms::Atoms;
 use crate::methods::laplacian;
 use crate::progress::{Bar, HiddenBar, ProgressBar};
 use crate::voxel_map::{Voxel, VoxelMap};
-use rustc_hash::FxHashMap;
 use std::thread;
 
 type BaderResult = (Box<[Box<[f64]>]>, Box<[f64]>, Box<[f64]>, Box<[f64]>);
@@ -210,128 +209,6 @@ pub fn calculate_bader_density(
     )
 }
 
-/// Calculates bond paths and strengths based on saddle points.
-///
-/// This function analyses the provided saddle points (indices in the grid) to determine
-/// which atoms are connected. It uses the Laplacian at the saddle point as a measure
-/// of bond strength.
-///
-/// # Logic
-/// * Takes a list of `saddles` (indices where the gradient is zero but curvature is mixed).
-/// * Checks the `voxel_map` at that saddle point.
-/// * If the voxel is a boundary between exactly 2 atoms, it is considered a bond.
-/// * The Laplacian value at this point is recorded as the bond strength.
-///
-/// # Returns
-/// A `Vec` where index `i` corresponds to Atom `i`. Each element is a `HashMap`:
-/// * **Key**: `(connected_atom_index, image_offset)`
-/// * **Value**: Bond strength (Laplacian).
-///
-/// # Example
-/// ```no_run
-/// use bader::analysis::calculate_bond_strengths;
-///
-/// // Assume we found saddle points earlier (e.g., via CriticalPoint methods)
-/// let saddle_indices = vec![42, 105];
-/// # let density = vec![0.0];
-/// # let atoms = unsafe { std::mem::zeroed() };
-/// # let voxel_map = unsafe { std::mem::zeroed() };
-///
-/// let bonds = calculate_bond_strengths(
-///     &saddle_indices,
-///     &density,
-///     &atoms,
-///     &voxel_map,
-///     true
-/// );
-///
-/// // Check bonds for Atom 0
-/// for ((target_atom, offset), strength) in &bonds[0] {
-///     println!("Bond with Atom {} (strength: {})", target_atom, strength);
-/// }
-/// ```
-pub fn calculate_bond_strengths(
-    saddles: &[isize],
-    density: &[f64],
-    atoms: &Atoms,
-    voxel_map: &VoxelMap,
-    visible_bar: bool,
-) -> Vec<FxHashMap<(usize, usize), f64>> {
-    let progress_bar: Box<dyn ProgressBar> = match visible_bar {
-        false => Box::new(HiddenBar {}),
-        true => Box::new(Bar::new(
-            voxel_map.maxima_len(),
-            String::from("Calculating Bond Strength"),
-        )),
-    };
-    let pbar = &progress_bar;
-    let lat = &atoms.lattice;
-    let mut bonds = vec![
-        FxHashMap::<(usize, usize), f64>::default();
-        atoms.positions.len()
-    ];
-    saddles.iter().for_each(|p| {
-        let lapl = laplacian(*p as usize, density, voxel_map.grid_get());
-        let p_lll = lat.cartesian_to_reduced(voxel_map.grid.to_cartesian(*p));
-        // We know that the saddle point is a weight not a maximum.
-        let weights = voxel_map.maxima_to_weight(voxel_map.maxima_get(*p));
-        // If the weight is two atoms it's a bond > 2 is a ring?
-        if let std::cmp::Ordering::Equal = weights.len().cmp(&2) {
-            let atom_nums = weights
-                .keys()
-                .map(|n| {
-                    let n = n.atom_index() as usize;
-                    let atom = atoms.reduced_positions[n];
-                    let mut min_distance = f64::INFINITY;
-                    let mut atom_image = 0;
-                    for (i, atom_shift) in
-                        lat.reduced_cartesian_shift_matrix.iter().enumerate()
-                    {
-                        let distance = {
-                            (p_lll[0] - (atom[0] + atom_shift[0])).powi(2)
-                                + (p_lll[1] - (atom[1] + atom_shift[1])).powi(2)
-                                + (p_lll[2] - (atom[2] + atom_shift[2])).powi(2)
-                        };
-                        if distance < min_distance {
-                            min_distance = distance;
-                            atom_image = i;
-                        }
-                    }
-                    (atom_image, n)
-                })
-                .collect::<Vec<(usize, usize)>>();
-            // compare images
-            // crossing (out[0] * 9 + out[1] * 3 + out[2] + 13) as usize
-            let (image_1, atom_1) = atom_nums[0];
-            let (image_2, atom_2) = atom_nums[1];
-            let x1 = (image_1 / 9) as isize - 1;
-            let y1 = (image_1 / 3).rem_euclid(3) as isize - 1;
-            let z1 = image_1.rem_euclid(3) as isize - 1;
-            let x2 = (image_2 / 9) as isize - 1;
-            let y2 = (image_2 / 3).rem_euclid(3) as isize - 1;
-            let z2 = image_2.rem_euclid(3) as isize - 1;
-            let image_1_adjust =
-                ((x1 - x2) * 9 + (y1 - y2) * 3 + (z1 - z2) + 13) as usize;
-            let image_2_adjust =
-                ((x2 - x1) * 9 + (y2 - y1) * 3 + (z2 - z1) + 13) as usize;
-            let bonds_1 =
-                bonds[atom_1].entry((atom_2, image_2_adjust)).or_insert(0.0);
-            if let std::cmp::Ordering::Greater =
-                lapl.abs().partial_cmp(&bonds_1.abs()).unwrap()
-            {
-                *bonds_1 = lapl;
-                let bonds_2 = bonds[atom_2]
-                    .entry((atom_1, image_1_adjust))
-                    .or_insert(0.0);
-                *bonds_2 = lapl;
-            };
-        }
-        pbar.tick();
-    });
-    bonds.iter_mut().for_each(|b| b.shrink_to_fit());
-    bonds
-}
-
 #[cfg(test)]
 mod tests {
     use super::*; // Import functions from analysis.rs
@@ -449,61 +326,9 @@ mod tests {
 
         assert!((b_vol[0] - expected_vol_0).abs() < f64::EPSILON);
         assert!((b_vol[1] - expected_vol_1).abs() < f64::EPSILON);
-        assert!((b_rad[0] - (3.0 * 1.5f64.powi(2).powf(0.5))) < f64::EPSILON);
-        assert!((b_err[0] - 0.0) < f64::EPSILON);
-    }
-
-    #[test]
-    fn test_calculate_bond_strengths() {
-        // This test simulates a bond saddle point between two atoms.
-        let dim = 3;
-        let (grid, atoms) = setup_env(dim); // 3x3x3 grid
-
-        // Create a density with a peak at center (1,1,1) -> index 13
-        let mut density = vec![0.0; 27];
-        density[13] = 2.0; // Saddle point density
-
-        // Define Voxel 13 as a boundary (Bond) between Atom 0 and Atom 1
-        let mut voxel_indices = vec![0isize; 27]; // Default to Atom 0
-
-        // Setup Weights for the saddle point
-        let atom0 = EncodedAtom::new(0, EncodedImage::new([0, 0, 0]));
-        let atom1 = EncodedAtom::new(1, EncodedImage::new([0, 0, 0]));
-        let weights = vec![
-            EncodedWeight::new(atom0, 0.5),
-            EncodedWeight::new(atom1, 0.5),
-        ]
-        .into_boxed_slice();
-
-        voxel_indices[13] = -2; // Boundary
-        let weight_map = vec![weights];
-
-        let v_map = VoxelMap {
-            voxel_map: voxel_indices,
-            weight_map,
-            grid,
-        };
-
-        // We explicitly tell the function that index 13 is a saddle
-        let saddles = vec![13];
-
-        let bonds =
-            calculate_bond_strengths(&saddles, &density, &atoms, &v_map, false);
-
-        // Check Atom 0's bonds
-        // It should have a bond with Atom 1
-        // The key in the hashmap is (target_atom_index, image_offset_index)
-        // Image offset 13 is usually the (0,0,0) shift if centered (depends on implementation),
-        // but we just check if *any* bond exists with Atom 1.
-
-        let atom0_bonds = &bonds[0];
         assert!(
-            !atom0_bonds.is_empty(),
-            "Atom 0 should have a bond detected"
+            (b_rad[0] - (3.0 * 1.5f64.powi(2)).powf(0.5)).abs() < f64::EPSILON
         );
-
-        // Verify the bond is with Atom 1
-        let has_bond_with_1 = atom0_bonds.keys().any(|(k, _)| *k == 1);
-        assert!(has_bond_with_1, "Bond should connect Atom 0 to Atom 1");
+        assert!((b_err[0] - 0.0).abs() < f64::EPSILON);
     }
 }
