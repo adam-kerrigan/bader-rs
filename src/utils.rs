@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use crate::errors::VacuumError;
 
 /// compute the cross product between two vectors
@@ -108,24 +110,31 @@ pub fn invert_lattice(lattice: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
 }
 
 /// returns the first index that is not vacuum from a sorted index list
-pub fn vacuum_index(
+pub fn index_generator(
     density: &[f64],
-    index: &[usize],
-    tolerance: Option<f64>,
-) -> Result<usize, VacuumError> {
-    match tolerance {
-        Some(tol) => {
-            for (i, p) in index.iter().rev().enumerate() {
-                if density[*p] > tol {
-                    return Ok(index.len() - i);
-                }
+    tolerance: f64,
+) -> Result<Vec<usize>, VacuumError> {
+    let mut index: Vec<usize> = density
+        .iter()
+        .enumerate()
+        .filter_map(|(i, f)| {
+            if let Some(Ordering::Greater) = f.partial_cmp(&tolerance) {
+                Some(i)
+            } else {
+                None
             }
-            Err(VacuumError {
-                vacuum_tolerance: tol,
-                density: density[index[0]],
-            })
-        }
-        None => Ok(index.len()),
+        })
+        .collect();
+    if index.is_empty() {
+        Err(VacuumError {
+            vacuum_tolerance: tolerance,
+            density: density.iter().copied().reduce(f64::max).unwrap(),
+        })
+    } else {
+        index.sort_unstable_by(|a, b| {
+            density[*b].partial_cmp(&density[*a]).unwrap()
+        });
+        Ok(index)
     }
 }
 

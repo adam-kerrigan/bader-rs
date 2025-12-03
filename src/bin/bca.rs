@@ -7,7 +7,7 @@ use bader::critical::{
 use bader::errors::ArgumentError;
 use bader::io::{self, FileFormat, FileType, WriteType};
 use bader::methods::{maxima_finder, minima_finder, weight};
-use bader::utils::vacuum_index;
+use bader::utils::index_generator;
 use bader::voxel_map::{BlockingVoxelMap, VoxelMap};
 
 fn main() {
@@ -44,18 +44,11 @@ fn main() {
     let voxel_map =
         BlockingVoxelMap::new(grid, atoms.lattice.to_cartesian, voxel_origin);
     // create the index list which will tell us in which order to evaluate the
-    // voxels
-    let mut index: Vec<usize> = (0..voxel_map.grid.size.total).collect();
-    index.sort_unstable_by(|a, b| {
-        reference[*b].partial_cmp(&reference[*a]).unwrap()
-    });
-    // remove from the indices any voxel that is below the vacuum limit
-    let vacuum_i = match vacuum_index(reference, &index, args.vacuum_tolerance)
-    {
+    // voxels and remove from the indices any voxel that is below the vacuum limit
+    let index = match index_generator(reference, args.vacuum_tolerance) {
         Ok(i) => i,
         Err(e) => panic!("{}", e),
     };
-    index.truncate(vacuum_i);
     // find the maxima in the system and store them whilst removing them from
     // the index list
     let nuclei = match maxima_finder(
@@ -171,28 +164,19 @@ fn main() {
             println!("{} {} {}        {:?}", x, y, z, cp.atoms);
         });
     */
-    // prepare the positions for writing out
-    let positions = atoms
-        .positions
-        .iter()
-        .map(|coords| file_type.coordinate_format(*coords))
-        .collect();
     // generate the output file
-    let mut atoms_charge_file = io::output::partitions_file(
-        positions,
+    let partition_table = io::output::PartitionTable::new(
         &atoms_density,
         &atoms_volume,
         &atoms_radius,
         &atoms_error,
-    );
-    atoms_charge_file.push_str(&format!(
-        "\n  Bader Maxima: {}\n  Boundary Voxels: {}\n  Total Voxels: {}",
-        n_bader_maxima,
         voxel_map.weight_len(),
-        reference.len()
-    ));
+        reference.len(),
+    );
     // check that the write was successfull
-    if io::output::write(atoms_charge_file, String::from("ACF.dat")).is_err() {
+    if io::output::write(partition_table.get_string(), String::from("ACF.dat"))
+        .is_err()
+    {
         panic!("Error in writing ACF.dat")
     }
     // let bonds_file = io::output::bonds_file(&bonds);

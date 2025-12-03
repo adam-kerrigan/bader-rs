@@ -590,28 +590,22 @@ impl App {
             },
         };
         let vacuum_tolerance = match arguments.get("vacuum tolerance") {
-            Some(m) => {
-                if m.to_lowercase() == "none" {
-                    None
-                } else {
-                    match m.parse::<f64>() {
-                        Ok(f) => Some(f),
-                        Err(_) => {
-                            return Err(ArgumentError::Unparsable(
-                                String::from("vacuum tolerance"),
-                                m.to_string(),
-                                String::from("f64"),
-                            ));
-                        }
-                    }
+            Some(m) => match m.parse::<f64>() {
+                Ok(f) => f,
+                Err(_) => {
+                    return Err(ArgumentError::Unparsable(
+                        String::from("vacuum tolerance"),
+                        m.to_string(),
+                        String::from("f64"),
+                    ));
                 }
-            }
+            },
             None => match self
                 .get_option_from_short_flag('v')
                 .unwrap()
                 .default_value
             {
-                DefaultValue::Float(f) => Some(f),
+                DefaultValue::Float(f) => f,
                 _ => panic!(""),
             },
         };
@@ -777,7 +771,7 @@ pub struct Args {
     /// How many threads to use in the calculation.
     pub threads: usize,
     /// Is there a tolerance to consider a density vacuum.
-    pub vacuum_tolerance: Option<f64>,
+    pub vacuum_tolerance: f64,
 }
 
 /// Parse the file type from the filename.
@@ -979,7 +973,7 @@ mod tests {
         let app = App::new();
         let v = vec!["bca", "CHGCAR", "--vac", "1E-4"];
         let args = app.parse_args(v).unwrap();
-        assert_eq!(args.vacuum_tolerance, Some(1E-4))
+        assert_eq!(args.vacuum_tolerance, 1E-4)
     }
 
     #[test]
@@ -987,7 +981,7 @@ mod tests {
         let app = App::new();
         let v = vec!["bca", "CHGCAR"];
         let args = app.parse_args(v).unwrap();
-        assert_eq!(args.vacuum_tolerance, Some(1E-6))
+        assert_eq!(args.vacuum_tolerance, 1E-6)
     }
 
     #[test]
