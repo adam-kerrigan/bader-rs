@@ -15,6 +15,7 @@ enum Coord {
 }
 
 /// The VASP file format for reading/writing CHG, PARCHG and CHGCARs.
+#[derive(Clone, Copy)]
 pub struct Vasp {}
 
 impl FileFormat for Vasp {
@@ -356,10 +357,7 @@ impl FileFormat for Vasp {
     }
 
     /// Deals with fortran indexing.
-    fn coordinate_format(&self, coords: [f64; 3]) -> (String, String, String) {
-        let z = format!("{:.6}", coords[0]);
-        let y = format!("{:.6}", coords[1]);
-        let x = format!("{:.6}", coords[2]);
-        (x, y, z)
+    fn coordinate_format(&self, coords: [f64; 3]) -> [f64; 3] {
+        [coords[2], coords[1], coords[0]]
     }
 }

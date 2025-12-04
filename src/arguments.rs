@@ -1,7 +1,7 @@
 use crate::{
     errors::ArgumentError,
     hash::SliceMap,
-    io::{FileType, WriteType},
+    io::{FileType, WriteType, cube::Cube, vasp::Vasp},
 };
 use std::fmt::{Debug, Display, Write};
 use std::thread::available_parallelism;
@@ -537,9 +537,9 @@ impl App {
             Some(ftype) => {
                 let ftype = ftype.to_lowercase();
                 if ftype.eq("cube") {
-                    FileType::Cube
+                    FileType::Cube(Cube {})
                 } else if ftype.eq("vasp") {
-                    FileType::Vasp
+                    FileType::Vasp(Vasp {})
                 } else {
                     return Err(ArgumentError::NotValidValue(
                         String::from("file type"),
@@ -681,11 +681,11 @@ impl App {
             },
             None => match arguments.get("aec") {
                 Some(_) => match file_type {
-                    FileType::Vasp => Reference::Two(
+                    FileType::Vasp(_) => Reference::Two(
                         String::from("AECCAR0"),
                         String::from("AECCAR2"),
                     ),
-                    FileType::Cube => {
+                    FileType::Cube(_) => {
                         return Err(ArgumentError::WrongFileType(
                             String::from("aec"),
                             String::from("cube"),
@@ -778,12 +778,12 @@ pub struct Args {
 pub fn parse_filetype(fname: &str) -> FileType {
     let f = fname.to_lowercase();
     if f.contains("cube") {
-        FileType::Cube
+        FileType::Cube(Cube {})
     } else if f.contains("car") {
-        FileType::Vasp
+        FileType::Vasp(Vasp {})
     } else {
         eprintln!("Cannot detect file type, attempting to read as VASP.");
-        FileType::Vasp
+        FileType::Vasp(Vasp {})
     }
 }
 
@@ -813,7 +813,7 @@ mod tests {
         let app = App::new();
         let v = vec!["bca", "CHGCAR"];
         let args = app.parse_args(v).unwrap();
-        let flag = matches!(args.file_type, FileType::Vasp);
+        let flag = matches!(args.file_type, FileType::Vasp(_));
         assert!(flag);
     }
 
@@ -822,7 +822,7 @@ mod tests {
         let app = App::new();
         let v = vec!["bca", "CHG"];
         let args = app.parse_args(v).unwrap();
-        let flag = matches!(args.file_type, FileType::Vasp);
+        let flag = matches!(args.file_type, FileType::Vasp(_));
         assert!(flag);
     }
 
@@ -831,7 +831,7 @@ mod tests {
         let app = App::new();
         let v = vec!["bca", "CHGCAR", "-f", "vasp"];
         let args = app.parse_args(v).unwrap();
-        let flag = matches!(args.file_type, FileType::Vasp);
+        let flag = matches!(args.file_type, FileType::Vasp(_));
         assert!(flag);
     }
 
@@ -840,7 +840,7 @@ mod tests {
         let app = App::new();
         let v = vec!["bca", "charge.cube"];
         let args = app.parse_args(v).unwrap();
-        let flag = matches!(args.file_type, FileType::Cube);
+        let flag = matches!(args.file_type, FileType::Cube(_));
         assert!(flag);
     }
 
@@ -849,7 +849,7 @@ mod tests {
         let app = App::new();
         let v = vec!["bca", "charge.cube", "--file_type", "cube"];
         let args = app.parse_args(v).unwrap();
-        let flag = matches!(args.file_type, FileType::Cube);
+        let flag = matches!(args.file_type, FileType::Cube(_));
         assert!(flag);
     }
 

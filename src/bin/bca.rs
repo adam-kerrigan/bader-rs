@@ -5,7 +5,7 @@ use bader::critical::{
     ring_pruning,
 };
 use bader::errors::ArgumentError;
-use bader::io::{self, FileFormat, FileType, WriteType};
+use bader::io::{self, FileFormat, WriteType};
 use bader::methods::{maxima_finder, minima_finder, weight};
 use bader::utils::index_generator;
 use bader::voxel_map::{BlockingVoxelMap, VoxelMap};
@@ -35,11 +35,8 @@ fn main() {
         println!("Running on {} threads.", args.threads);
     }
     // read the input files into a densities vector and a Grid struct
-    let file_type: Box<dyn FileFormat> = match args.file_type {
-        FileType::Vasp => Box::new(io::vasp::Vasp {}),
-        FileType::Cube => Box::new(io::cube::Cube {}),
-    };
-    let (densities, rho, atoms, grid, voxel_origin) = file_type.init(&args);
+    let (densities, rho, atoms, grid, voxel_origin) =
+        args.file_type.init(&args);
     let reference = if rho.is_empty() { &densities[0] } else { &rho };
     let voxel_map =
         BlockingVoxelMap::new(grid, atoms.lattice.to_cartesian, voxel_origin);
@@ -63,7 +60,7 @@ fn main() {
         Ok(v) => v,
         Err(e) => panic!(
             "\nBader maximum at {:#?}\n is too far away from nearest atom: {} with a distance of {} Ang.",
-            file_type.coordinate_format(e.maximum),
+            args.file_type.coordinate_format(e.maximum),
             e.atom + 1,
             e.distance,
         ),
@@ -72,8 +69,7 @@ fn main() {
     nuclei.iter().for_each(|maximum| {
         voxel_map.maxima_store(maximum.position, maximum.atoms[0].0 as isize);
     });
-    let n_bader_maxima = nuclei.len();
-    let nuclei =
+    let ordered_nuclei =
         nuclei_ordering(nuclei, reference, atoms.positions.len(), !args.silent);
     // calculate the weights leave the critical points for now
     let (bonds, rings) = weight(
@@ -106,7 +102,7 @@ fn main() {
     let bonds = bond_pruning(&bonds, reference, args.threads, !args.silent);
     let rings = critical_point_merge(ring_pruning(
         &rings,
-        &nuclei,
+        &ordered_nuclei,
         reference,
         &atoms,
         voxel_map.grid_get(),
@@ -115,7 +111,7 @@ fn main() {
     ));
     let cages = critical_point_merge(cage_pruning(
         &cages,
-        &nuclei,
+        &ordered_nuclei,
         reference,
         &atoms,
         voxel_map.grid_get(),
@@ -124,7 +120,7 @@ fn main() {
     ));
     println!(
         "{} {} {} {}",
-        nuclei.len(),
+        ordered_nuclei.len(),
         bonds.len(),
         rings.len(),
         cages.len()
@@ -173,9 +169,20 @@ fn main() {
         voxel_map.weight_len(),
         reference.len(),
     );
+    let critical_points = (ordered_nuclei, bonds, rings, cages);
+    let critical_point_output = io::output::CriticalPointOutput::new(
+        atoms.positions.clone(),
+        critical_points,
+        reference,
+        &voxel_map.grid,
+        args.file_type,
+    );
     // check that the write was successfull
-    if io::output::write(partition_table.get_string(), String::from("ACF.dat"))
-        .is_err()
+    if io::output::write(
+        format!("{}\n{}", partition_table, critical_point_output),
+        String::from("ACF.dat"),
+    )
+    .is_err()
     {
         panic!("Error in writing ACF.dat")
     }
@@ -216,7 +223,8 @@ fn main() {
     };
     write_map.for_each(|(id, weight_map)| {
         densities.iter().zip(&filename).for_each(|(rho, flnm)| {
-            if file_type
+            if args
+                .file_type
                 .write(
                     &atoms,
                     weight_map

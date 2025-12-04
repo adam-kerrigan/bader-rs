@@ -168,34 +168,17 @@ mod tests {
     }
 
     #[test]
-    fn utils_vacuum_index_some_high() {
+    fn utils_index_generator_high() {
         let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
-        let index = (0..60).rev().collect::<Vec<usize>>();
-        assert!(vacuum_index(&data, &index, Some(100.)).is_err())
+        assert!(index_generator(&data, 100.).is_err())
     }
 
     #[test]
-    fn utils_vacuum_index_some_low() {
+    fn utils_index_generator_low() {
         let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
-        let index = (0..60).rev().collect::<Vec<usize>>();
-        let i = vacuum_index(&data, &index, Some(-1.)).unwrap();
-        assert_eq!(i, 60)
-    }
-
-    #[test]
-    fn utils_vacuum_index_some() {
-        let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
-        let index = (0..60).rev().collect::<Vec<usize>>();
-        let i = vacuum_index(&data, &index, Some(10.)).unwrap();
-        assert_eq!(i, 49)
-    }
-
-    #[test]
-    fn utils_vacuum_index_none() {
-        let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
-        let index = (0..60).rev().collect::<Vec<usize>>();
-        let i = vacuum_index(&data, &index, None).unwrap();
-        assert_eq!(i, 60)
+        let index = index_generator(&data, 1.0).unwrap();
+        assert_eq!(index[0], 59);
+        assert_eq!(index.len(), 58);
     }
 
     #[test]

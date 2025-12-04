@@ -1,30 +1,155 @@
 use crate::critical::CriticalPoint;
+use crate::grid::Grid;
+use crate::io::{FileFormat, FileType};
+use crate::methods::laplacian;
+use crate::voxel_map::EncodedAtom;
+use core::fmt;
 use std::fs::File;
 use std::io::Write;
 
-pub struct OutputFile {
-    partition_table: PartitionTable,
-    critical_points: CriticalPointOutput,
+type CriticalPoints = (
+    Vec<CriticalPoint>,
+    Vec<CriticalPoint>,
+    Vec<CriticalPoint>,
+    Vec<CriticalPoint>,
+);
+
+type CriticalPointInfo = ([f64; 3], Box<[EncodedAtom]>, f64, f64);
+
+pub struct CriticalPointOutput {
+    positions: Vec<[f64; 3]>,
+    atom_nucleus_map: Vec<Vec<CriticalPointInfo>>,
+    atom_bond_map: Vec<Vec<CriticalPointInfo>>,
+    atom_ring_map: Vec<Vec<CriticalPointInfo>>,
+    atom_cage_map: Vec<Vec<CriticalPointInfo>>,
 }
 
-impl OutputFile {
+impl CriticalPointOutput {
     pub fn new(
-        partition_table: PartitionTable,
-        critical_points: CriticalPointOutput,
+        positions: Vec<[f64; 3]>,
+        critical_points: CriticalPoints,
+        density: &[f64],
+        grid: &Grid,
+        file_type: FileType,
     ) -> Self {
+        let atom_num = positions.len();
+        let (nuclei, bonds, rings, cages) = critical_points;
+        let pivot_critical_points =
+            |cps: &[CriticalPoint]| -> Vec<Vec<CriticalPointInfo>> {
+                let mut pivot = vec![vec![]; atom_num];
+                cps.iter().for_each(|cp| {
+                    cp.atoms.iter().for_each(|encoded_atom| {
+                        let atom_index = encoded_atom.atom_index() as usize;
+                        let image = encoded_atom.image();
+                        pivot[atom_index].push((
+                            file_type.coordinate_format(
+                                grid.to_cartesian(cp.position),
+                            ),
+                            cp.atoms
+                                .iter()
+                                .map(|encoded_atom| {
+                                    encoded_atom.image_sub(image)
+                                })
+                                .collect(),
+                            density[cp.position as usize],
+                            laplacian(cp.position as usize, density, grid),
+                        ));
+                    });
+                });
+                pivot
+            };
+        let positions = positions
+            .iter()
+            .map(|p| file_type.coordinate_format([p[0], p[1], p[2]]))
+            .collect();
+        let atom_nucleus_map = pivot_critical_points(&nuclei);
+        let atom_bond_map = pivot_critical_points(&bonds);
+        let atom_ring_map = pivot_critical_points(&rings);
+        let atom_cage_map = pivot_critical_points(&cages);
         Self {
-            partition_table,
-            critical_points,
+            positions,
+            atom_nucleus_map,
+            atom_bond_map,
+            atom_ring_map,
+            atom_cage_map,
         }
     }
 }
 
-struct CriticalPointOutput {
-    ordered_postitions: Vec<String>,
-    atom_nuclei_map: Vec<Vec<CriticalPoint>>,
-    atom_bond_map: Vec<Vec<CriticalPoint>>,
-    atom_ring_map: Vec<Vec<CriticalPoint>>,
-    atom_cage_map: Vec<Vec<CriticalPoint>>,
+impl fmt::Display for CriticalPointOutput {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut output = String::from("## Topological Information\n");
+        self.positions.iter().enumerate().for_each(|(i, position)| {
+            output.push_str(&format!(
+                "### Atom: {}\n * **Position**: {} {} {}\n * **Coordination**: {}\n* **Critical Points**:\n",
+                i, position[0], position[1], position[2], self.atom_bond_map[i].len(),
+            ));
+            let self_atom = EncodedAtom::new_zero_image(i as u32);
+            let nucleus = &self.atom_nucleus_map[i][0];
+            let nucleus_position = nucleus.0;
+            output.push_str(&format!(
+                "  * **Nucleus**: {} {} {} | ρ: {}\n",
+                nucleus_position[0], nucleus_position[1], nucleus_position[2], nucleus.2
+            ));
+            let bonds = &self.atom_bond_map[i];
+            bonds.iter().for_each(|bond| {
+                let bond_position = bond.0;
+                let bond_atoms = bond.1.iter().find(|a| a != &&self_atom);
+                if let Some(other) = bond_atoms {
+                    let bond_number = match other.image().is_zero() {
+                        true => format!("Atom {}", other.atom_index()),
+                        false => {
+                            let other_image = other.image().decode();
+                            format!("Atom {}({} {} {})", other.atom_index(), other_image[0], other_image[1], other_image[2])
+                        }
+                    };
+                    output.push_str(&format!(
+                        "  * **Bond**: to {} | {} {} {} | ρ: {} | ∇²ρ: {}\n",
+                        bond_number, bond_position[0], bond_position[1], bond_position[2], bond.2, bond.3
+                    ));
+                }
+            });
+            let rings = &self.atom_ring_map[i];
+            rings.iter().for_each(|ring| {
+                let ring_position = ring.0;
+                let mut ring_members = String::from("{");
+                ring.1.iter().for_each(|encoded_atom| match encoded_atom.image().is_zero() {
+                        true => ring_members.push_str(&format!("{}, ", encoded_atom.atom_index())),
+                        false => {
+                            let other_image = encoded_atom.image().decode();
+                            ring_members.push_str(&format!("{}({} {} {}), ", encoded_atom.atom_index(), other_image[0], other_image[1], other_image[2]));
+                    }
+                });
+                ring_members.pop();
+                ring_members.pop();
+                ring_members.push('}');
+                output.push_str(&format!(
+                    "  * **Ring**: {} | {} {} {} | ρ: {} | ∇²ρ: {}\n",
+                    ring_members, ring_position[0], ring_position[1], ring_position[2], ring.2, ring.3
+                ));
+            });
+            let cages = &self.atom_cage_map[i];
+            cages.iter().for_each(|cage| {
+                let cage_position = cage.0;
+                let mut cage_members = String::from("{");
+                cage.1.iter().for_each(|encoded_atom| match encoded_atom.image().is_zero() {
+                        true => cage_members.push_str(&format!("{}, ", encoded_atom.atom_index())),
+                        false => {
+                            let other_image = encoded_atom.image().decode();
+                            cage_members.push_str(&format!("{}({} {} {}), ", encoded_atom.atom_index(), other_image[0], other_image[1], other_image[2]));
+                    }
+                });
+                cage_members.pop();
+                cage_members.pop();
+                cage_members.push('}');
+                output.push_str(&format!(
+                    "  * **Cage**: {} | {} {} {} | ρ: {} | ∇²ρ: {}\n",
+                    cage_members, cage_position[0], cage_position[1], cage_position[2], cage.2, cage.3
+                ));
+            });
+        });
+        write!(f, "{}", output)
+    }
 }
 
 /// Structure that contains and builds the table.
@@ -201,10 +326,12 @@ impl PartitionTable {
         });
         separator
     }
+}
 
+impl fmt::Display for PartitionTable {
     /// Creates a String representation of the Table.
-    pub fn get_string(self) -> String {
-        let mut table = String::new();
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut table = String::from("## Partition Information\n");
         table.push_str(&self.format_header());
         self.rows.iter().for_each(|r| {
             if r.is_empty() {
@@ -219,7 +346,7 @@ impl PartitionTable {
             table.push('\n');
         });
         table.push_str(&self.footer);
-        table
+        write!(f, "{}", table)
     }
 }
 
