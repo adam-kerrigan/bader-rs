@@ -81,14 +81,14 @@ impl fmt::Display for CriticalPointOutput {
         let mut output = String::from("## Topological Information\n");
         self.positions.iter().enumerate().for_each(|(i, position)| {
             output.push_str(&format!(
-                "### Atom: {}\n * **Position**: {} {} {}\n * **Coordination**: {}\n* **Critical Points**:\n",
+                "\n### Atom: {}\n * **Position**: {} {} {}\n * **Coordination**: {}\n * **Critical Points**:\n",
                 i, position[0], position[1], position[2], self.atom_bond_map[i].len(),
             ));
             let self_atom = EncodedAtom::new_zero_image(i as u32);
             let nucleus = &self.atom_nucleus_map[i][0];
             let nucleus_position = nucleus.0;
             output.push_str(&format!(
-                "  * **Nucleus**: {} {} {} | ρ: {}\n",
+                "  * **Nucleus**:\n   | {:.6} {:.6} {:.6} | ρ: {}\n",
                 nucleus_position[0], nucleus_position[1], nucleus_position[2], nucleus.2
             ));
             let bonds = &self.atom_bond_map[i];
@@ -104,7 +104,7 @@ impl fmt::Display for CriticalPointOutput {
                         }
                     };
                     output.push_str(&format!(
-                        "  * **Bond**: to {} | {} {} {} | ρ: {} | ∇²ρ: {}\n",
+                        "  * **Bond**: to {}\n   | {:.6} {:.6} {:.6} | ρ: {} | ∇²ρ: {}\n",
                         bond_number, bond_position[0], bond_position[1], bond_position[2], bond.2, bond.3
                     ));
                 }
@@ -124,7 +124,7 @@ impl fmt::Display for CriticalPointOutput {
                 ring_members.pop();
                 ring_members.push('}');
                 output.push_str(&format!(
-                    "  * **Ring**: {} | {} {} {} | ρ: {} | ∇²ρ: {}\n",
+                    "  * **Ring**: {}\n   | {:.6} {:.6} {:.6} | ρ: {} | ∇²ρ: {}\n",
                     ring_members, ring_position[0], ring_position[1], ring_position[2], ring.2, ring.3
                 ));
             });
@@ -143,7 +143,7 @@ impl fmt::Display for CriticalPointOutput {
                 cage_members.pop();
                 cage_members.push('}');
                 output.push_str(&format!(
-                    "  * **Cage**: {} | {} {} {} | ρ: {} | ∇²ρ: {}\n",
+                    "  * **Cage**: {}\n   | {:.6} {:.6} {:.6} | ρ: {} | ∇²ρ: {}\n",
                     cage_members, cage_position[0], cage_position[1], cage_position[2], cage.2, cage.3
                 ));
             });

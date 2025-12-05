@@ -1,3 +1,4 @@
+use crate::arguments::Args;
 use crate::atoms::Atoms;
 use crate::grid::Grid;
 use crate::hash::{IntMap, IntSet};
@@ -141,9 +142,11 @@ pub fn nuclei_ordering(
 pub fn bond_pruning(
     bonds: &[CriticalPoint],
     density: &[f64],
-    threads: usize,
-    visible_bar: bool,
+    args: &Args,
 ) -> Vec<CriticalPoint> {
+    let self_bonds = args.self_bond;
+    let threads = args.threads;
+    let visible_bar = args.silent;
     let progress_bar: Box<dyn ProgressBar> = match visible_bar {
         false => Box::new(HiddenBar {}),
         true => Box::new(Bar::new(
@@ -151,7 +154,7 @@ pub fn bond_pruning(
             String::from("Pruning Bond Critical Points"),
         )),
     };
-    parallel_prune(bonds, density, |_| true, threads, progress_bar)
+    parallel_prune(bonds, density, |_| true, self_bonds, threads, progress_bar)
 }
 
 /// Filters Ring Critical Points (3, +1) and enforces planarity.
@@ -178,9 +181,11 @@ pub fn ring_pruning(
     density: &[f64],
     atoms: &Atoms,
     grid: &Grid,
-    threads: usize,
-    visible_bar: bool,
+    args: &Args,
 ) -> Vec<CriticalPoint> {
+    let self_bonds = args.self_bond;
+    let threads = args.threads;
+    let visible_bar = args.silent;
     let progress_bar: Box<dyn ProgressBar> = match visible_bar {
         false => Box::new(HiddenBar {}),
         true => Box::new(Bar::new(
@@ -250,6 +255,7 @@ pub fn ring_pruning(
             }
             true
         },
+        self_bonds,
         threads,
         progress_bar,
     )
@@ -280,9 +286,11 @@ pub fn cage_pruning(
     density: &[f64],
     atoms: &Atoms,
     grid: &Grid,
-    threads: usize,
-    visible_bar: bool,
+    args: &Args,
 ) -> Vec<CriticalPoint> {
+    let self_bonds = args.self_bond;
+    let threads = args.threads;
+    let visible_bar = args.silent;
     let progress_bar: Box<dyn ProgressBar> = match visible_bar {
         false => Box::new(HiddenBar {}),
         true => Box::new(Bar::new(
@@ -352,6 +360,7 @@ pub fn cage_pruning(
             }
             false
         },
+        self_bonds,
         threads,
         progress_bar,
     )

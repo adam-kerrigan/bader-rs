@@ -99,15 +99,14 @@ fn main() {
             args.threads,
             !args.silent,
         );
-    let bonds = bond_pruning(&bonds, reference, args.threads, !args.silent);
+    let bonds = bond_pruning(&bonds, reference, &args);
     let rings = critical_point_merge(ring_pruning(
         &rings,
         &ordered_nuclei,
         reference,
         &atoms,
         voxel_map.grid_get(),
-        args.threads,
-        !args.silent,
+        &args,
     ));
     let cages = critical_point_merge(cage_pruning(
         &cages,
@@ -115,9 +114,9 @@ fn main() {
         reference,
         &atoms,
         voxel_map.grid_get(),
-        args.threads,
-        !args.silent,
+        &args,
     ));
+    /*
     println!(
         "{} {} {} {}",
         ordered_nuclei.len(),
@@ -125,7 +124,6 @@ fn main() {
         rings.len(),
         cages.len()
     );
-    /*
         let critical_points = (nuclei, bonds, rings, cages);
         critical_points.0.iter().for_each(|cp| {
             let [x, y, z] = voxel_map.grid.to_3d(cp.position);
@@ -180,11 +178,11 @@ fn main() {
     // check that the write was successfull
     if io::output::write(
         format!("{}\n{}", partition_table, critical_point_output),
-        String::from("ACF.dat"),
+        String::from("bader_charge_analysis.md"),
     )
     .is_err()
     {
-        panic!("Error in writing ACF.dat")
+        panic!("Error in writing bader_charge_analysis.md")
     }
     // let bonds_file = io::output::bonds_file(&bonds);
     // if io::output::write(bonds_file, String::from("BF.dat")).is_err() {

@@ -1,6 +1,6 @@
 use crate::{
     critical::{CriticalPoint, CriticalPointKey},
-    hash::SliceMap,
+    hash::{IntSet, SliceMap},
     progress::ProgressBar,
 };
 use std::thread;
@@ -109,6 +109,7 @@ pub fn parallel_prune<F>(
     critical_points: &[CriticalPoint],
     density: &[f64],
     validator: F,
+    self_bonds: bool,
     threads: usize,
     progress_bar: Box<dyn ProgressBar>,
 ) -> Vec<CriticalPoint>
@@ -154,10 +155,21 @@ where
         threads,
         progress_bar,
     );
-    final_map
+    let mut critical_points: Vec<CriticalPoint> = final_map
         .into_iter()
         .map(|(k, v)| CriticalPoint::new(v.position, v.kind, k.into_box()))
-        .collect()
+        .collect();
+    if !self_bonds {
+        critical_points.retain(|cp| {
+            let atom_set = IntSet::from_iter(
+                cp.atoms
+                    .iter()
+                    .map(|encoded_atom| encoded_atom.atom_index()),
+            );
+            atom_set.len() == cp.atoms.len()
+        });
+    }
+    critical_points
 }
 
 #[cfg(test)]
@@ -238,7 +250,8 @@ mod tests {
         let pbar = Box::new(HiddenBar {});
 
         // Validator always returns true (keep everything initially)
-        let pruned = parallel_prune(&cps, &density, |_| true, threads, pbar);
+        let pruned =
+            parallel_prune(&cps, &density, |_| true, false, threads, pbar);
 
         assert_eq!(pruned.len(), 1);
         assert_eq!(pruned[0].position, 20); // Should be the higher density one
@@ -261,6 +274,7 @@ mod tests {
             &cps,
             &density,
             |cp| matches!(cp.kind, CriticalPointKind::Bond), // Keep only Bonds
+            false,
             threads,
             pbar,
         );

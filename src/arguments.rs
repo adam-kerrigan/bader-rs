@@ -196,6 +196,18 @@ impl App {
                 allowed_values: AllowedValue::None,
             },
             Arg {
+                name: String::from("self bonding"),
+                short_help: String::from("Whether to include self bonding in the critical point analysis."),
+                long_help: String::from("
+\tSelf bonds are removed in the pruning step by default, this option will leave them in."),
+                short_flag: 'b',
+                long_flag: String::from("bond"),
+                takes_value: false,
+                multiple_values: false,
+                default_value: DefaultValue::None,
+                allowed_values: AllowedValue::None,
+            },
+            Arg {
                 name: String::from("spin"),
                 short_help: String::from("File containing spin density."),
                 long_help: String::from("
@@ -697,6 +709,7 @@ impl App {
         };
         let spin = arguments.get("spin").cloned();
         let silent = arguments.contains_key("silent");
+        let self_bond = arguments.contains_key("self bond");
         Ok(Args {
             file,
             file_type,
@@ -704,6 +717,7 @@ impl App {
             maximum_distance,
             output,
             reference,
+            self_bond,
             silent,
             spin,
             threads,
@@ -764,6 +778,8 @@ pub struct Args {
     pub output: WriteType,
     /// Is there a reference file.
     pub reference: Reference,
+    /// Should self bonds be included.
+    pub self_bond: bool,
     /// Should the program be ran silently.
     pub silent: bool,
     /// Is there a spin density to include as well.
