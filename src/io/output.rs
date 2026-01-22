@@ -17,6 +17,7 @@ type CriticalPoints = (
 type CriticalPointInfo = ([f64; 3], Box<[EncodedAtom]>, f64, f64);
 
 pub struct CriticalPointOutput {
+    splash: String,
     positions: Vec<[f64; 3]>,
     atom_nucleus_map: Vec<Vec<CriticalPointInfo>>,
     atom_bond_map: Vec<Vec<CriticalPointInfo>>,
@@ -38,10 +39,16 @@ impl CriticalPointOutput {
             |cps: &[CriticalPoint]| -> Vec<Vec<CriticalPointInfo>> {
                 let mut pivot = vec![vec![]; atom_num];
                 cps.iter().for_each(|cp| {
-                    cp.atoms.iter().for_each(|encoded_atom| {
-                        let atom_index = encoded_atom.atom_index() as usize;
+                    'pivot: for (i, encoded_atom) in cp.atoms.iter().enumerate()
+                    {
+                        let atom_index = encoded_atom.atom_index();
                         let image = encoded_atom.image();
-                        pivot[atom_index].push((
+                        for cp_check in cp.atoms[..i].iter() {
+                            if atom_index == cp_check.atom_index() {
+                                continue 'pivot;
+                            }
+                        }
+                        pivot[atom_index as usize].push((
                             file_type.coordinate_format(
                                 grid.to_cartesian(cp.position),
                             ),
@@ -54,7 +61,7 @@ impl CriticalPointOutput {
                             density[cp.position as usize],
                             laplacian(cp.position as usize, density, grid),
                         ));
-                    });
+                    }
                 });
                 pivot
             };
@@ -66,7 +73,15 @@ impl CriticalPointOutput {
         let atom_bond_map = pivot_critical_points(&bonds);
         let atom_ring_map = pivot_critical_points(&rings);
         let atom_cage_map = pivot_critical_points(&cages);
+        let splash = format!(
+            "## Topological Information\n\n * Total nuclei: {}\n * Total bonds: {}\n * Total rings: {}\n * Total cages: {}\n",
+            nuclei.len(),
+            bonds.len(),
+            rings.len(),
+            cages.len()
+        );
         Self {
+            splash,
             positions,
             atom_nucleus_map,
             atom_bond_map,
@@ -78,18 +93,18 @@ impl CriticalPointOutput {
 
 impl fmt::Display for CriticalPointOutput {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut output = String::from("## Topological Information\n");
+        let mut output = self.splash.clone();
         self.positions.iter().enumerate().for_each(|(i, position)| {
             output.push_str(&format!(
                 "\n### Atom: {}\n * **Position**: {} {} {}\n * **Coordination**: {}\n * **Critical Points**:\n",
-                i, position[0], position[1], position[2], self.atom_bond_map[i].len(),
+                i + 1, position[0], position[1], position[2], self.atom_bond_map[i].len(),
             ));
             let self_atom = EncodedAtom::new_zero_image(i as u32);
             let nucleus = &self.atom_nucleus_map[i][0];
             let nucleus_position = nucleus.0;
             output.push_str(&format!(
-                "  * **Nucleus**:\n   | {:.6} {:.6} {:.6} | ρ: {}\n",
-                nucleus_position[0], nucleus_position[1], nucleus_position[2], nucleus.2
+                "  * **Nucleus**:\n   | {:.6} {:.6} {:.6} | ρ: {:.6} | ∇²ρ: {:.6}\n",
+                nucleus_position[0], nucleus_position[1], nucleus_position[2], nucleus.2, nucleus.3
             ));
             let bonds = &self.atom_bond_map[i];
             bonds.iter().for_each(|bond| {
@@ -104,7 +119,7 @@ impl fmt::Display for CriticalPointOutput {
                         }
                     };
                     output.push_str(&format!(
-                        "  * **Bond**: to {}\n   | {:.6} {:.6} {:.6} | ρ: {} | ∇²ρ: {}\n",
+                        "  * **Bond**: to {}\n   | {:.6} {:.6} {:.6} | ρ: {:.6} | ∇²ρ: {:.6}\n",
                         bond_number, bond_position[0], bond_position[1], bond_position[2], bond.2, bond.3
                     ));
                 }
@@ -124,7 +139,7 @@ impl fmt::Display for CriticalPointOutput {
                 ring_members.pop();
                 ring_members.push('}');
                 output.push_str(&format!(
-                    "  * **Ring**: {}\n   | {:.6} {:.6} {:.6} | ρ: {} | ∇²ρ: {}\n",
+                    "  * **Ring**: {}\n   | {:.6} {:.6} {:.6} | ρ: {:.6} | ∇²ρ: {:.6}\n",
                     ring_members, ring_position[0], ring_position[1], ring_position[2], ring.2, ring.3
                 ));
             });
@@ -143,7 +158,7 @@ impl fmt::Display for CriticalPointOutput {
                 cage_members.pop();
                 cage_members.push('}');
                 output.push_str(&format!(
-                    "  * **Cage**: {}\n   | {:.6} {:.6} {:.6} | ρ: {} | ∇²ρ: {}\n",
+                    "  * **Cage**: {}\n   | {:.6} {:.6} {:.6} | ρ: {:.6} | ∇²ρ: {:.6}\n",
                     cage_members, cage_position[0], cage_position[1], cage_position[2], cage.2, cage.3
                 ));
             });
@@ -206,7 +221,7 @@ impl PartitionTable {
             .for_each(|(((density, volume), radius), error)| {
                 let mut row: Vec<String> =
                     Vec::with_capacity(rows[0].capacity());
-                row.push(format!("{}", rows.len() - 1));
+                row.push(format!("{}", rows.len()));
                 density.iter().for_each(|d| row.push(format!("{:.6}", d)));
                 row.push(format!("{:.6}", volume));
                 row.push(format!("{:.6}", radius));

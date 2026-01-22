@@ -86,15 +86,17 @@ impl CriticalPointKey {
 /// # Returns
 /// A vector of length `atom_len`, where index `i` corresponds to Atom `i`.
 pub fn nuclei_ordering(
-    nuclei: Vec<CriticalPoint>,
+    nuclei: &mut [CriticalPoint],
     density: &[f64],
-    atom_len: usize,
+    atoms: &Atoms,
+    grid: &Grid,
     visible_bar: bool,
 ) -> Vec<CriticalPoint> {
+    let atom_len = atoms.positions.len();
     let progress_bar: Box<dyn ProgressBar> = match visible_bar {
         false => Box::new(HiddenBar {}),
         true => Box::new(Bar::new(
-            nuclei.len(),
+            nuclei.len() + atom_len,
             String::from("Pruning Nucleus Critical Points"),
         )),
     };
@@ -103,25 +105,53 @@ pub fn nuclei_ordering(
     // charge density. All maxima will be in image (0, 0, 0).
     // We need to order the nuclei by atom so that we can get the position of them by knowing the
     // atom number.
-    let mut ordered_nuclei =
-        vec![
-            CriticalPoint::new(0, CriticalPointKind::Blank, Box::new([]));
-            atom_len
-        ];
-    nuclei.iter().for_each(|cp| {
-        let p = cp.position;
-        let rho = density[p as usize];
-        let atom_num = cp.atoms[0].atom_index() as usize;
-        if let CriticalPointKind::Blank = ordered_nuclei[atom_num].kind {
-            ordered_nuclei[atom_num] =
-                CriticalPoint::new(cp.position, cp.kind, cp.atoms.clone());
-        } else if rho > density[ordered_nuclei[atom_num].position as usize] {
-            ordered_nuclei[atom_num] =
-                CriticalPoint::new(cp.position, cp.kind, cp.atoms.clone());
-        }
+    let mut nuclei_sorting = vec![Vec::<usize>::new(); atom_len];
+    nuclei.iter().enumerate().for_each(|(i, cp)| {
+        nuclei_sorting[cp.atoms[0].atom_index() as usize].push(i);
         pbar.tick();
     });
-    ordered_nuclei
+    nuclei_sorting
+        .into_iter()
+        .map(|indices| {
+            pbar.tick();
+            match indices.iter().max_by(|a, b| {
+                density[nuclei[**a].position as usize]
+                    .total_cmp(&density[nuclei[**b].position as usize])
+            }) {
+                Some(index) => {
+                    let true_maximum = nuclei[*index].clone();
+                    if indices.len() > 1 {
+                        let true_position =
+                            grid.to_cartesian(nuclei[*index].position);
+                        indices.iter().for_each(|i| {
+                            if i != index {
+                                if let Some(cp) = nuclei.get_mut(*i) {
+                                    let position =
+                                        grid.to_cartesian(cp.position);
+                                    let image = atoms
+                                        .lattice
+                                        .closest_image(true_position, position);
+                                    *cp = CriticalPoint::new(
+                                        cp.position,
+                                        CriticalPointKind::Nuclei,
+                                        Box::new(
+                                            [cp.atoms[0].image_sub(image)],
+                                        ),
+                                    )
+                                }
+                            }
+                        });
+                    }
+                    true_maximum
+                }
+                None => CriticalPoint::new(
+                    0,
+                    CriticalPointKind::Blank,
+                    Box::new([]),
+                ),
+            }
+        })
+        .collect()
 }
 
 /// Filters and deduplicates Bond Critical Points (3, -1).
@@ -144,7 +174,6 @@ pub fn bond_pruning(
     density: &[f64],
     args: &Args,
 ) -> Vec<CriticalPoint> {
-    let self_bonds = args.self_bond;
     let threads = args.threads;
     let visible_bar = args.silent;
     let progress_bar: Box<dyn ProgressBar> = match visible_bar {
@@ -154,7 +183,73 @@ pub fn bond_pruning(
             String::from("Pruning Bond Critical Points"),
         )),
     };
-    parallel_prune(bonds, density, |_| true, self_bonds, threads, progress_bar)
+    parallel_prune(bonds, density, |_| true, threads, progress_bar)
+}
+
+pub fn bond_adjancy(
+    bonds: &[CriticalPoint],
+    atom_len: usize,
+) -> Vec<Vec<EncodedAtom>> {
+    let mut adjancy: Vec<Vec<EncodedAtom>> = vec![Vec::new(); atom_len];
+    bonds.iter().for_each(|bond| {
+        adjancy[bond.atoms[0].atom_index() as usize].push(bond.atoms[1]);
+        adjancy[bond.atoms[1].atom_index() as usize]
+            .push(bond.atoms[0].image_sub(bond.atoms[1].image()));
+    });
+    adjancy
+}
+
+pub fn ring_pruning(
+    rings: &[CriticalPoint],
+    bond_adjancy: &[Vec<EncodedAtom>],
+    density: &[f64],
+    args: &Args,
+) -> Vec<CriticalPoint> {
+    let threads = args.threads;
+    let visible_bar = args.silent;
+    let progress_bar: Box<dyn ProgressBar> = match visible_bar {
+        false => Box::new(HiddenBar {}),
+        true => Box::new(Bar::new(
+            rings.len(),
+            String::from("Pruning Ring Critical Points"),
+        )),
+    };
+    let validator = |cp: &CriticalPoint| {
+        // First we are going to check that each atom is only connected to two other atoms
+        let mut previous_index = 0;
+        let mut current_index = 0;
+        let mut next_index = 0;
+        let mut steps = 1;
+        loop {
+            let mut intrabonds = 0;
+            let graph =
+                &bond_adjancy[cp.atoms[current_index].atom_index() as usize];
+            cp.atoms.iter().enumerate().for_each(|(i, encoded_atom)| {
+                if graph.contains(
+                    &encoded_atom.image_sub(cp.atoms[current_index].image()),
+                ) {
+                    intrabonds += 1;
+                    if i != previous_index {
+                        next_index = i;
+                    }
+                }
+            });
+            // regardless of steps if there are more or less than 2 bonds it is not a ring
+            if intrabonds != 2 {
+                return false;
+            }
+            // the steps limit should be redundant but stops an infinite loop
+            if next_index == 0 || steps > cp.atoms.len() {
+                break;
+            }
+            steps += 1;
+            previous_index = current_index;
+            current_index = next_index;
+        }
+        // Next we will check that we can actually traverse the full ring
+        steps == cp.atoms.len()
+    };
+    parallel_prune(rings, density, validator, threads, progress_bar)
 }
 
 /// Filters Ring Critical Points (3, +1) and enforces planarity.
@@ -175,15 +270,12 @@ pub fn bond_pruning(
 /// * `density`: The charge density grid.
 /// * `atoms`: The system geometry (lattice/positions).
 /// * `grid`: The voxel grid (for coordinate conversion).
-pub fn ring_pruning(
+pub fn ring_pruning2(
     rings: &[CriticalPoint],
-    ordered_nuclei: &[CriticalPoint],
     density: &[f64],
-    atoms: &Atoms,
     grid: &Grid,
     args: &Args,
 ) -> Vec<CriticalPoint> {
-    let self_bonds = args.self_bond;
     let threads = args.threads;
     let visible_bar = args.silent;
     let progress_bar: Box<dyn ProgressBar> = match visible_bar {
@@ -193,72 +285,67 @@ pub fn ring_pruning(
             String::from("Pruning Ring Critical Points"),
         )),
     };
-    parallel_prune(
-        rings,
-        density,
-        |cp| {
-            if cp.atoms.len() < 3 {
-                return false;
-            }
-            let positions: Vec<[f64; 3]> = cp.atoms[..3]
-                .iter()
-                .map(|encoded_atom| {
-                    let (atom_num, encoded_image) =
-                        encoded_atom.decode_partial();
-                    let mut position = grid.to_cartesian(
-                        ordered_nuclei[atom_num as usize].position,
-                    );
-                    let image = match encoded_image.is_zero() {
-                        true => [0., 0., 0.],
-                        false => {
-                            let image = encoded_image.decode();
-                            atoms.lattice.fractional_to_cartesian([
-                                image[0] as f64,
-                                image[1] as f64,
-                                image[2] as f64,
-                            ])
-                        }
-                    };
-                    position.iter_mut().zip(image).for_each(|(f, i)| *f += i);
-                    position
-                })
-                .collect();
-            let vec_1 = subtract(positions[1], positions[0]);
-            let vec_2 = subtract(positions[2], positions[0]);
-            let mut plane = cross(vec_1, vec_2);
-            let plane_normal = norm(plane);
-            plane.iter_mut().for_each(|f| *f /= plane_normal);
-            for encoded_atom in cp.atoms[3..].iter() {
-                let (atom_num, encoded_image) = encoded_atom.decode_partial();
-                let mut position = grid
-                    .to_cartesian(ordered_nuclei[atom_num as usize].position);
-                let image = match encoded_image.is_zero() {
-                    true => [0., 0., 0.],
-                    false => {
-                        let image = encoded_image.decode();
-                        atoms.lattice.fractional_to_cartesian([
-                            image[0] as f64,
-                            image[1] as f64,
-                            image[2] as f64,
-                        ])
-                    }
-                };
-                position.iter_mut().zip(image).for_each(|(f, i)| *f += i);
-                let vec_3 = subtract(position, positions[0]);
-                let mut plane_t = cross(vec_1, vec_3);
-                let plane_normal = norm(plane_t);
-                plane_t.iter_mut().for_each(|f| *f /= plane_normal);
-                // TODO: make this a tolerance currently 5.73 degrees
-                if vdot(plane, plane_t).abs() < 0.995 {
-                    return false;
+    let validator = |cp: &CriticalPoint| {
+        let control = density[cp.position as usize];
+        let mut flag_local_maximum = 0;
+        let mut flag_not_minuimum = false;
+        for chunk in grid.voronoi_shifts_nocheck(cp.position).chunks(2) {
+            for (p, _) in chunk {
+                if density[*p as usize] <= control {
+                    flag_local_maximum += 1
+                } else {
+                    flag_not_minuimum = true;
                 }
             }
-            true
-        },
-        self_bonds,
-        threads,
-        progress_bar,
-    )
+            if flag_local_maximum == 2 && flag_not_minuimum {
+                return true;
+            } else {
+                flag_local_maximum = 0;
+            }
+        }
+        false
+    };
+    let _validator = |cp: &CriticalPoint| {
+        let control = density[cp.position as usize];
+        let mut flag_local_maximum = false;
+        let mut flag_not_minuimum = false;
+        let mut lower_norms = Vec::<[f64; 3]>::with_capacity(14);
+        for ((p, _), i) in grid
+            .voronoi_shifts_nocheck(cp.position)
+            .iter()
+            .zip(grid.voronoi.indices.iter())
+        {
+            if density[*p as usize] <= control {
+                let norm =
+                    norm(grid.voxel_lattice.reduced_cartesian_shift_matrix[*i]);
+                let norm_vec = [
+                    grid.voxel_lattice.reduced_cartesian_shift_matrix[*i][0]
+                        / norm,
+                    grid.voxel_lattice.reduced_cartesian_shift_matrix[*i][1]
+                        / norm,
+                    grid.voxel_lattice.reduced_cartesian_shift_matrix[*i][2]
+                        / norm,
+                ];
+                lower_norms.iter().copied().for_each(|norm| {
+                    if vdot(norm, norm_vec) < -0.1 {
+                        flag_local_maximum = true;
+                    }
+                });
+                lower_norms.push(norm_vec);
+            } else {
+                flag_not_minuimum = true;
+            }
+            if flag_local_maximum && flag_not_minuimum {
+                return true;
+            }
+        }
+        false
+    };
+    let out = parallel_prune(rings, density, validator, threads, progress_bar);
+    out.iter().for_each(|r| {
+        r.atoms.iter().for_each(|encoded_atom| {});
+    });
+    out
 }
 
 /// Filters Cage Critical Points (3, +3) and enforces 3D structure.
@@ -288,7 +375,6 @@ pub fn cage_pruning(
     grid: &Grid,
     args: &Args,
 ) -> Vec<CriticalPoint> {
-    let self_bonds = args.self_bond;
     let threads = args.threads;
     let visible_bar = args.silent;
     let progress_bar: Box<dyn ProgressBar> = match visible_bar {
@@ -298,42 +384,14 @@ pub fn cage_pruning(
             String::from("Pruning Cage Critical Points"),
         )),
     };
-    parallel_prune(
-        cages,
-        density,
-        |cp| {
-            if cp.atoms.len() < 4 {
-                return false;
-            }
-            let positions: Vec<[f64; 3]> = cp.atoms[..3]
-                .iter()
-                .map(|encoded_atom| {
-                    let (atom_num, encoded_image) =
-                        encoded_atom.decode_partial();
-                    let mut position = grid.to_cartesian(
-                        ordered_nuclei[atom_num as usize].position,
-                    );
-                    let image = match encoded_image.is_zero() {
-                        true => [0., 0., 0.],
-                        false => {
-                            let image = encoded_image.decode();
-                            atoms.lattice.fractional_to_cartesian([
-                                image[0] as f64,
-                                image[1] as f64,
-                                image[2] as f64,
-                            ])
-                        }
-                    };
-                    position.iter_mut().zip(image).for_each(|(f, i)| *f += i);
-                    position
-                })
-                .collect();
-            let vec_1 = subtract(positions[1], positions[0]);
-            let vec_2 = subtract(positions[2], positions[0]);
-            let mut plane = cross(vec_1, vec_2);
-            let plane_normal = norm(plane);
-            plane.iter_mut().for_each(|f| *f /= plane_normal);
-            for encoded_atom in cp.atoms[3..].iter() {
+
+    _ = |cp: &CriticalPoint| {
+        if cp.atoms.len() < 4 {
+            return false;
+        }
+        let positions: Vec<[f64; 3]> = cp.atoms[..3]
+            .iter()
+            .map(|encoded_atom| {
                 let (atom_num, encoded_image) = encoded_atom.decode_partial();
                 let mut position = grid
                     .to_cartesian(ordered_nuclei[atom_num as usize].position);
@@ -349,21 +407,42 @@ pub fn cage_pruning(
                     }
                 };
                 position.iter_mut().zip(image).for_each(|(f, i)| *f += i);
-                let vec_3 = subtract(position, positions[0]);
-                let mut plane_t = cross(vec_1, vec_3);
-                let plane_normal = norm(plane_t);
-                plane_t.iter_mut().for_each(|f| *f /= plane_normal);
-                // TODO: make this a tolerance currently 5.73 degrees
-                if vdot(plane, plane_t).abs() < 0.995 {
-                    return true;
+                position
+            })
+            .collect();
+        let vec_1 = subtract(positions[1], positions[0]);
+        let vec_2 = subtract(positions[2], positions[0]);
+        let mut plane = cross(vec_1, vec_2);
+        let plane_normal = norm(plane);
+        plane.iter_mut().for_each(|f| *f /= plane_normal);
+        for encoded_atom in cp.atoms[3..].iter() {
+            let (atom_num, encoded_image) = encoded_atom.decode_partial();
+            let mut position =
+                grid.to_cartesian(ordered_nuclei[atom_num as usize].position);
+            let image = match encoded_image.is_zero() {
+                true => [0., 0., 0.],
+                false => {
+                    let image = encoded_image.decode();
+                    atoms.lattice.fractional_to_cartesian([
+                        image[0] as f64,
+                        image[1] as f64,
+                        image[2] as f64,
+                    ])
                 }
+            };
+            position.iter_mut().zip(image).for_each(|(f, i)| *f += i);
+            let vec_3 = subtract(position, positions[0]);
+            let mut plane_t = cross(vec_1, vec_3);
+            let plane_normal = norm(plane_t);
+            plane_t.iter_mut().for_each(|f| *f /= plane_normal);
+            // TODO: make this a tolerance currently 5.73 degrees
+            if vdot(plane, plane_t).abs() < 0.995 {
+                return true;
             }
-            false
-        },
-        self_bonds,
-        threads,
-        progress_bar,
-    )
+        }
+        false
+    };
+    parallel_prune(cages, density, |_| true, threads, progress_bar)
 }
 
 /// Merges degenerate or subset critical points.

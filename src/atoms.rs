@@ -1,4 +1,4 @@
-use crate::utils;
+use crate::{utils, voxel_map::EncodedImage};
 use std::cmp::Ordering::Less;
 
 /// Stores the configuration of the atomic system.
@@ -194,7 +194,7 @@ impl Lattice {
         min_dist
     }
 
-    pub fn closest_image(&self, a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    pub fn closest_image(&self, a: [f64; 3], b: [f64; 3]) -> EncodedImage {
         let mut min_dist = f64::INFINITY;
         let mut position = [0.0; 3];
         for periodic_shift in self.reduced_cartesian_shift_matrix.iter() {
@@ -209,10 +209,17 @@ impl Lattice {
                 .fold(0.0, |acc, (f, p)| acc + (f - p).powi(2));
             if distance < min_dist {
                 min_dist = distance;
-                position = image_position.try_into().unwrap();
+                position[0] = image_position[0];
+                position[1] = image_position[1];
+                position[2] = image_position[2];
             }
         }
-        position
+        let image = utils::dot(position, self.to_fractional);
+        EncodedImage::new([
+            image[0].floor() as i8,
+            image[1].floor() as i8,
+            image[2].floor() as i8,
+        ])
     }
 
     /// Create the shift matrix from the lattice supplied.

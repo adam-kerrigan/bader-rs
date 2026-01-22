@@ -28,24 +28,31 @@ pub struct Voronoi {
     pub alphas: Vec<f64>,
     /// The volume of the Voronoi cell.
     pub volume: f64,
+    /// The vectors and indices into the reduced shift matrix
+    pub indices: Vec<usize>,
 }
 
 impl Voronoi {
     /// Generates a Voronoi struct from a [`Lattice`].
     pub fn new(lattice: &Lattice) -> Self {
-        let (vectors, alphas, volume) = Voronoi::voronoi_vectors(lattice);
+        let (vectors, alphas, volume, indices) =
+            Voronoi::voronoi_vectors(lattice);
         Self {
             vectors,
             alphas,
             volume,
+            indices,
         }
     }
 
     /// Calculates the Voronoi vectors and their alphas from a reduced basis.
-    fn voronoi_vectors(lattice: &Lattice) -> (Vec<Vec<usize>>, Vec<f64>, f64) {
+    fn voronoi_vectors(
+        lattice: &Lattice,
+    ) -> (Vec<Vec<usize>>, Vec<f64>, f64, Vec<usize>) {
         // allocate the storage for voronoi vectors and flux coefficients
         let mut vectors = Vec::<Vec<usize>>::with_capacity(14);
         let mut alphas = Vec::<f64>::with_capacity(14);
+        let mut indices = Vec::<usize>::with_capacity(14);
         // allocate the vertex storage and vector/matrix for calculating them
         // allocate the plane vectors for each voronoi vector
         // find the vertices for each plane by solving 3-way intersections between the plane and
@@ -158,16 +165,19 @@ impl Voronoi {
                 let alpha = 6f64 * wedge_volume / vdot(*n, *n);
                 vectors.push(lattice.reduced_grid_shift_matrix[vec_i].clone());
                 alphas.push(alpha);
+                indices.push(vec_i);
                 vectors.push(
                     lattice.reduced_grid_shift_matrix[26 - vec_i].clone(),
                 );
                 alphas.push(alpha);
+                indices.push(26 - vec_i);
                 Some(wedge_volume * 2f64)
             })
             .sum();
         vectors.shrink_to_fit();
         alphas.shrink_to_fit();
-        (vectors, alphas, volume)
+        indices.shrink_to_fit();
+        (vectors, alphas, volume, indices)
     }
 }
 

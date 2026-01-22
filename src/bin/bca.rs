@@ -1,8 +1,8 @@
 use bader::analysis::calculate_bader_density;
 use bader::arguments::App;
 use bader::critical::{
-    bond_pruning, cage_pruning, critical_point_merge, nuclei_ordering,
-    ring_pruning,
+    bond_adjancy, bond_pruning, cage_pruning, critical_point_merge,
+    nuclei_ordering, ring_pruning,
 };
 use bader::errors::ArgumentError;
 use bader::io::{self, FileFormat, WriteType};
@@ -48,7 +48,7 @@ fn main() {
     };
     // find the maxima in the system and store them whilst removing them from
     // the index list
-    let nuclei = match maxima_finder(
+    let mut nuclei = match maxima_finder(
         &index,
         reference,
         &voxel_map,
@@ -66,11 +66,16 @@ fn main() {
         ),
     };
     // input the maxima as atoms into the voxel map
+    let ordered_nuclei = nuclei_ordering(
+        &mut nuclei,
+        reference,
+        &atoms,
+        &voxel_map.grid,
+        !args.silent,
+    );
     nuclei.iter().for_each(|maximum| {
         voxel_map.maxima_store(maximum.position, maximum.atoms[0].0 as isize);
     });
-    let ordered_nuclei =
-        nuclei_ordering(nuclei, reference, atoms.positions.len(), !args.silent);
     // calculate the weights leave the critical points for now
     let (bonds, rings) = weight(
         reference,
@@ -100,12 +105,11 @@ fn main() {
             !args.silent,
         );
     let bonds = bond_pruning(&bonds, reference, &args);
+    let bond_adjancy = bond_adjancy(&bonds, atoms.positions.len());
     let rings = critical_point_merge(ring_pruning(
         &rings,
-        &ordered_nuclei,
+        &bond_adjancy,
         reference,
-        &atoms,
-        voxel_map.grid_get(),
         &args,
     ));
     let cages = critical_point_merge(cage_pruning(
@@ -116,47 +120,45 @@ fn main() {
         voxel_map.grid_get(),
         &args,
     ));
-    /*
-    println!(
-        "{} {} {} {}",
-        ordered_nuclei.len(),
-        bonds.len(),
-        rings.len(),
-        cages.len()
+    let critical_points = (
+        ordered_nuclei.clone(),
+        bonds.clone(),
+        rings.clone(),
+        cages.clone(),
     );
-        let critical_points = (nuclei, bonds, rings, cages);
-        critical_points.0.iter().for_each(|cp| {
-            let [x, y, z] = voxel_map.grid.to_3d(cp.position);
-            let x = x as f64 / voxel_map.grid.size.x as f64;
-            let y = y as f64 / voxel_map.grid.size.y as f64;
-            let z = z as f64 / voxel_map.grid.size.z as f64;
-            let (x, y, z) = file_type.coordinate_format([x, y, z]);
-            println!("{} {} {}        {:?}", x, y, z, cp.atoms);
-        });
-        critical_points.1.iter().for_each(|cp| {
-            let [x, y, z] = voxel_map.grid.to_3d(cp.position);
-            let x = x as f64 / voxel_map.grid.size.x as f64;
-            let y = y as f64 / voxel_map.grid.size.y as f64;
-            let z = z as f64 / voxel_map.grid.size.z as f64;
-            let (x, y, z) = file_type.coordinate_format([x, y, z]);
-            println!("{} {} {}        {:?}", x, y, z, cp.atoms);
-        });
-        critical_points.2.iter().for_each(|cp| {
-            let [x, y, z] = voxel_map.grid.to_3d(cp.position);
-            let x = x as f64 / voxel_map.grid.size.x as f64;
-            let y = y as f64 / voxel_map.grid.size.y as f64;
-            let z = z as f64 / voxel_map.grid.size.z as f64;
-            let (x, y, z) = file_type.coordinate_format([x, y, z]);
-            println!("{} {} {}        {:?}", x, y, z, cp.atoms);
-        });
-        critical_points.3.iter().for_each(|cp| {
-            let [x, y, z] = voxel_map.grid.to_3d(cp.position);
-            let x = x as f64 / voxel_map.grid.size.x as f64;
-            let y = y as f64 / voxel_map.grid.size.y as f64;
-            let z = z as f64 / voxel_map.grid.size.z as f64;
-            let (x, y, z) = file_type.coordinate_format([x, y, z]);
-            println!("{} {} {}        {:?}", x, y, z, cp.atoms);
-        });
+    /*
+    critical_points.0.iter().for_each(|cp| {
+        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
+        let x = x as f64 / voxel_map.grid.size.x as f64;
+        let y = y as f64 / voxel_map.grid.size.y as f64;
+        let z = z as f64 / voxel_map.grid.size.z as f64;
+        let [x, y, z] = args.file_type.coordinate_format([x, y, z]);
+        println!("{:.6} {:.6} {:.6}        {:?}", x, y, z, cp.atoms);
+    });
+    critical_points.1.iter().for_each(|cp| {
+        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
+        let x = x as f64 / voxel_map.grid.size.x as f64;
+        let y = y as f64 / voxel_map.grid.size.y as f64;
+        let z = z as f64 / voxel_map.grid.size.z as f64;
+        let [x, y, z] = args.file_type.coordinate_format([x, y, z]);
+        println!("{:.6} {:.6} {:.6}        {:?}", x, y, z, cp.atoms);
+    });
+    critical_points.2.iter().for_each(|cp| {
+        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
+        let x = x as f64 / voxel_map.grid.size.x as f64;
+        let y = y as f64 / voxel_map.grid.size.y as f64;
+        let z = z as f64 / voxel_map.grid.size.z as f64;
+        let [x, y, z] = args.file_type.coordinate_format([x, y, z]);
+        println!("{:.6} {:.6} {:.6}        {:?}", x, y, z, cp.atoms);
+    });
+    critical_points.3.iter().for_each(|cp| {
+        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
+        let x = x as f64 / voxel_map.grid.size.x as f64;
+        let y = y as f64 / voxel_map.grid.size.y as f64;
+        let z = z as f64 / voxel_map.grid.size.z as f64;
+        let [x, y, z] = args.file_type.coordinate_format([x, y, z]);
+        println!("{:.6} {:.6} {:.6}        {:?}", x, y, z, cp.atoms);
+    });
     */
     // generate the output file
     let partition_table = io::output::PartitionTable::new(

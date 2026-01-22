@@ -709,7 +709,7 @@ impl App {
         };
         let spin = arguments.get("spin").cloned();
         let silent = arguments.contains_key("silent");
-        let self_bond = arguments.contains_key("self bond");
+        let self_bond = arguments.contains_key("self bonding");
         Ok(Args {
             file,
             file_type,
