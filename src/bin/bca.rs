@@ -1,7 +1,7 @@
 use bader::analysis::calculate_bader_density;
 use bader::arguments::App;
 use bader::critical::{
-    bond_adjancy, bond_pruning, cage_pruning, critical_point_merge,
+    bond_adjacency, bond_pruning, cage_pruning, critical_point_merge,
     nuclei_ordering, ring_pruning,
 };
 use bader::errors::ArgumentError;
@@ -105,10 +105,10 @@ fn main() {
             !args.silent,
         );
     let bonds = bond_pruning(&bonds, reference, &args);
-    let bond_adjancy = bond_adjancy(&bonds, atoms.positions.len());
+    let bond_adjacency = bond_adjacency(&bonds, atoms.positions.len());
     let rings = critical_point_merge(ring_pruning(
         &rings,
-        &bond_adjancy,
+        &bond_adjacency,
         reference,
         &args,
     ));

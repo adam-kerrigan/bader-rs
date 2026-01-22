@@ -175,10 +175,9 @@ pub fn bond_pruning(
     args: &Args,
 ) -> Vec<CriticalPoint> {
     let threads = args.threads;
-    let visible_bar = args.silent;
-    let progress_bar: Box<dyn ProgressBar> = match visible_bar {
-        false => Box::new(HiddenBar {}),
-        true => Box::new(Bar::new(
+    let progress_bar: Box<dyn ProgressBar> = match args.silent {
+        true => Box::new(HiddenBar {}),
+        false => Box::new(Bar::new(
             bonds.len(),
             String::from("Pruning Bond Critical Points"),
         )),
@@ -186,19 +185,48 @@ pub fn bond_pruning(
     parallel_prune(bonds, density, |_| true, threads, progress_bar)
 }
 
-pub fn bond_adjancy(
+/// Constructs an adjacency graph from a list of Bond Critical Points.
+///
+/// This function maps each atom to a list of atoms it is bonded to, preserving
+/// periodic boundary conditions.
+///
+/// # Arguments
+/// * `bonds`: The list of Bond Critical Points (3, -1) representing connections.
+/// * `atom_len`: The total number of atoms in the system (used to size the output vector).
+///
+/// # Returns
+/// A vector where index `i` contains a list of `EncodedAtom`s bonded to Atom `i`.
+/// The `EncodedAtom`s in the list are shifted relative to the image of Atom `i`.
+pub fn bond_adjacency(
     bonds: &[CriticalPoint],
     atom_len: usize,
 ) -> Vec<Vec<EncodedAtom>> {
-    let mut adjancy: Vec<Vec<EncodedAtom>> = vec![Vec::new(); atom_len];
+    let mut adjacency: Vec<Vec<EncodedAtom>> = vec![Vec::new(); atom_len];
     bonds.iter().for_each(|bond| {
-        adjancy[bond.atoms[0].atom_index() as usize].push(bond.atoms[1]);
-        adjancy[bond.atoms[1].atom_index() as usize]
+        adjacency[bond.atoms[0].atom_index() as usize].push(bond.atoms[1]);
+        adjacency[bond.atoms[1].atom_index() as usize]
             .push(bond.atoms[0].image_sub(bond.atoms[1].image()));
     });
-    adjancy
+    adjacency
 }
 
+/// Filters Ring Critical Points (3, +1) by validating bond connectivity.
+///
+/// This function verifies that the atoms associated with a candidate Ring Critical Point
+/// form a valid, continuous closed loop (cycle) within the determined bond network.
+///
+/// # Logic
+/// 1. **Connectivity Check**: Iterates through the atoms in the ring candidate.
+/// 2. **Valency Validation**: Verifies that every atom in the candidate is connected
+///    to exactly two other atoms *within the same candidate set* (via `bond_adjacency`).
+/// 3. **Traversal Check**: Ensures the atoms form a single continuous loop (no disjoint parts).
+/// 4. **Deduplication**: Groups by unique atom list and keeps the candidate with the highest density.
+///
+/// # Arguments
+/// * `rings`: The raw list of candidate ring points.
+/// * `bond_adjacency`: The adjacency graph derived from Bond Critical Points.
+/// * `density`: The charge density grid.
+/// * `args`: Command line arguments controlling threading and verbosity.
 pub fn ring_pruning(
     rings: &[CriticalPoint],
     bond_adjancy: &[Vec<EncodedAtom>],
@@ -206,10 +234,9 @@ pub fn ring_pruning(
     args: &Args,
 ) -> Vec<CriticalPoint> {
     let threads = args.threads;
-    let visible_bar = args.silent;
-    let progress_bar: Box<dyn ProgressBar> = match visible_bar {
-        false => Box::new(HiddenBar {}),
-        true => Box::new(Bar::new(
+    let progress_bar: Box<dyn ProgressBar> = match args.silent {
+        true => Box::new(HiddenBar {}),
+        false => Box::new(Bar::new(
             rings.len(),
             String::from("Pruning Ring Critical Points"),
         )),
@@ -252,102 +279,6 @@ pub fn ring_pruning(
     parallel_prune(rings, density, validator, threads, progress_bar)
 }
 
-/// Filters Ring Critical Points (3, +1) and enforces planarity.
-///
-/// A Ring Critical Point must connect at least 3 atoms and those atoms must lie approximately
-/// on a single plane. Points that fail this geometric check are discarded.
-///
-/// # Logic
-/// 1. **Size Check**: Must have $\ge$ 3 atoms.
-/// 2. **Planarity Check**: Calculates the normal vector of the plane formed by the first 3 atoms.
-///    Then verifies that all subsequent atoms lie on this plane (tolerance ~5.7°).
-///    - If atoms are **not** coplanar, the point is rejected.
-/// 3. **Deduplication**: Groups by atom list and keeps the candidate with the highest density.
-///
-/// # Arguments
-/// * `rings`: The raw list of candidate ring points.
-/// * `ordered_nuclei`: The list of definitive nucleus positions (used to get atom coordinates).
-/// * `density`: The charge density grid.
-/// * `atoms`: The system geometry (lattice/positions).
-/// * `grid`: The voxel grid (for coordinate conversion).
-pub fn ring_pruning2(
-    rings: &[CriticalPoint],
-    density: &[f64],
-    grid: &Grid,
-    args: &Args,
-) -> Vec<CriticalPoint> {
-    let threads = args.threads;
-    let visible_bar = args.silent;
-    let progress_bar: Box<dyn ProgressBar> = match visible_bar {
-        false => Box::new(HiddenBar {}),
-        true => Box::new(Bar::new(
-            rings.len(),
-            String::from("Pruning Ring Critical Points"),
-        )),
-    };
-    let validator = |cp: &CriticalPoint| {
-        let control = density[cp.position as usize];
-        let mut flag_local_maximum = 0;
-        let mut flag_not_minuimum = false;
-        for chunk in grid.voronoi_shifts_nocheck(cp.position).chunks(2) {
-            for (p, _) in chunk {
-                if density[*p as usize] <= control {
-                    flag_local_maximum += 1
-                } else {
-                    flag_not_minuimum = true;
-                }
-            }
-            if flag_local_maximum == 2 && flag_not_minuimum {
-                return true;
-            } else {
-                flag_local_maximum = 0;
-            }
-        }
-        false
-    };
-    let _validator = |cp: &CriticalPoint| {
-        let control = density[cp.position as usize];
-        let mut flag_local_maximum = false;
-        let mut flag_not_minuimum = false;
-        let mut lower_norms = Vec::<[f64; 3]>::with_capacity(14);
-        for ((p, _), i) in grid
-            .voronoi_shifts_nocheck(cp.position)
-            .iter()
-            .zip(grid.voronoi.indices.iter())
-        {
-            if density[*p as usize] <= control {
-                let norm =
-                    norm(grid.voxel_lattice.reduced_cartesian_shift_matrix[*i]);
-                let norm_vec = [
-                    grid.voxel_lattice.reduced_cartesian_shift_matrix[*i][0]
-                        / norm,
-                    grid.voxel_lattice.reduced_cartesian_shift_matrix[*i][1]
-                        / norm,
-                    grid.voxel_lattice.reduced_cartesian_shift_matrix[*i][2]
-                        / norm,
-                ];
-                lower_norms.iter().copied().for_each(|norm| {
-                    if vdot(norm, norm_vec) < -0.1 {
-                        flag_local_maximum = true;
-                    }
-                });
-                lower_norms.push(norm_vec);
-            } else {
-                flag_not_minuimum = true;
-            }
-            if flag_local_maximum && flag_not_minuimum {
-                return true;
-            }
-        }
-        false
-    };
-    let out = parallel_prune(rings, density, validator, threads, progress_bar);
-    out.iter().for_each(|r| {
-        r.atoms.iter().for_each(|encoded_atom| {});
-    });
-    out
-}
-
 /// Filters Cage Critical Points (3, +3) and enforces 3D structure.
 ///
 /// A Cage Critical Point must connect at least 4 atoms and those atoms must **not** be coplanar
@@ -376,10 +307,9 @@ pub fn cage_pruning(
     args: &Args,
 ) -> Vec<CriticalPoint> {
     let threads = args.threads;
-    let visible_bar = args.silent;
-    let progress_bar: Box<dyn ProgressBar> = match visible_bar {
-        false => Box::new(HiddenBar {}),
-        true => Box::new(Bar::new(
+    let progress_bar: Box<dyn ProgressBar> = match args.silent {
+        true => Box::new(HiddenBar {}),
+        false => Box::new(Bar::new(
             cages.len(),
             String::from("Pruning Cage Critical Points"),
         )),
