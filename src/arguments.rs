@@ -1,7 +1,7 @@
 use crate::{
     errors::ArgumentError,
     hash::SliceMap,
-    io::{FileType, WriteType},
+    io::{FileType, WriteType, cube::Cube, vasp::Vasp},
 };
 use std::fmt::{Debug, Display, Write};
 use std::thread::available_parallelism;
@@ -152,7 +152,7 @@ impl App {
                 long_flag: String::from("max_dist"),
                 takes_value: true,
                 multiple_values: false,
-                default_value: DefaultValue::Float(0.5),
+                default_value: DefaultValue::Float(1.0),
                 allowed_values: AllowedValue::None,
             },
             Arg {
@@ -190,6 +190,18 @@ impl App {
 \tRuns the program without displaying any output text or progress bars."),
                 short_flag: 'x',
                 long_flag: String::from("silent"),
+                takes_value: false,
+                multiple_values: false,
+                default_value: DefaultValue::None,
+                allowed_values: AllowedValue::None,
+            },
+            Arg {
+                name: String::from("self bonding"),
+                short_help: String::from("Whether to include self bonding in the critical point analysis."),
+                long_help: String::from("
+\tSelf bonds are removed in the pruning step by default, this option will leave them in."),
+                short_flag: 'b',
+                long_flag: String::from("bond"),
                 takes_value: false,
                 multiple_values: false,
                 default_value: DefaultValue::None,
@@ -537,9 +549,9 @@ impl App {
             Some(ftype) => {
                 let ftype = ftype.to_lowercase();
                 if ftype.eq("cube") {
-                    FileType::Cube
+                    FileType::Cube(Cube {})
                 } else if ftype.eq("vasp") {
-                    FileType::Vasp
+                    FileType::Vasp(Vasp {})
                 } else {
                     return Err(ArgumentError::NotValidValue(
                         String::from("file type"),
@@ -590,28 +602,22 @@ impl App {
             },
         };
         let vacuum_tolerance = match arguments.get("vacuum tolerance") {
-            Some(m) => {
-                if m.to_lowercase() == "none" {
-                    None
-                } else {
-                    match m.parse::<f64>() {
-                        Ok(f) => Some(f),
-                        Err(_) => {
-                            return Err(ArgumentError::Unparsable(
-                                String::from("vacuum tolerance"),
-                                m.to_string(),
-                                String::from("f64"),
-                            ));
-                        }
-                    }
+            Some(m) => match m.parse::<f64>() {
+                Ok(f) => f,
+                Err(_) => {
+                    return Err(ArgumentError::Unparsable(
+                        String::from("vacuum tolerance"),
+                        m.to_string(),
+                        String::from("f64"),
+                    ));
                 }
-            }
+            },
             None => match self
                 .get_option_from_short_flag('v')
                 .unwrap()
                 .default_value
             {
-                DefaultValue::Float(f) => Some(f),
+                DefaultValue::Float(f) => f,
                 _ => panic!(""),
             },
         };
@@ -687,11 +693,11 @@ impl App {
             },
             None => match arguments.get("aec") {
                 Some(_) => match file_type {
-                    FileType::Vasp => Reference::Two(
+                    FileType::Vasp(_) => Reference::Two(
                         String::from("AECCAR0"),
                         String::from("AECCAR2"),
                     ),
-                    FileType::Cube => {
+                    FileType::Cube(_) => {
                         return Err(ArgumentError::WrongFileType(
                             String::from("aec"),
                             String::from("cube"),
@@ -703,6 +709,7 @@ impl App {
         };
         let spin = arguments.get("spin").cloned();
         let silent = arguments.contains_key("silent");
+        let self_bond = arguments.contains_key("self bonding");
         Ok(Args {
             file,
             file_type,
@@ -710,6 +717,7 @@ impl App {
             maximum_distance,
             output,
             reference,
+            self_bond,
             silent,
             spin,
             threads,
@@ -770,6 +778,8 @@ pub struct Args {
     pub output: WriteType,
     /// Is there a reference file.
     pub reference: Reference,
+    /// Should self bonds be included.
+    pub self_bond: bool,
     /// Should the program be ran silently.
     pub silent: bool,
     /// Is there a spin density to include as well.
@@ -777,19 +787,19 @@ pub struct Args {
     /// How many threads to use in the calculation.
     pub threads: usize,
     /// Is there a tolerance to consider a density vacuum.
-    pub vacuum_tolerance: Option<f64>,
+    pub vacuum_tolerance: f64,
 }
 
 /// Parse the file type from the filename.
 pub fn parse_filetype(fname: &str) -> FileType {
     let f = fname.to_lowercase();
     if f.contains("cube") {
-        FileType::Cube
+        FileType::Cube(Cube {})
     } else if f.contains("car") {
-        FileType::Vasp
+        FileType::Vasp(Vasp {})
     } else {
         eprintln!("Cannot detect file type, attempting to read as VASP.");
-        FileType::Vasp
+        FileType::Vasp(Vasp {})
     }
 }
 
@@ -819,7 +829,7 @@ mod tests {
         let app = App::new();
         let v = vec!["bca", "CHGCAR"];
         let args = app.parse_args(v).unwrap();
-        let flag = matches!(args.file_type, FileType::Vasp);
+        let flag = matches!(args.file_type, FileType::Vasp(_));
         assert!(flag);
     }
 
@@ -828,7 +838,7 @@ mod tests {
         let app = App::new();
         let v = vec!["bca", "CHG"];
         let args = app.parse_args(v).unwrap();
-        let flag = matches!(args.file_type, FileType::Vasp);
+        let flag = matches!(args.file_type, FileType::Vasp(_));
         assert!(flag);
     }
 
@@ -837,7 +847,7 @@ mod tests {
         let app = App::new();
         let v = vec!["bca", "CHGCAR", "-f", "vasp"];
         let args = app.parse_args(v).unwrap();
-        let flag = matches!(args.file_type, FileType::Vasp);
+        let flag = matches!(args.file_type, FileType::Vasp(_));
         assert!(flag);
     }
 
@@ -846,7 +856,7 @@ mod tests {
         let app = App::new();
         let v = vec!["bca", "charge.cube"];
         let args = app.parse_args(v).unwrap();
-        let flag = matches!(args.file_type, FileType::Cube);
+        let flag = matches!(args.file_type, FileType::Cube(_));
         assert!(flag);
     }
 
@@ -855,7 +865,7 @@ mod tests {
         let app = App::new();
         let v = vec!["bca", "charge.cube", "--file_type", "cube"];
         let args = app.parse_args(v).unwrap();
-        let flag = matches!(args.file_type, FileType::Cube);
+        let flag = matches!(args.file_type, FileType::Cube(_));
         assert!(flag);
     }
 
@@ -979,7 +989,7 @@ mod tests {
         let app = App::new();
         let v = vec!["bca", "CHGCAR", "--vac", "1E-4"];
         let args = app.parse_args(v).unwrap();
-        assert_eq!(args.vacuum_tolerance, Some(1E-4))
+        assert_eq!(args.vacuum_tolerance, 1E-4)
     }
 
     #[test]
@@ -987,7 +997,7 @@ mod tests {
         let app = App::new();
         let v = vec!["bca", "CHGCAR"];
         let args = app.parse_args(v).unwrap();
-        assert_eq!(args.vacuum_tolerance, Some(1E-6))
+        assert_eq!(args.vacuum_tolerance, 1E-6)
     }
 
     #[test]

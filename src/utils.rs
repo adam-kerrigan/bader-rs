@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use crate::errors::VacuumError;
 
 /// compute the cross product between two vectors
@@ -108,24 +110,31 @@ pub fn invert_lattice(lattice: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
 }
 
 /// returns the first index that is not vacuum from a sorted index list
-pub fn vacuum_index(
+pub fn index_generator(
     density: &[f64],
-    index: &[usize],
-    tolerance: Option<f64>,
-) -> Result<usize, VacuumError> {
-    match tolerance {
-        Some(tol) => {
-            for (i, p) in index.iter().rev().enumerate() {
-                if density[*p] > tol {
-                    return Ok(index.len() - i);
-                }
+    tolerance: f64,
+) -> Result<Vec<usize>, VacuumError> {
+    let mut index: Vec<usize> = density
+        .iter()
+        .enumerate()
+        .filter_map(|(i, f)| {
+            if let Some(Ordering::Greater) = f.partial_cmp(&tolerance) {
+                Some(i)
+            } else {
+                None
             }
-            Err(VacuumError {
-                vacuum_tolerance: tol,
-                density: density[index[0]],
-            })
-        }
-        None => Ok(index.len()),
+        })
+        .collect();
+    if index.is_empty() {
+        Err(VacuumError {
+            vacuum_tolerance: tolerance,
+            density: density.iter().copied().reduce(f64::max).unwrap(),
+        })
+    } else {
+        index.sort_unstable_by(|a, b| {
+            density[*b].partial_cmp(&density[*a]).unwrap()
+        });
+        Ok(index)
     }
 }
 
@@ -159,34 +168,17 @@ mod tests {
     }
 
     #[test]
-    fn utils_vacuum_index_some_high() {
+    fn utils_index_generator_high() {
         let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
-        let index = (0..60).rev().collect::<Vec<usize>>();
-        assert!(vacuum_index(&data, &index, Some(100.)).is_err())
+        assert!(index_generator(&data, 100.).is_err())
     }
 
     #[test]
-    fn utils_vacuum_index_some_low() {
+    fn utils_index_generator_low() {
         let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
-        let index = (0..60).rev().collect::<Vec<usize>>();
-        let i = vacuum_index(&data, &index, Some(-1.)).unwrap();
-        assert_eq!(i, 60)
-    }
-
-    #[test]
-    fn utils_vacuum_index_some() {
-        let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
-        let index = (0..60).rev().collect::<Vec<usize>>();
-        let i = vacuum_index(&data, &index, Some(10.)).unwrap();
-        assert_eq!(i, 49)
-    }
-
-    #[test]
-    fn utils_vacuum_index_none() {
-        let data = (0..60).map(|x| x as f64).collect::<Vec<f64>>();
-        let index = (0..60).rev().collect::<Vec<usize>>();
-        let i = vacuum_index(&data, &index, None).unwrap();
-        assert_eq!(i, 60)
+        let index = index_generator(&data, 1.0).unwrap();
+        assert_eq!(index[0], 59);
+        assert_eq!(index.len(), 58);
     }
 
     #[test]

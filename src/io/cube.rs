@@ -12,6 +12,7 @@ const LENGTH_UNITS: f64 = 0.52917721067;
 const VOLUME_UNITS: f64 = LENGTH_UNITS * LENGTH_UNITS * LENGTH_UNITS;
 
 /// Structure for reading/writing a cube file.
+#[derive(Clone, Copy)]
 pub struct Cube {}
 
 impl FileFormat for Cube {
@@ -254,10 +255,7 @@ impl FileFormat for Cube {
     }
 
     /// Coordinate format for dealing with fortran indexing (doesn't affect cube).
-    fn coordinate_format(&self, coords: [f64; 3]) -> (String, String, String) {
-        let x = format!("{:.6}", coords[0]);
-        let y = format!("{:.6}", coords[1]);
-        let z = format!("{:.6}", coords[2]);
-        (x, y, z)
+    fn coordinate_format(&self, coords: [f64; 3]) -> [f64; 3] {
+        coords
     }
 }

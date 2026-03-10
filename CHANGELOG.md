@@ -9,6 +9,7 @@
 - Removed crossbeam from dependencies.
 - Removed rustc_hash from dependencies.
 - Add own hash functions.
+- Upped maximum distance flag to 1 Angstrom.
 ## v0.4.8
 ### Changes
 - Opt -> Arg in arguments.
