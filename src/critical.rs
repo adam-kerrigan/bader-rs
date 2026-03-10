@@ -439,7 +439,10 @@ pub fn critical_point_merge(mut cps: Vec<CriticalPoint>) -> Vec<CriticalPoint> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::voxel_map::{EncodedAtom, EncodedImage};
+    use crate::{
+        atoms::Lattice,
+        voxel_map::{EncodedAtom, EncodedImage},
+    };
 
     // --- Helper for creating dummy Critical Points ---
     fn create_cp(
@@ -503,6 +506,16 @@ mod tests {
     fn test_nuclei_ordering_simple() {
         // Case: Atom 0 has two potential nuclei candidates at pos 10 and 20.
         // Pos 20 has higher density.
+        let atoms = Atoms::new(
+            Lattice::new([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]),
+            vec![[0.0, 0.0, 0.0]],
+            String::with_capacity(0),
+        );
+        let grid = Grid::new(
+            [10, 10, 10],
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0, 0.0, 0.0],
+        );
 
         let mut density = vec![0.0; 30];
         density[10] = 1.0;
@@ -511,9 +524,10 @@ mod tests {
         let cp1 = create_cp(10, CriticalPointKind::Nuclei, &[0]);
         let cp2 = create_cp(20, CriticalPointKind::Nuclei, &[0]);
 
-        let candidates = vec![cp1, cp2];
+        let mut candidates = vec![cp1, cp2];
 
-        let ordered = nuclei_ordering(candidates, &density, 1, false);
+        let ordered =
+            nuclei_ordering(&mut candidates, &density, &atoms, &grid, false);
 
         assert_eq!(ordered.len(), 1);
         assert_eq!(ordered[0].position, 20); // Should pick high density one
@@ -522,6 +536,16 @@ mod tests {
     #[test]
     fn test_nuclei_ordering_multiple_atoms() {
         // Atom 0 and Atom 1 both have candidates
+        let atoms = Atoms::new(
+            Lattice::new([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]),
+            vec![[0.0, 0.0, 0.0], [0., 0.5, 0.0]],
+            String::with_capacity(0),
+        );
+        let grid = Grid::new(
+            [10, 10, 10],
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0, 0.0, 0.0],
+        );
         let mut density = vec![0.0; 100];
         density[10] = 5.0; // Atom 0
         density[50] = 3.0; // Atom 1
@@ -529,8 +553,9 @@ mod tests {
         let cp0 = create_cp(10, CriticalPointKind::Nuclei, &[0]);
         let cp1 = create_cp(50, CriticalPointKind::Nuclei, &[1]);
 
-        let candidates = vec![cp0, cp1];
-        let ordered = nuclei_ordering(candidates, &density, 2, false);
+        let mut candidates = vec![cp0, cp1];
+        let ordered =
+            nuclei_ordering(&mut candidates, &density, &atoms, &grid, false);
 
         assert_eq!(ordered.len(), 2);
         assert_eq!(ordered[0].position, 10);

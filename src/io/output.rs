@@ -96,71 +96,129 @@ impl fmt::Display for CriticalPointOutput {
         let mut output = self.splash.clone();
         self.positions.iter().enumerate().for_each(|(i, position)| {
             output.push_str(&format!(
-                "\n### Atom: {}\n * **Position**: {} {} {}\n * **Coordination**: {}\n * **Critical Points**:\n",
+                "\n### Atom: {}\n * Position: {:.6} {:.6} {:.6}\n * Coordination: {}\n * Critical Points:\n",
                 i + 1, position[0], position[1], position[2], self.atom_bond_map[i].len(),
             ));
             let self_atom = EncodedAtom::new_zero_image(i as u32);
-            let nucleus = &self.atom_nucleus_map[i][0];
-            let nucleus_position = nucleus.0;
-            output.push_str(&format!(
-                "  * **Nucleus**:\n   | {:.6} {:.6} {:.6} | ρ: {:.6} | ∇²ρ: {:.6}\n",
-                nucleus_position[0], nucleus_position[1], nucleus_position[2], nucleus.2, nucleus.3
-            ));
-            let bonds = &self.atom_bond_map[i];
-            bonds.iter().for_each(|bond| {
-                let bond_position = bond.0;
-                let bond_atoms = bond.1.iter().find(|a| a != &&self_atom);
-                if let Some(other) = bond_atoms {
-                    let bond_number = match other.image().is_zero() {
-                        true => format!("Atom {}", other.atom_index()),
+            let mut crit_type= Vec::<String>::with_capacity(self.atom_nucleus_map[i].len() + self.atom_bond_map[i].len() + self.atom_ring_map[i].len() + self.atom_cage_map[i].len());
+            let mut max_type: usize = 4;
+            let mut crit_pos= Vec::<Vec<String>>::with_capacity(crit_type.capacity());
+            let mut max_pos: usize = 8;
+            let mut crit_den= Vec::<String>::with_capacity(crit_type.capacity());
+            let mut max_den: usize = 6;
+            let mut crit_lap= Vec::<String>::with_capacity(crit_type.capacity());
+            let mut max_lap: usize = 8;
+            let mut crit_mem= Vec::<String>::with_capacity(crit_type.capacity());
+            let mut max_mem: usize = 7;
+            self.atom_nucleus_map[i].iter().for_each(|(position, _, density, laplacian)| {
+                crit_type.push(String::from("Nucleus"));
+                max_type = max_type.max(7);
+                crit_pos.push(Vec::from_iter(position.iter().map(|p| {
+                    let f = format!("{:.6}", p);
+                    max_pos = max_pos.max(f.len());
+                    f
+                })));
+                let d = format!("{:.6}", density);
+                max_den = max_den.max(d.len());
+                crit_den.push(d);
+                let l = format!("{:.6}", laplacian);
+                max_lap = max_lap.max(l.len());
+                crit_lap.push(l);
+                crit_mem.push(String::with_capacity(0));
+            });
+            self.atom_bond_map[i].iter().for_each(|(position, atoms, density, laplacian)| {
+                if let Some(atom) = atoms.iter().find(|a| a != &&self_atom) {
+                    crit_type.push(String::from("Bond"));
+                    crit_pos.push(Vec::from_iter(position.iter().map(|p| {
+                        let f = format!("{:.6}", p);
+                        max_pos = max_pos.max(f.len());
+                        f
+                    })));
+                    let d = format!("{:.6}", density);
+                    max_den = max_den.max(d.len());
+                    crit_den.push(d);
+                    let l = format!("{:.6}", laplacian);
+                    max_lap = max_lap.max(l.len());
+                    crit_lap.push(l);
+                    let m = match atom.image().is_zero() {
+                        true => format!("{}", atom.atom_index()),
                         false => {
-                            let other_image = other.image().decode();
-                            format!("Atom {}({} {} {})", other.atom_index(), other_image[0], other_image[1], other_image[2])
+                            let other_image = atom.image().decode();
+                            format!("{}({} {} {})", atom.atom_index(), other_image[0], other_image[1], other_image[2])
                         }
                     };
-                    output.push_str(&format!(
-                        "  * **Bond**: to {}\n   | {:.6} {:.6} {:.6} | ρ: {:.6} | ∇²ρ: {:.6}\n",
-                        bond_number, bond_position[0], bond_position[1], bond_position[2], bond.2, bond.3
-                    ));
+                    max_mem = max_mem.max(m.len());
+                    crit_mem.push(m);
+
                 }
             });
-            let rings = &self.atom_ring_map[i];
-            rings.iter().for_each(|ring| {
-                let ring_position = ring.0;
-                let mut ring_members = String::from("{");
-                ring.1.iter().for_each(|encoded_atom| match encoded_atom.image().is_zero() {
-                        true => ring_members.push_str(&format!("{}, ", encoded_atom.atom_index())),
-                        false => {
-                            let other_image = encoded_atom.image().decode();
-                            ring_members.push_str(&format!("{}({} {} {}), ", encoded_atom.atom_index(), other_image[0], other_image[1], other_image[2]));
+            self.atom_ring_map[i].iter().for_each(|(position, atoms, density, laplacian)| {
+                crit_type.push(String::from("Ring"));
+                crit_pos.push(Vec::from_iter(position.iter().map(|p| {
+                    let f = format!("{:.6}", p);
+                    max_pos = max_pos.max(f.len());
+                    f
+                })));
+                let d = format!("{:.6}", density);
+                max_den = max_den.max(d.len());
+                crit_den.push(d);
+                let l = format!("{:.6}", laplacian);
+                max_lap = max_lap.max(l.len());
+                crit_lap.push(l);
+                let mut members = String::from("");
+                atoms.iter().for_each(|atom| {
+                    if atom != &self_atom {
+                        let m = match atom.image().is_zero() {
+                            true => format!("{}, ", atom.atom_index()),
+                            false => {
+                                let other_image = atom.image().decode();
+                                format!("{}({} {} {}), ", atom.atom_index(), other_image[0], other_image[1], other_image[2])
+                            }
+                        };
+                        members.push_str(&m);
                     }
                 });
-                ring_members.pop();
-                ring_members.pop();
-                ring_members.push('}');
-                output.push_str(&format!(
-                    "  * **Ring**: {}\n   | {:.6} {:.6} {:.6} | ρ: {:.6} | ∇²ρ: {:.6}\n",
-                    ring_members, ring_position[0], ring_position[1], ring_position[2], ring.2, ring.3
-                ));
+                members.pop();
+                members.pop();
+                max_mem = max_mem.max(members.len());
+                crit_mem.push(members);
             });
-            let cages = &self.atom_cage_map[i];
-            cages.iter().for_each(|cage| {
-                let cage_position = cage.0;
-                let mut cage_members = String::from("{");
-                cage.1.iter().for_each(|encoded_atom| match encoded_atom.image().is_zero() {
-                        true => cage_members.push_str(&format!("{}, ", encoded_atom.atom_index())),
-                        false => {
-                            let other_image = encoded_atom.image().decode();
-                            cage_members.push_str(&format!("{}({} {} {}), ", encoded_atom.atom_index(), other_image[0], other_image[1], other_image[2]));
+            self.atom_cage_map[i].iter().for_each(|(position, atoms, density, laplacian)| {
+                crit_type.push(String::from("Cage"));
+                crit_pos.push(Vec::from_iter(position.iter().map(|p| {
+                    let f = format!("{:.6}", p);
+                    max_pos = max_pos.max(f.len());
+                    f
+                })));
+                let d = format!("{:.6}", density);
+                max_den = max_den.max(d.len());
+                crit_den.push(d);
+                let l = format!("{:.6}", laplacian);
+                max_lap = max_lap.max(l.len());
+                crit_lap.push(l);
+                let mut members = String::from("");
+                atoms.iter().for_each(|atom| {
+                    if atom != &self_atom {
+                        let m = match atom.image().is_zero() {
+                            true => format!("{}, ", atom.atom_index()),
+                            false => {
+                                let other_image = atom.image().decode();
+                                format!("{}({} {} {}), ", atom.atom_index(), other_image[0], other_image[1], other_image[2])
+                            }
+                        };
+                        members.push_str(&m);
                     }
                 });
-                cage_members.pop();
-                cage_members.pop();
-                cage_members.push('}');
-                output.push_str(&format!(
-                    "  * **Cage**: {}\n   | {:.6} {:.6} {:.6} | ρ: {:.6} | ∇²ρ: {:.6}\n",
-                    cage_members, cage_position[0], cage_position[1], cage_position[2], cage.2, cage.3
-                ));
+                members.pop();
+                members.pop();
+                max_mem = max_mem.max(members.len());
+                crit_mem.push(members);
+            });
+            let max_title_pos = max_pos * 3 + 2;
+            output.push_str(&format!("| {:^max_type$} | {:^max_title_pos$} | {:^max_den$} | {:^max_lap$} | {:^max_mem$} |\n", "Type", "Position", "Density", "Laplacian", "Members"));
+            output.push_str(&format!("|-{:-^max_type$}-|-{:-^max_title_pos$}-|-{:-^max_den$}-|-{:-^max_lap$}-|-{:-^max_mem$}-|\n", "-", "-", "-", "-", "-"));
+            crit_type.into_iter().zip(crit_pos).zip(crit_den).zip(crit_lap).zip(crit_mem).for_each(|((((t, p), d), l), m)| {
+                output.push_str(&format!("| {:^max_type$} | {:>max_pos$} {:>max_pos$} {:>max_pos$} | {:>max_den$} | {:>max_lap$} | {:<max_mem$} |\n", t, p[0], p[1], p[2], d, l, m));
             });
         });
         write!(f, "{}", output)

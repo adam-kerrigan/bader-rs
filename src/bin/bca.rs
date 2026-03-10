@@ -28,11 +28,14 @@ fn main() {
             },
         };
     // print the splash
+    let splash = format!(
+        "{}: v{}\nRunning on {} threads.",
+        env!("CARGO_PKG_DESCRIPTION"),
+        env!("CARGO_PKG_VERSION"),
+        args.threads
+    );
     if !args.silent {
-        let version = env!("CARGO_PKG_VERSION");
-        let description = env!("CARGO_PKG_DESCRIPTION");
-        println!("{}: v{}", description, version);
-        println!("Running on {} threads.", args.threads);
+        println!("{}", splash);
     }
     // read the input files into a densities vector and a Grid struct
     let (densities, rho, atoms, grid, voxel_origin) =
@@ -120,46 +123,6 @@ fn main() {
         voxel_map.grid_get(),
         &args,
     ));
-    let critical_points = (
-        ordered_nuclei.clone(),
-        bonds.clone(),
-        rings.clone(),
-        cages.clone(),
-    );
-    /*
-    critical_points.0.iter().for_each(|cp| {
-        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
-        let x = x as f64 / voxel_map.grid.size.x as f64;
-        let y = y as f64 / voxel_map.grid.size.y as f64;
-        let z = z as f64 / voxel_map.grid.size.z as f64;
-        let [x, y, z] = args.file_type.coordinate_format([x, y, z]);
-        println!("{:.6} {:.6} {:.6}        {:?}", x, y, z, cp.atoms);
-    });
-    critical_points.1.iter().for_each(|cp| {
-        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
-        let x = x as f64 / voxel_map.grid.size.x as f64;
-        let y = y as f64 / voxel_map.grid.size.y as f64;
-        let z = z as f64 / voxel_map.grid.size.z as f64;
-        let [x, y, z] = args.file_type.coordinate_format([x, y, z]);
-        println!("{:.6} {:.6} {:.6}        {:?}", x, y, z, cp.atoms);
-    });
-    critical_points.2.iter().for_each(|cp| {
-        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
-        let x = x as f64 / voxel_map.grid.size.x as f64;
-        let y = y as f64 / voxel_map.grid.size.y as f64;
-        let z = z as f64 / voxel_map.grid.size.z as f64;
-        let [x, y, z] = args.file_type.coordinate_format([x, y, z]);
-        println!("{:.6} {:.6} {:.6}        {:?}", x, y, z, cp.atoms);
-    });
-    critical_points.3.iter().for_each(|cp| {
-        let [x, y, z] = voxel_map.grid.to_3d(cp.position);
-        let x = x as f64 / voxel_map.grid.size.x as f64;
-        let y = y as f64 / voxel_map.grid.size.y as f64;
-        let z = z as f64 / voxel_map.grid.size.z as f64;
-        let [x, y, z] = args.file_type.coordinate_format([x, y, z]);
-        println!("{:.6} {:.6} {:.6}        {:?}", x, y, z, cp.atoms);
-    });
-    */
     // generate the output file
     let partition_table = io::output::PartitionTable::new(
         &atoms_density,
@@ -179,7 +142,10 @@ fn main() {
     );
     // check that the write was successfull
     if io::output::write(
-        format!("{}\n{}", partition_table, critical_point_output),
+        format!(
+            "# {}\n\n{}\n\n{}",
+            splash, partition_table, critical_point_output
+        ),
         String::from("bader_charge_analysis.md"),
     )
     .is_err()

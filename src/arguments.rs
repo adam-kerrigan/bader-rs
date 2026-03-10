@@ -152,7 +152,7 @@ impl App {
                 long_flag: String::from("max_dist"),
                 takes_value: true,
                 multiple_values: false,
-                default_value: DefaultValue::Float(0.5),
+                default_value: DefaultValue::Float(1.0),
                 allowed_values: AllowedValue::None,
             },
             Arg {
