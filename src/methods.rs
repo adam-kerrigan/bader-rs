@@ -17,7 +17,7 @@ use std::thread;
 pub enum WeightResult {
     /// Length of the Box dictates the type of Critical Point, 1 -> Maxima, 2 -> Saddle,
     /// 3+ -> Saddle or minima. Critical Points with >=2 will be on boundaries.
-    Critical(Box<[EncodedWeight]>),
+    Critical((Box<[EncodedWeight]>, f64, f64)),
     /// Entirely assigned to a single Bader atom.
     Interior(usize),
     /// Meeting point at the edge of 2 or more Bader atoms.
@@ -54,6 +54,7 @@ pub fn weight_step(
     let mut t_sum = 0.;
     let mut weights = IntMap::<EncodedAtom, f64>::default();
     let mut weight_count = 0;
+    let mut lapl = 0.0;
     // colllect the shift and distances and iterate over them.
     grid.voronoi_shifts(p)
         .into_iter()
@@ -91,7 +92,9 @@ pub fn weight_step(
                 };
                 t_sum += rho;
             }
+            lapl += alpha * charge_diff;
         });
+    lapl /= voxel_map.grid.voronoi.volume;
     match weights.len().cmp(&1) {
         // more than one weight is a boundary or saddle (if the weight is weighty enough)
         std::cmp::Ordering::Greater => {
@@ -117,7 +120,7 @@ pub fn weight_step(
                     .collect::<Box<[EncodedWeight]>>();
                 // check if new maxima has joined the weights -> Critical Point (saddle/ring/cage)
                 if weights.len() > weight_count {
-                    WeightResult::Critical(weights)
+                    WeightResult::Critical((weights, control, lapl))
                 } else {
                     WeightResult::Boundary(weights)
                 }
@@ -246,7 +249,11 @@ pub fn weight(
                             WeightResult::Boundary(weights) => {
                                 voxel_map.weight_store(p, weights);
                             }
-                            WeightResult::Critical(weights) => {
+                            WeightResult::Critical((
+                                weights,
+                                density,
+                                laplacian,
+                            )) => {
                                 // length = 1 is a maxima and doesn't need storing.
                                 let atoms: Vec<EncodedAtom> = weights
                                     .iter()
@@ -258,12 +265,16 @@ pub fn weight(
                                         p,
                                         CriticalPointKind::Bond,
                                         atoms.into(),
+                                        density,
+                                        laplacian,
                                     ));
                                 } else {
                                     c_ps.1.push(CriticalPoint::new(
                                         p,
                                         CriticalPointKind::Ring,
                                         atoms.into(),
+                                        density,
+                                        laplacian,
                                     ));
                                 }
                             }
@@ -321,14 +332,18 @@ pub fn maxima_finder(
                             // we have to tick first due to early return
                             pbar.tick();
                             let rho = density[*p];
-                            for (pt, _) in voxel_map
+                            let mut lapl = 0.0;
+                            for (pt, alpha) in voxel_map
                                 .grid
                                 .voronoi_shifts_nocheck(*p as isize)
                             {
-                                if density[pt as usize] > rho {
+                                let difference = density[pt as usize] - rho;
+                                if difference > 0.0 {
                                     return None;
                                 }
+                                lapl += alpha * difference;
                             }
+                            lapl /= voxel_map.grid.voronoi.volume;
                             // if we made it this far we have a maxima
                             // change this index to a value it could
                             // never be and return it
@@ -348,6 +363,8 @@ pub fn maxima_finder(
                                                 atom as u32,
                                             ),
                                         ]),
+                                        rho,
+                                        lapl,
                                     )
                                 }),
                             )
@@ -399,15 +416,19 @@ pub fn minima_finder(
                             // we have to tick first due to early return
                             pbar.tick();
                             let rho = density[*p];
-                            for (pt, _) in voxel_map
+                            let mut lapl = 0.0;
+                            for (pt, alpha) in voxel_map
                                 .grid
                                 .voronoi_shifts_nocheck(*p as isize)
                             {
-                                if density[pt as usize] < rho {
+                                let difference = density[pt as usize] - rho;
+                                if difference < 0.0 {
                                     return None;
                                 }
+                                lapl += alpha * difference;
                             }
-                            // if we made it this far we have a maxima
+                            lapl /= voxel_map.grid.voronoi.volume;
+                            // if we made it this far we have a minimum
                             // change this index to a value it could
                             // never be and return it
                             // TODO: This needs to check if the cage is actually a boundary and if
@@ -419,6 +440,8 @@ pub fn minima_finder(
                                     *p as isize,
                                     CriticalPointKind::Cage,
                                     weights.into_keys().collect(),
+                                    rho,
+                                    lapl,
                                 ));
                             }
                             None
@@ -609,7 +632,7 @@ mod tests {
 
         match result {
             WeightResult::Boundary(weights)
-            | WeightResult::Critical(weights) => {
+            | WeightResult::Critical((weights, _, _)) => {
                 // Should have 2 weights
                 assert_eq!(weights.len(), 2);
                 // We expect ~50/50 split if geometry is symmetric

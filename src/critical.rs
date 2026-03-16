@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use crate::arguments::Args;
 use crate::atoms::Atoms;
 use crate::grid::Grid;
@@ -18,6 +20,8 @@ pub struct CriticalPoint {
     pub position: isize,
     pub kind: CriticalPointKind,
     pub atoms: Box<[EncodedAtom]>,
+    pub density: f64,
+    pub laplacian: f64,
 }
 
 impl CriticalPoint {
@@ -25,11 +29,15 @@ impl CriticalPoint {
         position: isize,
         kind: CriticalPointKind,
         atoms: Box<[EncodedAtom]>,
+        density: f64,
+        laplacian: f64,
     ) -> Self {
         CriticalPoint {
             position,
             kind,
             atoms,
+            density,
+            laplacian,
         }
     }
 }
@@ -87,7 +95,6 @@ impl CriticalPointKey {
 /// A vector of length `atom_len`, where index `i` corresponds to Atom `i`.
 pub fn nuclei_ordering(
     nuclei: &mut [CriticalPoint],
-    density: &[f64],
     atoms: &Atoms,
     grid: &Grid,
     visible_bar: bool,
@@ -115,8 +122,7 @@ pub fn nuclei_ordering(
         .map(|indices| {
             pbar.tick();
             match indices.iter().max_by(|a, b| {
-                density[nuclei[**a].position as usize]
-                    .total_cmp(&density[nuclei[**b].position as usize])
+                nuclei[**a].density.total_cmp(&nuclei[**b].density)
             }) {
                 Some(index) => {
                     let true_maximum = nuclei[*index].clone();
@@ -137,6 +143,8 @@ pub fn nuclei_ordering(
                                         Box::new(
                                             [cp.atoms[0].image_sub(image)],
                                         ),
+                                        cp.density,
+                                        cp.laplacian,
                                     )
                                 }
                             }
@@ -148,6 +156,8 @@ pub fn nuclei_ordering(
                     0,
                     CriticalPointKind::Blank,
                     Box::new([]),
+                    0.0,
+                    0.0,
                 ),
             }
         })
@@ -166,12 +176,10 @@ pub fn nuclei_ordering(
 ///
 /// # Arguments
 /// * `bonds`: The raw list of candidate bond points.
-/// * `density`: The charge density grid.
 /// * `threads`: Number of threads to use.
 /// * `visible_bar`: Whether to display a progress bar.
 pub fn bond_pruning(
     bonds: &[CriticalPoint],
-    density: &[f64],
     args: &Args,
 ) -> Vec<CriticalPoint> {
     let threads = args.threads;
@@ -182,7 +190,7 @@ pub fn bond_pruning(
             String::from("Pruning Bond Critical Points"),
         )),
     };
-    parallel_prune(bonds, density, |_| true, threads, progress_bar)
+    parallel_prune(bonds, |_| true, threads, progress_bar)
 }
 
 /// Constructs an adjacency graph from a list of Bond Critical Points.
@@ -225,12 +233,10 @@ pub fn bond_adjacency(
 /// # Arguments
 /// * `rings`: The raw list of candidate ring points.
 /// * `bond_adjacency`: The adjacency graph derived from Bond Critical Points.
-/// * `density`: The charge density grid.
 /// * `args`: Command line arguments controlling threading and verbosity.
 pub fn ring_pruning(
     rings: &[CriticalPoint],
     bond_adjancy: &[Vec<EncodedAtom>],
-    density: &[f64],
     args: &Args,
 ) -> Vec<CriticalPoint> {
     let threads = args.threads;
@@ -276,7 +282,7 @@ pub fn ring_pruning(
         // Next we will check that we can actually traverse the full ring
         steps == cp.atoms.len()
     };
-    parallel_prune(rings, density, validator, threads, progress_bar)
+    parallel_prune(rings, validator, threads, progress_bar)
 }
 
 /// Filters Cage Critical Points (3, +3) and enforces 3D structure.
@@ -295,13 +301,11 @@ pub fn ring_pruning(
 /// # Arguments
 /// * `cages`: The raw list of candidate cage points.
 /// * `ordered_nuclei`: The list of definitive nucleus positions.
-/// * `density`: The charge density grid.
 /// * `atoms`: The system geometry.
 /// * `grid`: The voxel grid.
 pub fn cage_pruning(
     cages: &[CriticalPoint],
     ordered_nuclei: &[CriticalPoint],
-    density: &[f64],
     atoms: &Atoms,
     grid: &Grid,
     args: &Args,
@@ -372,7 +376,7 @@ pub fn cage_pruning(
         }
         false
     };
-    parallel_prune(cages, density, |_| true, threads, progress_bar)
+    parallel_prune(cages, |_| true, threads, progress_bar)
 }
 
 /// Merges degenerate or subset critical points.
@@ -388,7 +392,14 @@ pub fn cage_pruning(
 /// # Returns
 /// A cleaner list of unique critical points.
 pub fn critical_point_merge(mut cps: Vec<CriticalPoint>) -> Vec<CriticalPoint> {
-    cps.sort_unstable_by(|a, b| b.atoms.len().cmp(&a.atoms.len()));
+    cps.sort_unstable_by(|a, b| {
+        let order = b.atoms.len().cmp(&a.atoms.len());
+        if let Ordering::Equal = order {
+            b.density.total_cmp(&a.density)
+        } else {
+            order
+        }
+    });
     let mut merged_points: Vec<CriticalPoint> = Vec::with_capacity(cps.len());
     let mut inverted_index: IntMap<u32, Vec<usize>> = IntMap::default();
     'critical: for cp in cps.iter() {
@@ -449,6 +460,7 @@ mod tests {
         pos: isize,
         kind: CriticalPointKind,
         atom_ids: &[u32],
+        density: f64,
     ) -> CriticalPoint {
         let atoms = atom_ids
             .iter()
@@ -456,7 +468,7 @@ mod tests {
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
-        CriticalPoint::new(pos, kind, atoms)
+        CriticalPoint::new(pos, kind, atoms, density, 0.0)
     }
 
     // --- CriticalPointKey Tests ---
@@ -464,7 +476,7 @@ mod tests {
     #[test]
     fn test_critical_point_key_sorting() {
         // CP with atoms [2, 1, 3] should sort to [1, 2, 3]
-        let cp = create_cp(0, CriticalPointKind::Bond, &[2, 1, 3]);
+        let cp = create_cp(0, CriticalPointKind::Bond, &[2, 1, 3], 0.0);
         let key = CriticalPointKey::from_cp(cp);
 
         let ids: Vec<u32> =
@@ -487,6 +499,8 @@ mod tests {
             0,
             CriticalPointKind::Bond,
             vec![a1, a2].into_boxed_slice(),
+            0.0,
+            0.0,
         );
 
         let key = CriticalPointKey::from_cp(cp);
@@ -517,17 +531,12 @@ mod tests {
             [0.0, 0.0, 0.0],
         );
 
-        let mut density = vec![0.0; 30];
-        density[10] = 1.0;
-        density[20] = 5.0; // Winner
-
-        let cp1 = create_cp(10, CriticalPointKind::Nuclei, &[0]);
-        let cp2 = create_cp(20, CriticalPointKind::Nuclei, &[0]);
+        let cp1 = create_cp(10, CriticalPointKind::Nuclei, &[0], 1.0);
+        let cp2 = create_cp(20, CriticalPointKind::Nuclei, &[0], 5.0); // Winner
 
         let mut candidates = vec![cp1, cp2];
 
-        let ordered =
-            nuclei_ordering(&mut candidates, &density, &atoms, &grid, false);
+        let ordered = nuclei_ordering(&mut candidates, &atoms, &grid, false);
 
         assert_eq!(ordered.len(), 1);
         assert_eq!(ordered[0].position, 20); // Should pick high density one
@@ -546,16 +555,12 @@ mod tests {
             [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             [0.0, 0.0, 0.0],
         );
-        let mut density = vec![0.0; 100];
-        density[10] = 5.0; // Atom 0
-        density[50] = 3.0; // Atom 1
 
-        let cp0 = create_cp(10, CriticalPointKind::Nuclei, &[0]);
-        let cp1 = create_cp(50, CriticalPointKind::Nuclei, &[1]);
+        let cp0 = create_cp(10, CriticalPointKind::Nuclei, &[0], 5.0);
+        let cp1 = create_cp(50, CriticalPointKind::Nuclei, &[1], 3.0);
 
         let mut candidates = vec![cp0, cp1];
-        let ordered =
-            nuclei_ordering(&mut candidates, &density, &atoms, &grid, false);
+        let ordered = nuclei_ordering(&mut candidates, &atoms, &grid, false);
 
         assert_eq!(ordered.len(), 2);
         assert_eq!(ordered[0].position, 10);
@@ -567,13 +572,14 @@ mod tests {
     #[test]
     fn test_critical_point_merge_exact_duplicate() {
         // Two CPs with same atoms should be merged
-        let cp1 = create_cp(10, CriticalPointKind::Bond, &[1, 2]);
-        let cp2 = create_cp(11, CriticalPointKind::Bond, &[1, 2]); // Diff position, same atoms
+        let cp1 = create_cp(10, CriticalPointKind::Bond, &[1, 2], 0.0);
+        let cp2 = create_cp(11, CriticalPointKind::Bond, &[1, 2], 1.0); // Diff position, same atoms, higher density
 
         let input = vec![cp1, cp2];
         let merged = critical_point_merge(input);
 
         assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].position, 11);
     }
 
     #[test]
@@ -593,8 +599,8 @@ mod tests {
 
         // So yes, subsets are merged into supersets.
 
-        let cp_ring = create_cp(10, CriticalPointKind::Ring, &[1, 2, 3]);
-        let cp_bond = create_cp(11, CriticalPointKind::Bond, &[1, 2]);
+        let cp_ring = create_cp(10, CriticalPointKind::Ring, &[1, 2, 3], 0.0);
+        let cp_bond = create_cp(11, CriticalPointKind::Bond, &[1, 2], 0.0);
 
         let input = vec![cp_ring, cp_bond];
         let merged = critical_point_merge(input);
@@ -605,8 +611,8 @@ mod tests {
 
     #[test]
     fn test_critical_point_merge_distinct() {
-        let cp1 = create_cp(10, CriticalPointKind::Bond, &[1, 2]);
-        let cp2 = create_cp(11, CriticalPointKind::Bond, &[3, 4]);
+        let cp1 = create_cp(10, CriticalPointKind::Bond, &[1, 2], 0.0);
+        let cp2 = create_cp(11, CriticalPointKind::Bond, &[3, 4], 0.0);
 
         let input = vec![cp1, cp2];
         let merged = critical_point_merge(input);

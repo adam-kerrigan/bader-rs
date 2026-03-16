@@ -1,7 +1,6 @@
 use crate::critical::CriticalPoint;
 use crate::grid::Grid;
 use crate::io::{FileFormat, FileType};
-use crate::methods::laplacian;
 use crate::voxel_map::EncodedAtom;
 use core::fmt;
 use std::fs::File;
@@ -29,7 +28,6 @@ impl CriticalPointOutput {
     pub fn new(
         positions: Vec<[f64; 3]>,
         critical_points: CriticalPoints,
-        density: &[f64],
         grid: &Grid,
         file_type: FileType,
     ) -> Self {
@@ -58,8 +56,8 @@ impl CriticalPointOutput {
                                     encoded_atom.image_sub(image)
                                 })
                                 .collect(),
-                            density[cp.position as usize],
-                            laplacian(cp.position as usize, density, grid),
+                            cp.density,
+                            cp.laplacian,
                         ));
                     }
                 });

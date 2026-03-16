@@ -69,13 +69,8 @@ fn main() {
         ),
     };
     // input the maxima as atoms into the voxel map
-    let ordered_nuclei = nuclei_ordering(
-        &mut nuclei,
-        reference,
-        &atoms,
-        &voxel_map.grid,
-        !args.silent,
-    );
+    let ordered_nuclei =
+        nuclei_ordering(&mut nuclei, &atoms, &voxel_map.grid, !args.silent);
     nuclei.iter().for_each(|maximum| {
         voxel_map.maxima_store(maximum.position, maximum.atoms[0].0 as isize);
     });
@@ -107,18 +102,13 @@ fn main() {
             args.threads,
             !args.silent,
         );
-    let bonds = bond_pruning(&bonds, reference, &args);
+    let bonds = bond_pruning(&bonds, &args);
     let bond_adjacency = bond_adjacency(&bonds, atoms.positions.len());
-    let rings = critical_point_merge(ring_pruning(
-        &rings,
-        &bond_adjacency,
-        reference,
-        &args,
-    ));
+    let rings =
+        critical_point_merge(ring_pruning(&rings, &bond_adjacency, &args));
     let cages = critical_point_merge(cage_pruning(
         &cages,
         &ordered_nuclei,
-        reference,
         &atoms,
         voxel_map.grid_get(),
         &args,
@@ -136,7 +126,6 @@ fn main() {
     let critical_point_output = io::output::CriticalPointOutput::new(
         atoms.positions.clone(),
         critical_points,
-        reference,
         &voxel_map.grid,
         args.file_type,
     );

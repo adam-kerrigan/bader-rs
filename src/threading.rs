@@ -98,7 +98,6 @@ where
 ///
 /// # Arguments
 /// * `critical_points`: List of candidate points.
-/// * `density`: Charge density array for comparison.
 /// * `validator`: Function returning `true` if a point should be kept.
 /// * `threads`: Number of parallel threads to spawn.
 /// * `progress_bar`: [`ProgressBar`] to update as items are processed.
@@ -107,7 +106,6 @@ where
 /// A vector of unique, validated [`CriticalPoint`]s.
 pub fn parallel_prune<F>(
     critical_points: &[CriticalPoint],
-    density: &[f64],
     validator: F,
     threads: usize,
     progress_bar: Box<dyn ProgressBar>,
@@ -127,8 +125,8 @@ where
                 local_state
                     .entry(key)
                     .and_modify(|existing: &mut CriticalPoint| {
-                        let rho_new = density[cp.position as usize];
-                        let rho_old = density[existing.position as usize];
+                        let rho_new = cp.density;
+                        let rho_old = existing.density;
                         if rho_new > rho_old {
                             *existing = cp.clone();
                         }
@@ -142,8 +140,8 @@ where
                 global_state
                     .entry(key)
                     .and_modify(|existing: &mut CriticalPoint| {
-                        let rho_new = density[cp.position as usize];
-                        let rho_old = density[existing.position as usize];
+                        let rho_new = cp.density;
+                        let rho_old = existing.density;
                         if rho_new > rho_old {
                             *existing = cp.clone();
                         }
@@ -156,7 +154,15 @@ where
     );
     final_map
         .into_iter()
-        .map(|(k, v)| CriticalPoint::new(v.position, v.kind, k.into_box()))
+        .map(|(k, v)| {
+            CriticalPoint::new(
+                v.position,
+                v.kind,
+                k.into_box(),
+                v.density,
+                v.laplacian,
+            )
+        })
         .collect()
 }
 
@@ -168,13 +174,19 @@ mod tests {
     use crate::voxel_map::EncodedAtom;
 
     // --- Helper to create a basic CriticalPoint ---
-    fn create_cp(pos: isize, atoms: &[u32]) -> CriticalPoint {
+    fn create_cp(pos: isize, atoms: &[u32], density: f64) -> CriticalPoint {
         let atoms_enc = atoms
             .iter()
             .map(|&id| EncodedAtom::new_zero_image(id))
             .collect::<Vec<_>>()
             .into_boxed_slice();
-        CriticalPoint::new(pos, CriticalPointKind::Bond, atoms_enc)
+        CriticalPoint::new(
+            pos,
+            CriticalPointKind::Bond,
+            atoms_enc,
+            density,
+            0.0,
+        )
     }
 
     // --- Parallel Map Reduce Tests ---
@@ -226,19 +238,15 @@ mod tests {
         // CP2 at pos 20, Density = 5.0
         // Expected: Pruning should keep only CP2 (highest density).
 
-        let cp1 = create_cp(10, &[1, 2]);
-        let cp2 = create_cp(20, &[1, 2]);
+        let cp1 = create_cp(10, &[1, 2], 1.0);
+        let cp2 = create_cp(20, &[1, 2], 5.0);
 
         let cps = vec![cp1, cp2];
-        let mut density = vec![0.0; 30];
-        density[10] = 1.0;
-        density[20] = 5.0;
-
         let threads = 2;
         let pbar = Box::new(HiddenBar {});
 
         // Validator always returns true (keep everything initially)
-        let pruned = parallel_prune(&cps, &density, |_| true, threads, pbar);
+        let pruned = parallel_prune(&cps, |_| true, threads, pbar);
 
         assert_eq!(pruned.len(), 1);
         assert_eq!(pruned[0].position, 20); // Should be the higher density one
@@ -247,19 +255,17 @@ mod tests {
     #[test]
     fn test_parallel_prune_filtering() {
         // Setup: CP1 (Bond) and CP2 (Ring). Validator will reject Ring.
-        let cp1 = create_cp(10, &[1, 2]); // Bond
-        let mut cp2 = create_cp(20, &[3, 4]);
+        let cp1 = create_cp(10, &[1, 2], 0.0); // Bond
+        let mut cp2 = create_cp(20, &[3, 4], 0.0); // Density irrelevant here as they are distinct keys
         cp2.kind = CriticalPointKind::Ring;
 
         let cps = vec![cp1.clone(), cp2];
-        let density = vec![0.0; 30]; // Density irrelevant here as they are distinct keys
 
         let threads = 1;
         let pbar = Box::new(HiddenBar {});
 
         let pruned = parallel_prune(
             &cps,
-            &density,
             |cp| matches!(cp.kind, CriticalPointKind::Bond), // Keep only Bonds
             threads,
             pbar,
