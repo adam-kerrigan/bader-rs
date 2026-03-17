@@ -1,4 +1,4 @@
-use bader::analysis::calculate_bader_density;
+use bader::analysis::{calculate_bader_density, calculate_bader_radius};
 use bader::arguments::App;
 use bader::critical::{
     bond_adjacency, bond_pruning, cage_pruning, critical_point_merge,
@@ -94,14 +94,13 @@ fn main() {
         !args.silent,
     );
     // sum the densities and then write the charge partition files
-    let (atoms_density, atoms_volume, atoms_radius, atoms_error) =
-        calculate_bader_density(
-            &densities,
-            &voxel_map,
-            &atoms,
-            args.threads,
-            !args.silent,
-        );
+    let (atoms_density, atoms_volume, atoms_error) = calculate_bader_density(
+        &densities,
+        &voxel_map,
+        &atoms,
+        args.threads,
+        !args.silent,
+    );
     let bonds = bond_pruning(&bonds, &args);
     let bond_adjacency = bond_adjacency(&bonds, atoms.positions.len());
     let rings =
@@ -113,6 +112,8 @@ fn main() {
         voxel_map.grid_get(),
         &args,
     ));
+    let atoms_radius =
+        calculate_bader_radius(&bonds, &atoms, &voxel_map.grid, !args.silent);
     // generate the output file
     let partition_table = io::output::PartitionTable::new(
         &atoms_density,

@@ -1,10 +1,12 @@
 use crate::atoms::Atoms;
+use crate::critical::CriticalPoint;
+use crate::grid::Grid;
 use crate::methods::laplacian;
 use crate::progress::{Bar, HiddenBar, ProgressBar};
 use crate::voxel_map::{Voxel, VoxelMap};
 use std::thread;
 
-type BaderResult = (Box<[Box<[f64]>]>, Box<[f64]>, Box<[f64]>, Box<[f64]>);
+type BaderResult = (Box<[Box<[f64]>]>, Box<[f64]>, Box<[f64]>);
 
 /// Sums the densities of each Bader volume and calculates associated properties.
 ///
@@ -22,7 +24,6 @@ type BaderResult = (Box<[Box<[f64]>]>, Box<[f64]>, Box<[f64]>, Box<[f64]>);
 /// A tuple containing:
 /// 1. **Density**: `Box<[Box<[f64]>]>` - Integrated charge for each atom.
 /// 2. **Volume**: `Box<[f64]>` - Volume size for each atom.
-/// 3. **Radius**: `Box<[f64]>` - Distance from the nucleus to the furthest assigned voxel.
 /// 4. **Error**: `Box<[f64]>` - Integrated Laplacian (should be close to 0 for perfect partitioning).
 ///
 /// # Example
@@ -37,7 +38,7 @@ type BaderResult = (Box<[Box<[f64]>]>, Box<[f64]>, Box<[f64]>, Box<[f64]>);
 /// // And a calculated charge density flat array
 /// let charge_density = vec![vec![0.1; 1000]]; // 1000 voxels
 ///
-/// let (charges, volumes, radii, errors) = calculate_bader_density(
+/// let (charges, volumes, errors) = calculate_bader_density(
 ///     &charge_density,
 ///     &voxel_map,
 ///     &atoms,
@@ -66,7 +67,6 @@ pub fn calculate_bader_density(
     let mut bader_density =
         vec![vec![0.0; density.len()]; atoms.positions.len() + 1];
     let mut bader_volume = vec![0.0; atoms.positions.len() + 1];
-    let mut bader_radius = vec![f64::INFINITY; atoms.positions.len()];
     let mut bader_error = vec![0.0; atoms.positions.len() + 1];
     let vm = &voxel_map;
     // Calculate the size of the vector to be passed to each thread.
@@ -83,7 +83,6 @@ pub fn calculate_bader_density(
                         atoms.positions.len() + 1
                     ];
                     let mut bv = vec![0.0; atoms.positions.len() + 1];
-                    let mut br = vec![f64::INFINITY; atoms.positions.len()];
                     let mut be = vec![0.0; atoms.positions.len() + 1];
                     chunk.iter().enumerate().for_each(
                         |(voxel_index, maxima)| {
@@ -111,21 +110,6 @@ pub fn calculate_bader_density(
                                         {
                                             bd[m][i] += w * rho[p];
                                         }
-                                        // Bader radius
-                                        let atom_number = vm.maxima_to_atom(m);
-                                        let p_c =
-                                            vm.grid.to_cartesian(p as isize);
-                                        let p_lll_c = atoms
-                                            .lattice
-                                            .cartesian_to_reduced(p_c);
-                                        let atom = atoms.reduced_positions
-                                            [atom_number];
-                                        br[atom_number] =
-                                            atoms.lattice.minimum_distance(
-                                                p_lll_c,
-                                                atom,
-                                                Some(br[atom_number]),
-                                            );
                                         // Bader volume
                                         bv[m] += w;
                                         // Bader error
@@ -146,7 +130,7 @@ pub fn calculate_bader_density(
                             pbar.tick();
                         },
                     );
-                    (bd, bv, br, be)
+                    (bd, bv, be)
                 })
             })
             .collect::<Vec<_>>();
@@ -155,7 +139,7 @@ pub fn calculate_bader_density(
         // Either use the sorted index to remove vacuum from the summation or
         // find a way to operate on finshed threads first (ideally both).
         for thread in spawned_threads {
-            if let Ok((tmp_bd, tmp_bv, tmp_br, tmp_be)) = thread.join() {
+            if let Ok((tmp_bd, tmp_bv, tmp_be)) = thread.join() {
                 bader_density.iter_mut().zip(tmp_bd.into_iter()).for_each(
                     |(a, b)| {
                         a.iter_mut().zip(b).for_each(|(c, d)| *c += d);
@@ -164,11 +148,6 @@ pub fn calculate_bader_density(
                 bader_volume.iter_mut().zip(tmp_bv.into_iter()).for_each(
                     |(a, b)| {
                         *a += b;
-                    },
-                );
-                bader_radius.iter_mut().zip(tmp_br.into_iter()).for_each(
-                    |(a, b)| {
-                        *a = a.min(b);
                     },
                 );
                 bader_error.iter_mut().zip(tmp_be.into_iter()).for_each(
@@ -192,27 +171,83 @@ pub fn calculate_bader_density(
     bader_volume.iter_mut().for_each(|a| {
         *a *= voxel_map.grid_get().voxel_lattice.volume;
     });
-    bader_radius.iter_mut().for_each(|d| {
-        match (*d).partial_cmp(&f64::INFINITY) {
-            Some(std::cmp::Ordering::Less) => *d = d.powf(0.5),
-            _ => *d = 0.0,
-        }
-    });
     (
         bader_density
             .into_iter()
             .map(|bd| bd.into_boxed_slice())
             .collect(),
         bader_volume.into(),
-        bader_radius.into(),
         bader_error.into(),
     )
+}
+
+/// Calculates the Bader radius for each atom in the system.
+///
+/// The Bader radius is defined as the minimum distance from an atom's nucleus to any of
+/// its associated Bond Critical Points (BCPs).
+///
+/// # Logic
+/// 1. Initializes the radius for all atoms to infinity.
+/// 2. Iterates through the given list of bond critical points.
+/// 3. For each critical point, calculates the shortest periodic distance to the parent atoms.
+/// 4. Updates the atom's minimum radius if the current BCP is closer than previously checked ones.
+/// 5. Finally, takes the square root of the minimum squared distances to get the true radii.
+///    If an atom has no associated bonds (distance is still infinity), its radius is set to `0.0`.
+///
+/// # Arguments
+/// * `bonds` - A slice containing the [`CriticalPoint`]s to be measured.
+///   The outer index corresponds to the atom's ID in the `Atoms` struct.
+/// * `atoms` - The atomic geometry, containing reduced positions and lattice vectors.
+/// * `grid` - The voxel grid, used to translate 1D grid positions into Cartesian coordinates.
+/// * `visible_bar` - A boolean flag to determine whether to output a progress bar to the console.
+///
+/// # Returns
+/// A boxed slice of `f64` values (`Box<[f64]>`), where the value at index `i` is the calculated
+/// Bader radius for Atom `i`.
+pub fn calculate_bader_radius(
+    bonds: &[CriticalPoint],
+    atoms: &Atoms,
+    grid: &Grid,
+    visible_bar: bool,
+) -> Box<[f64]> {
+    let progress_bar: Box<dyn ProgressBar> = match visible_bar {
+        false => Box::new(HiddenBar {}),
+        true => Box::new(Bar::new(
+            bonds.len(),
+            String::from("Calculating Bader Radii"),
+        )),
+    };
+    let pbar = &progress_bar;
+    let mut radii = vec![f64::INFINITY; atoms.positions.len()];
+    bonds.iter().for_each(|critical_point| {
+        let p_c = grid.to_cartesian(critical_point.position);
+        let p_lll_c = atoms.lattice.cartesian_to_reduced(p_c);
+        critical_point.atoms.iter().for_each(|encoded_atom| {
+            let atom_number = encoded_atom.atom_index() as usize;
+            let atom = atoms.reduced_positions[atom_number];
+            println!("{:?} {:?}", atom, p_lll_c);
+            radii[atom_number] = atoms.lattice.minimum_distance(
+                p_lll_c,
+                atom,
+                Some(radii[atom_number]),
+            );
+        });
+        pbar.tick();
+    });
+    radii
+        .iter_mut()
+        .for_each(|d| match (*d).partial_cmp(&f64::INFINITY) {
+            Some(std::cmp::Ordering::Less) => *d = d.powf(0.5),
+            _ => *d = 0.0,
+        });
+    radii.into()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*; // Import functions from analysis.rs
     use crate::atoms::{Atoms, Lattice};
+    use crate::critical::{CriticalPoint, CriticalPointKind};
     use crate::grid::Grid;
     use crate::voxel_map::{
         EncodedAtom, EncodedImage, EncodedWeight, VoxelMap,
@@ -230,7 +265,7 @@ mod tests {
         // 2. Setup Atoms (2 atoms at opposite corners)
         let atoms = Atoms::new(
             Lattice::new(lattice_mat),
-            vec![[0.0, 0.0, 0.0], [1.5, 1.5, 1.5]], // Positions
+            vec![[0.0, 0.0, 0.0], [1.5, 1.5, 1.5], [2.0, 0.0, 0.0]], // Positions
             String::from("Test System"),
         );
 
@@ -257,7 +292,7 @@ mod tests {
             grid,
         };
 
-        let (b_rho, b_vol, _b_rad, _b_err) = calculate_bader_density(
+        let (b_rho, b_vol, _b_err) = calculate_bader_density(
             &density_data,
             &v_map,
             &atoms,
@@ -313,7 +348,7 @@ mod tests {
             grid,
         };
 
-        let (__rho, b_vol, b_rad, b_err) =
+        let (__rho, b_vol, b_err) =
             calculate_bader_density(&density_data, &v_map, &atoms, 1, false);
 
         // Voxel Volume
@@ -326,9 +361,52 @@ mod tests {
 
         assert!((b_vol[0] - expected_vol_0).abs() < f64::EPSILON);
         assert!((b_vol[1] - expected_vol_1).abs() < f64::EPSILON);
-        assert!(
-            (b_rad[0] - (3.0 * 1.5f64.powi(2)).powf(0.5)).abs() < f64::EPSILON
-        );
         assert!((b_err[0] - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_calculate_bader_radius() {
+        let dim = 10; // 1000 voxels total
+        let (grid, atoms) = setup_env(dim);
+
+        // Create dummy Critical Points using the helper from earlier.
+        // We will assign two BCPs to Atom 0, and ZERO BCPs to Atom 1.
+        let cp_closest = CriticalPoint::new(
+            100,
+            CriticalPointKind::Bond,
+            Box::new([
+                EncodedAtom::new_zero_image(0),
+                EncodedAtom::new_zero_image(2),
+            ]),
+            0.0,
+            0.0,
+        ); // Distance = 0.3, 2.7 (1.3 from pbc)
+        let cp_further = CriticalPoint::new(
+            800,
+            CriticalPointKind::Bond,
+            Box::new([
+                EncodedAtom::new_zero_image(0),
+                EncodedAtom::new_zero_image(2),
+            ]),
+            0.0,
+            0.0,
+        ); // Distance = 0.6, 0.4
+
+        // Group the critical points by atom (outer index is atom number)
+        let bonds = vec![cp_closest, cp_further];
+
+        // Run the function silently (visible_bar = false)
+        let radii = calculate_bader_radius(&bonds, &atoms, &grid, false);
+
+        // Assertions
+        assert_eq!(radii.len(), 3);
+
+        // Atom 0 should have a radius corresponding to the closest BCP (distance = 0.3)
+        assert!((radii[0] - 0.3).abs() < f64::EPSILON);
+
+        // Atom 1 has no bonds, so its radius should default to 0.0
+        assert!((radii[1] - 0.0).abs() < f64::EPSILON);
+        // Atom 2 should be 0.4
+        assert!((radii[2] - 0.4).abs() < f64::EPSILON);
     }
 }

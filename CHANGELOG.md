@@ -1,6 +1,7 @@
 ## v0.5.1
 ### Changes
 - Added density and Laplacian fields to CriticalPoints.
+- Moved radius calculating to its own function.
 ## v0.5.0
 ### Features
 - Added critical point handling.
