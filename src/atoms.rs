@@ -423,7 +423,7 @@ mod tests {
         // We check if the rows match the expected set.
 
         let expected_rows =
-            vec![[0.0, 1.0, 0.0], [1.0, 0.0, 1.0], [-1.0, 0.0, 2.0]];
+            [[0.0, 1.0, 0.0], [1.0, 0.0, 1.0], [-1.0, 0.0, 2.0]];
 
         for row in reduced.iter() {
             let found = expected_rows.iter().any(|exp| {

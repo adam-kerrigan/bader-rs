@@ -3,26 +3,24 @@ use crate::critical::{CriticalPoint, CriticalPointKind};
 use crate::errors::MaximaError;
 use crate::grid::Grid;
 use crate::hash::IntMap;
-use crate::progress::{Bar, HiddenBar, ProgressBar};
+use crate::progress::progress_bar;
+use crate::threading::parallel_map_reduce;
 use crate::voxel_map::{
     BlockingVoxelMap, EncodedAtom, EncodedWeight, Voxel, VoxelMap,
 };
-use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
 /// Result of a Weight step.
-///
-/// TODO: turn this into an actual result type?
 pub enum WeightResult {
-    /// Length of the Box dictates the type of Critical Point, 1 -> Maxima, 2 -> Saddle,
-    /// 3+ -> Saddle or minima. Critical Points with >=2 will be on boundaries.
+    /// A boundary voxel which flows into a maximum that none of its higher
+    /// neighbours do, making it a saddle (2 atoms), ring or cage candidate.
     Critical(Box<[EncodedWeight]>),
     /// Entirely assigned to a single Bader atom.
-    Interior(usize),
+    Interior(EncodedAtom),
     /// Meeting point at the edge of 2 or more Bader atoms.
     Boundary(Box<[EncodedWeight]>),
-    /// Maximum
+    /// No higher neighbours, a local maximum.
     Maximum,
 }
 
@@ -37,6 +35,7 @@ pub enum WeightResult {
 ///   then `p` also belongs to that Atom.
 /// * **Boundary**: If `p` flows into neighbors belonging to *different* Atoms, `p` is on a boundary.
 ///   Returns a weighted list of contributions.
+/// * **Critical**: A boundary that flows into more atoms than any of its higher neighbours.
 ///
 /// # Arguments
 /// * `p`: The index of the voxel to step from.
@@ -50,86 +49,59 @@ pub fn weight_step(
     weight_tolerance: f64,
 ) -> WeightResult {
     let control = density[p as usize];
-    let grid = &voxel_map.grid;
-    let mut t_sum = 0.;
+    let mut flux_total = 0.;
     let mut weights = IntMap::<EncodedAtom, f64>::default();
-    let mut weight_count = 0;
-    // colllect the shift and distances and iterate over them.
-    grid.voronoi_shifts(p)
-        .for_each(|((pt, image), alpha)| {
-            let charge_diff = density[pt as usize] - control;
-            // density differences of zero should be ignored to avoid division by
-            // zero errors.
-            if charge_diff > 0. {
-                // calculate the gradient and add any weights to the HashMap.
-                let rho = charge_diff * alpha;
-                match voxel_map.voxel_get(pt) {
-                    // feeds into already weighted voxel therefore not a saddle point
-                    Voxel::Boundary(weight_map) => {
-                        weight_count = weight_map.len().max(weight_count);
-                        weight_map.into_iter().for_each(|(maxima, weight)| {
-                            let maxima = match image.is_zero() {
-                                true => maxima,
-                                false => maxima.image_add(image),
-                            };
-                            let w = weights.entry(maxima).or_insert(0.);
-                            *w += weight as f64 * rho
-                        });
-                    },
-                    // interior point
-                    Voxel::Maxima(maxima) => {
-                        let maxima = match image.is_zero() {
-                            true => maxima,
-                            false => maxima.image_add(image),
-                        };
-                        let w = weights.entry(maxima).or_insert(0.);
-                        *w += rho
-                    }
-                    // going into vacuum (this be impossible)
-                    Voxel::Vacuum => panic!("Vacuum voxel found with higher charge density than the control voxel.")
-                };
-                t_sum += rho;
-            }
-        });
-    match weights.len().cmp(&1) {
-        // more than one weight is a boundary or saddle (if the weight is weighty enough)
-        std::cmp::Ordering::Greater => {
-            let mut total = 0.;
-            // remove weights below the tolerance
-            let weights = weights
-                .into_iter()
-                .filter_map(|(maxima, weight)| {
-                    let weight = weight / t_sum;
-                    if weight > weight_tolerance {
-                        total += weight;
-                        Some((maxima, weight as f32))
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<(EncodedAtom, f32)>>();
-            // still more than one weight then readjust the weights so that they sum to 1
-            if let std::cmp::Ordering::Greater = weights.len().cmp(&1) {
-                let weights = weights
-                    .into_iter()
-                    .map(|(maxima, w)| EncodedWeight::new(maxima, w))
-                    .collect::<Box<[EncodedWeight]>>();
-                // check if new maxima has joined the weights -> Critical Point (saddle/ring/cage)
-                if weights.len() > weight_count {
-                    WeightResult::Critical(weights)
-                } else {
-                    WeightResult::Boundary(weights)
+    let mut neighbour_atoms = 0;
+    for ((pt, image), alpha) in voxel_map.grid.voronoi_shifts(p) {
+        let charge_diff = density[pt as usize] - control;
+        // only flow uphill, differences of zero are ignored to avoid division by zero
+        if charge_diff <= 0. {
+            continue;
+        }
+        let flux = charge_diff * alpha;
+        flux_total += flux;
+        match voxel_map.voxel_get(pt) {
+            Voxel::Boundary(neighbour_weights) => {
+                neighbour_atoms = neighbour_atoms.max(neighbour_weights.len());
+                for (atom, weight) in
+                    neighbour_weights.iter().map(|w| w.decode())
+                {
+                    *weights.entry(atom.image_add(image)).or_insert(0.) +=
+                        weight as f64 * flux;
                 }
+            }
+            Voxel::Maxima(atom) => {
+                *weights.entry(atom.image_add(image)).or_insert(0.) += flux;
+            }
+            Voxel::Vacuum => panic!(
+                "Vacuum voxel found with higher charge density than the control voxel."
+            ),
+        }
+    }
+    if weights.is_empty() {
+        return WeightResult::Maximum;
+    }
+    // normalise the weights and remove any below the tolerance
+    let weights = weights
+        .into_iter()
+        .map(|(atom, flux)| (atom, (flux / flux_total) as f32))
+        .filter(|(_, weight)| *weight as f64 > weight_tolerance)
+        .collect::<Vec<(EncodedAtom, f32)>>();
+    match weights.as_slice() {
+        [] => WeightResult::Maximum,
+        [(atom, _)] => WeightResult::Interior(*atom),
+        _ => {
+            let encoded = weights
+                .into_iter()
+                .map(|(atom, w)| EncodedWeight::new(atom, w))
+                .collect::<Box<[EncodedWeight]>>();
+            // a new maximum has joined the weights -> Critical Point (saddle/ring/cage)
+            if encoded.len() > neighbour_atoms {
+                WeightResult::Critical(encoded)
             } else {
-                WeightResult::Interior(weights[0].0.0 as usize)
+                WeightResult::Boundary(encoded)
             }
         }
-        // only feeds one atom means interior voxel
-        std::cmp::Ordering::Equal => {
-            WeightResult::Interior(weights.keys().next().unwrap().0 as usize)
-        }
-        // no flux out means maximum
-        std::cmp::Ordering::Less => WeightResult::Maximum,
     }
 }
 
@@ -151,22 +123,21 @@ pub fn weight_step(
 /// * `voxel_map`: The thread-safe map where results (Maxima/Weights) will be stored.
 /// * `index`: A list of voxel indices sorted by density (Highest $\to$ Lowest).
 /// * `weight_tolerance`: Minimum contribution required for a boundary weight (typically `1e-6` to `1e-3`).
-/// * `visible_bar`: If `true`, displays a progress bar to `stdout`.
+/// * `visible_bar`: If `true`, displays a progress bar on `stderr`.
 /// * `threads`: The number of worker threads to spawn.
 ///
 /// # Returns
 /// A tuple containing two vectors of [`CriticalPoint`]:
 /// 1. **Bond Points**: Critical points connecting exactly 2 atoms.
-/// 2. **Ring/Cage Points**: Critical points connecting 3 or more atoms.
+/// 2. **Ring Points**: Critical points connecting 3 or more atoms.
 ///
 /// # Example
 /// ```
 /// use bader::methods::weight;
-/// use bader::voxel_map::{BlockingVoxelMap, VoxelMap, EncodedAtom};
+/// use bader::voxel_map::{BlockingVoxelMap, VoxelMap, EncodedAtom, Voxel};
 ///
-/// // 1. Setup Data
-/// let density = vec![2.0, 2.0, 12.0, 2.0, 2.0, 11.0, 1.0, 2.0, 6.0, 1.0, 1.0, 5.0]; // 1 atom at voxel 2
-/// // Sorted indices: 3 (10.0) -> 2 (2.0) -> 1 (1.0) -> 0 (0.0)
+/// // 1. Setup Data: a 2x2x3 grid with a single maximum at voxel 2
+/// let density = vec![2.0, 2.0, 12.0, 2.0, 2.0, 11.0, 1.0, 2.0, 6.0, 1.0, 1.0, 5.0];
 /// let sorted_indices = vec![2, 5, 8, 11, 0, 1, 3, 4, 7, 6, 9, 10];
 ///
 /// // 2. Setup Map
@@ -176,28 +147,23 @@ pub fn weight_step(
 ///     [0.0, 0.0, 0.0]
 /// );
 /// // Pre-assign the maxima (index 2) to Atom 0
-/// map.maxima_store(2, EncodedAtom::new_zero_image(0).0 as isize);
+/// map.maxima_store(2, EncodedAtom::new_zero_image(0));
 ///
-/// // 3. Run Partitioning
-/// // processing indices (skipping 2 as it's already done)
+/// // 3. Run Partitioning on the remaining voxels
 /// let (bonds, rings) = weight(
 ///     &density,
 ///     &map,
-///     &sorted_indices[1..], // Skip the maxima itself
+///     &sorted_indices[1..],
 ///     1e-6,
 ///     false, // No progress bar
 ///     1      // Single thread
 /// );
 ///
-/// // 4. Check Results
-/// // Voxel 1 should have flowed up to Voxel 3 (Atom 0)
+/// // 4. Check Results: everything flows to Atom 0, through the periodic
+/// // boundary the atom is bonded to its own images so bonds are found
 /// let map = VoxelMap::from_blocking_voxel_map(map);
-/// use bader::voxel_map::Voxel;
-/// if let Voxel::Maxima(atom) = map.voxel_get(1) {
-///     assert_eq!(atom.atom_index(), 0);
-/// } else {
-///     panic!("Voxel 1 should be assigned to Atom 1");
-/// }
+/// assert!(matches!(map.voxel_get(1), Voxel::Maxima(atom) if atom.atom_index() == 0));
+/// assert!(bonds.iter().chain(&rings).all(|cp| cp.atoms[0].atom_index() == 0));
 /// ```
 pub fn weight(
     density: &[f64],
@@ -207,31 +173,22 @@ pub fn weight(
     visible_bar: bool,
     threads: usize,
 ) -> (Vec<CriticalPoint>, Vec<CriticalPoint>) {
-    let counter = Arc::new(AtomicUsize::new(0));
-    let mut critical_points = (vec![], vec![]);
-    let pbar: Box<dyn ProgressBar> = match visible_bar {
-        false => Box::new(HiddenBar {}),
-        true => {
-            Box::new(Bar::new(index.len(), String::from("Bader Partitioning")))
-        }
-    };
+    let counter = AtomicUsize::new(0);
+    let pbar = progress_bar(visible_bar, index.len(), "Bader Partitioning");
+    let mut bonds = vec![];
+    let mut rings = vec![];
     thread::scope(|s| {
-        // Assign the remaining voxels to Bader maxima
-        let th = (0..threads)
+        let handles = (0..threads)
             .map(|_| {
                 s.spawn(|| {
-                    let mut c_ps = (vec![], vec![]);
-                    loop {
-                        let p = {
-                            let i = counter.fetch_add(
-                                1,
-                                std::sync::atomic::Ordering::Relaxed,
-                            );
-                            if i >= index.len() {
-                                break;
-                            };
-                            index[i] as isize
-                        };
+                    let mut bonds = vec![];
+                    let mut rings = vec![];
+                    // voxels are claimed one at a time so that every thread is
+                    // always working on the highest unassigned density
+                    while let Some(p) = index
+                        .get(counter.fetch_add(1, Ordering::Relaxed))
+                        .map(|p| *p as isize)
+                    {
                         match weight_step(
                             p,
                             density,
@@ -239,139 +196,122 @@ pub fn weight(
                             weight_tolerance,
                         ) {
                             WeightResult::Maximum => {}
-                            WeightResult::Interior(maxima) => {
-                                voxel_map.maxima_store(p, maxima as isize);
+                            WeightResult::Interior(atom) => {
+                                voxel_map.maxima_store(p, atom);
                             }
                             WeightResult::Boundary(weights) => {
                                 voxel_map.weight_store(p, weights);
                             }
                             WeightResult::Critical(weights) => {
-                                // length = 1 is a maxima and doesn't need storing.
-                                let atoms: Vec<EncodedAtom> = weights
+                                let atoms: Box<[EncodedAtom]> = weights
                                     .iter()
-                                    .map(|ed| ed.decode().0)
+                                    .map(|w| w.decode().0)
                                     .collect();
                                 voxel_map.weight_store(p, weights);
-                                if atoms.len() < 3 {
-                                    c_ps.0.push(CriticalPoint::new(
+                                if atoms.len() == 2 {
+                                    bonds.push(CriticalPoint::new(
                                         p,
                                         CriticalPointKind::Bond,
-                                        atoms.into(),
+                                        atoms,
                                     ));
                                 } else {
-                                    c_ps.1.push(CriticalPoint::new(
+                                    rings.push(CriticalPoint::new(
                                         p,
                                         CriticalPointKind::Ring,
-                                        atoms.into(),
+                                        atoms,
                                     ));
                                 }
                             }
                         }
                         pbar.tick();
                     }
-                    c_ps
+                    (bonds, rings)
                 })
             })
             .collect::<Vec<_>>();
-        for thread in th {
-            if let Ok(c_ps) = thread.join() {
-                critical_points.0.extend(c_ps.0);
-                critical_points.1.extend(c_ps.1);
-            }
+        for handle in handles {
+            let (b, r) = handle.join().unwrap();
+            bonds.extend(b);
+            rings.extend(r);
         }
     });
-    critical_points.0.shrink_to_fit();
-    critical_points.1.shrink_to_fit();
-    critical_points
+    (bonds, rings)
+}
+
+/// Whether every Voronoi neighbour of `p` satisfies `pred(neighbour, rho)`
+/// where `rho` is the density at `p`.
+fn neighbours_all(
+    p: usize,
+    density: &[f64],
+    grid: &Grid,
+    pred: impl Fn(f64, f64) -> bool,
+) -> bool {
+    let rho = density[p];
+    grid.voronoi_shifts_nocheck(p as isize)
+        .all(|(pt, _)| pred(density[pt as usize], rho))
 }
 
 /// Scans the grid to identify all local maxima in the charge density.
 ///
-/// This is the first step of the Bader analysis. It iterates over all voxels (in parallel)
-/// and checks if a voxel is strictly greater than all its neighbors.
+/// This is the first step of the Bader analysis. It iterates over all voxels in `index`
+/// (in parallel) and checks if a voxel is greater than or equal to all its neighbors.
 ///
 /// Valid maxima are then assigned to atoms using [`assign_maximum`].
+///
+/// # Errors
+/// Returns the first [`MaximaError`] from [`assign_maximum`] if a maximum is further
+/// than `maximum_distance` from every atom.
 pub fn maxima_finder(
     index: &[usize],
     density: &[f64],
     voxel_map: &BlockingVoxelMap,
-    maximum_distance: &f64,
+    maximum_distance: f64,
     atoms: &Atoms,
     threads: usize,
     visible_bar: bool,
 ) -> Result<Vec<CriticalPoint>, MaximaError> {
     let grid = &voxel_map.grid;
-    let mut bader_maxima = Vec::<CriticalPoint>::new();
-    let pbar: Box<dyn ProgressBar> = match visible_bar {
-        false => Box::new(HiddenBar {}),
-        true => Box::new(Bar::new(index.len(), String::from("Maxima Finding"))),
-    };
-    let index_len = index.len();
-    let chunk_size = (index_len / threads) + (index_len % threads).min(1);
-    thread::scope(|s| {
-        // Identify all the maxima
-        let th = index
-            .chunks(chunk_size)
-            .map(|chunk| {
-                s.spawn(|| {
-                    chunk
-                        .iter()
-                        .filter_map(|p| {
-                            // we have to tick first due to early return
-                            pbar.tick();
-                            let rho = density[*p];
-                            for (pt, _) in voxel_map
-                                .grid
-                                .voronoi_shifts_nocheck(*p as isize)
-                            {
-                                if density[pt as usize] > rho {
-                                    return None;
-                                }
-                            }
-                            // if we made it this far we have a maxima
-                            // change this index to a value it could
-                            // never be and return it
-                            Some(
-                                assign_maximum(
-                                    *p as isize,
-                                    atoms,
-                                    grid,
-                                    maximum_distance,
-                                )
-                                .map(|atom| {
-                                    CriticalPoint::new(
-                                        *p as isize,
-                                        CriticalPointKind::Nuclei,
-                                        Box::new([
-                                            EncodedAtom::new_zero_image(
-                                                atom as u32,
-                                            ),
-                                        ]),
-                                    )
-                                }),
-                            )
-                        })
-                        .collect::<Result<Vec<CriticalPoint>, MaximaError>>()
-                })
-            })
-            .collect::<Vec<_>>();
-        for thread in th {
-            if let Ok(maxima_list) = thread.join() {
-                match maxima_list {
-                    Ok(bm) => bader_maxima.extend(bm),
-                    Err(e) => return Err(e),
+    let pbar = progress_bar(visible_bar, index.len(), "Maxima Finding");
+    parallel_map_reduce(
+        index,
+        || Ok(Vec::new()),
+        |maxima: &mut Result<Vec<CriticalPoint>, MaximaError>, _, &p| {
+            if let Ok(found) = maxima {
+                if neighbours_all(p, density, grid, |neighbour, rho| {
+                    neighbour <= rho
+                }) {
+                    match assign_maximum(
+                        p as isize,
+                        atoms,
+                        grid,
+                        maximum_distance,
+                    ) {
+                        Ok(atom) => found.push(CriticalPoint::new(
+                            p as isize,
+                            CriticalPointKind::Nuclei,
+                            Box::new([EncodedAtom::new_zero_image(
+                                atom as u32,
+                            )]),
+                        )),
+                        Err(e) => *maxima = Err(e),
+                    }
                 }
-            } else {
-                panic!("Failed to join thread in manima finder.")
-            };
-        }
-        Ok(())
-    })?;
-    bader_maxima.shrink_to_fit();
-    Ok(bader_maxima)
+            }
+        },
+        |global, local| match (global.as_mut(), local) {
+            (Ok(g), Ok(l)) => g.extend(l),
+            (Ok(_), Err(e)) => *global = Err(e),
+            (Err(_), _) => {}
+        },
+        threads,
+        pbar,
+    )
 }
 
-/// Find minima in the charge density
+/// Find the minima in the charge density.
+///
+/// A minimum that lies on a boundary between Bader volumes is a cage critical point
+/// candidate and is returned with the atoms that share the voxel.
 pub fn minima_finder(
     index: &[usize],
     density: &[f64],
@@ -379,63 +319,32 @@ pub fn minima_finder(
     threads: usize,
     visible_bar: bool,
 ) -> Vec<CriticalPoint> {
-    let mut bader_minima = Vec::<CriticalPoint>::new();
-    let pbar: Box<dyn ProgressBar> = match visible_bar {
-        false => Box::new(HiddenBar {}),
-        true => Box::new(Bar::new(index.len(), String::from("Minima Finding"))),
-    };
-    let index_len = index.len();
-    let chunk_size = (index_len / threads) + (index_len % threads).min(1);
-    thread::scope(|s| {
-        // Identify all the maxima
-        let th = index
-            .chunks(chunk_size)
-            .map(|chunk| {
-                s.spawn(|| {
-                    chunk
-                        .iter()
-                        .filter_map(|p| {
-                            // we have to tick first due to early return
-                            pbar.tick();
-                            let rho = density[*p];
-                            for (pt, _) in voxel_map
-                                .grid
-                                .voronoi_shifts_nocheck(*p as isize)
-                            {
-                                if density[pt as usize] < rho {
-                                    return None;
-                                }
-                            }
-                            // if we made it this far we have a maxima
-                            // change this index to a value it could
-                            // never be and return it
-                            // TODO: This needs to check if the cage is actually a boundary and if
-                            // not complain that the weight tolerance is too high
-                            if let Voxel::Boundary(weights) =
-                                voxel_map.voxel_get(*p as isize)
-                            {
-                                return Some(CriticalPoint::new(
-                                    *p as isize,
-                                    CriticalPointKind::Cage,
-                                    weights.into_keys().collect(),
-                                ));
-                            }
-                            None
-                        })
-                        .collect::<Vec<CriticalPoint>>()
-                })
-            })
-            .collect::<Vec<_>>();
-        for thread in th {
-            if let Ok(minima_list) = thread.join() {
-                bader_minima.extend(minima_list);
-            } else {
-                panic!("Failed to join thread in manima finder.")
-            };
-        }
-    });
-    bader_minima.shrink_to_fit();
-    bader_minima
+    let grid = &voxel_map.grid;
+    let pbar = progress_bar(visible_bar, index.len(), "Minima Finding");
+    parallel_map_reduce(
+        index,
+        Vec::new,
+        |minima: &mut Vec<CriticalPoint>, _, &p| {
+            // TODO: This needs to check if the cage is actually a boundary and if
+            // not complain that the weight tolerance is too high
+            if neighbours_all(p, density, grid, |neighbour, rho| {
+                neighbour >= rho
+            }) {
+                if let Voxel::Boundary(weights) =
+                    voxel_map.voxel_get(p as isize)
+                {
+                    minima.push(CriticalPoint::new(
+                        p as isize,
+                        CriticalPointKind::Cage,
+                        weights.iter().map(|w| w.decode().0).collect(),
+                    ));
+                }
+            }
+        },
+        |global, local| global.extend(local),
+        threads,
+        pbar,
+    )
 }
 
 /// Associates a grid point (Maxima) with the nearest Atom.
@@ -456,35 +365,30 @@ pub fn assign_maximum(
     maximum: isize,
     atoms: &Atoms,
     grid: &Grid,
-    maximum_distance: &f64,
+    maximum_distance: f64,
 ) -> Result<usize, MaximaError> {
     // convert the point first to cartesian, then to the reduced basis
     let m_cartesian = grid.to_cartesian(maximum);
-    let m_reduced_cartesian = atoms.lattice.cartesian_to_reduced(m_cartesian);
+    let m_reduced = atoms.lattice.cartesian_to_reduced(m_cartesian);
     let mut atom_num = 0;
     let mut min_distance = f64::INFINITY;
-    // go through each atom in the reduced basis and shift in each
-    // reduced direction, save the atom with the shortest distance
     for (i, atom) in atoms.reduced_positions.iter().enumerate() {
-        for atom_shift in atoms.lattice.reduced_cartesian_shift_matrix.iter() {
-            let distance = {
-                (m_reduced_cartesian[0] - (atom[0] + atom_shift[0])).powi(2)
-                    + (m_reduced_cartesian[1] - (atom[1] + atom_shift[1]))
-                        .powi(2)
-                    + (m_reduced_cartesian[2] - (atom[2] + atom_shift[2]))
-                        .powi(2)
-            };
-            if distance < min_distance {
-                min_distance = distance;
-                atom_num = i;
-            }
+        let distance = atoms.lattice.minimum_distance(
+            m_reduced,
+            *atom,
+            Some(min_distance),
+        );
+        if distance < min_distance {
+            min_distance = distance;
+            atom_num = i;
         }
     }
-    if min_distance.powf(0.5) > *maximum_distance {
+    let distance = min_distance.sqrt();
+    if distance > maximum_distance {
         Err(MaximaError {
             maximum: m_cartesian,
             atom: atom_num,
-            distance: min_distance.powf(0.5),
+            distance,
         })
     } else {
         Ok(atom_num)
@@ -507,9 +411,8 @@ pub fn assign_maximum(
 pub fn laplacian(p: usize, density: &[f64], grid: &Grid) -> f64 {
     let rho = density[p];
     grid.voronoi_shifts_nocheck(p as isize)
-        .fold(0.0, |acc, (pt, alpha)| {
-            alpha * (density[pt as usize] - rho) + acc
-        })
+        .map(|(pt, alpha)| alpha * (density[pt as usize] - rho))
+        .sum::<f64>()
         / grid.voronoi.volume
 }
 
@@ -571,13 +474,13 @@ mod tests {
         density[14] = 5.0;
 
         // Pre-populate the Maxima at 13 so 14 has somewhere to flow
-        map.maxima_store(13, 100); // Atom 100
+        map.maxima_store(13, EncodedAtom::new_zero_image(100)); // Atom 100
 
         // Step from 14. It should climb to 13, see Atom 100, and return Interior(100)
         let result = weight_step(14, &density, &map, 1e-8);
 
         match result {
-            WeightResult::Interior(atom_idx) => assert_eq!(atom_idx, 100),
+            WeightResult::Interior(atom) => assert_eq!(atom.atom_index(), 100),
             _ => panic!("Expected Interior, got {:?}", result_name(&result)),
         }
     }
@@ -599,8 +502,8 @@ mod tests {
         density[12] = 10.0; // Peak A
         density[14] = 10.0; // Peak B
 
-        map.maxima_store(12, EncodedAtom::new_zero_image(1).0 as isize);
-        map.maxima_store(14, EncodedAtom::new_zero_image(2).0 as isize);
+        map.maxima_store(12, EncodedAtom::new_zero_image(1));
+        map.maxima_store(14, EncodedAtom::new_zero_image(2));
 
         // Step from 13. It should see both 12 and 14 as higher neighbors.
         let result = weight_step(13, &density, &map, 1e-8);
@@ -645,14 +548,14 @@ mod tests {
         let max_dist = 1.0;
 
         // Test Origin
-        let atom_idx = assign_maximum(0, &atoms, &grid, &max_dist).unwrap();
+        let atom_idx = assign_maximum(0, &atoms, &grid, max_dist).unwrap();
         assert_eq!(atom_idx, 0);
 
         // Test Point closer to Atom 1 ([1.5, 1.5, 1.5] is at index ~555)
         // [5, 5, 5] -> 1.5, 1.5, 1.5
         let center_idx = 5 * 100 + 5 * 10 + 5;
         let atom_idx_2 =
-            assign_maximum(center_idx, &atoms, &grid, &max_dist).unwrap();
+            assign_maximum(center_idx, &atoms, &grid, max_dist).unwrap();
         assert_eq!(atom_idx_2, 1);
     }
 
@@ -671,7 +574,7 @@ mod tests {
         // 0.3 > 0.05 -> Should fail.
         let point_idx = 100; // x=1, y=0, z=0
 
-        let result = assign_maximum(point_idx, &atoms, &grid, &tight_cutoff);
+        let result = assign_maximum(point_idx, &atoms, &grid, tight_cutoff);
         assert!(result.is_err());
     }
 
@@ -704,6 +607,95 @@ mod tests {
         // The Laplacian formula involves sum of (neighbor - center).
         // (0 - 10) is negative. Sum is negative.
         assert!(lap < 0.0);
+    }
+
+    // --- maxima_finder / minima_finder Tests ---
+
+    /// A 6x6x6 cubic cell with two Gaussian peaks on the two atoms.
+    fn two_peak_density(grid: &Grid, atoms: &Atoms) -> Vec<f64> {
+        (0..grid.size.total)
+            .map(|p| {
+                let r = grid.to_cartesian(p as isize);
+                atoms
+                    .positions
+                    .iter()
+                    .map(|a| {
+                        let d = atoms.lattice.minimum_distance(
+                            atoms.lattice.cartesian_to_reduced(r),
+                            atoms.lattice.cartesian_to_reduced(*a),
+                            None,
+                        );
+                        (-d / 0.5).exp()
+                    })
+                    .sum()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_maxima_finder_two_peaks() {
+        let (grid, atoms, map) = setup_env(6);
+        let density = two_peak_density(&grid, &atoms);
+        let index = crate::utils::index_generator(&density, 0.0).unwrap();
+        let maxima =
+            maxima_finder(&index, &density, &map, 1.0, &atoms, 3, false)
+                .unwrap();
+        let mut found = maxima
+            .iter()
+            .map(|cp| (cp.atoms[0].atom_index(), cp.position))
+            .collect::<Vec<_>>();
+        found.sort_unstable();
+        // atom 0 at the origin (voxel 0) and atom 1 at [1.5; 3] (voxel 3, 3, 3)
+        assert_eq!(found, vec![(0, 0), (1, 3 * 36 + 3 * 6 + 3)]);
+    }
+
+    #[test]
+    fn test_maxima_finder_too_far() {
+        let (grid, atoms, map) = setup_env(6);
+        let density = two_peak_density(&grid, &atoms);
+        let index = crate::utils::index_generator(&density, 0.0).unwrap();
+        // a cut-off smaller than the grid spacing still finds the on-atom
+        // peaks, but moving the atoms makes every maximum too far away
+        let moved = Atoms::new(
+            Lattice::new(atoms.lattice.to_cartesian),
+            vec![[0.25, 0.25, 0.25], [1.75, 1.75, 1.75]],
+            String::new(),
+        );
+        assert!(
+            maxima_finder(&index, &density, &map, 0.1, &moved, 2, false)
+                .is_err()
+        );
+        assert!(
+            maxima_finder(&index, &density, &map, 1.0, &moved, 2, false)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_weight_and_minima_two_peaks() {
+        let (grid, atoms, map) = setup_env(6);
+        let density = two_peak_density(&grid, &atoms);
+        let index = crate::utils::index_generator(&density, 0.0).unwrap();
+        let maxima =
+            maxima_finder(&index, &density, &map, 1.0, &atoms, 2, false)
+                .unwrap();
+        for cp in &maxima {
+            map.maxima_store(cp.position, cp.atoms[0]);
+        }
+        let (bonds, rings) = weight(&density, &map, &index, 1e-6, false, 3);
+        // the two atoms share one bond (through the periodic images there is
+        // only one unique pair) and there are no rings with two atoms
+        assert!(!bonds.is_empty());
+        assert!(bonds.iter().all(|cp| cp.atoms.len() == 2));
+        assert!(rings.iter().all(|cp| cp.atoms.len() > 2));
+        let map = VoxelMap::from_blocking_voxel_map(map);
+        // every voxel is assigned
+        assert!(map.voxel_map.iter().all(|&v| v != -1));
+        let cages = minima_finder(&index, &density, &map, 3, false);
+        assert!(!cages.is_empty());
+        assert!(cages.iter().all(|cp| cp.kind == CriticalPointKind::Cage));
+        // each cage is on a boundary so has more than one atom
+        assert!(cages.iter().all(|cp| cp.atoms.len() > 1));
     }
 
     // Utility for debug printing enum variants

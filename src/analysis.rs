@@ -1,15 +1,80 @@
 use crate::atoms::Atoms;
 use crate::methods::laplacian;
-use crate::progress::{Bar, HiddenBar, ProgressBar};
+use crate::progress::progress_bar;
+use crate::threading::parallel_map_reduce;
 use crate::voxel_map::{Voxel, VoxelMap};
-use std::thread;
 
-type BaderResult = (Box<[Box<[f64]>]>, Box<[f64]>, Box<[f64]>, Box<[f64]>);
+/// The integrated properties of each Bader volume.
+///
+/// Every field has one entry per atom followed by a final entry for the
+/// vacuum, except `radius` which has no vacuum entry.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Partition {
+    /// The integrated charge of each density (e.g. charge, spin) for each atom.
+    pub charge: Vec<Vec<f64>>,
+    /// The volume of each Bader volume.
+    pub volume: Vec<f64>,
+    /// The distance from each atom to the closest boundary voxel of its
+    /// volume, zero if the atom has no boundary.
+    pub radius: Vec<f64>,
+    /// The integrated Laplacian of each volume, a measure of the error in the
+    /// partitioning that should be close to zero.
+    pub error: Vec<f64>,
+}
+
+impl Partition {
+    fn new(densities: usize, atoms: usize) -> Self {
+        Self {
+            charge: vec![vec![0.0; densities]; atoms + 1],
+            volume: vec![0.0; atoms + 1],
+            radius: vec![f64::INFINITY; atoms],
+            error: vec![0.0; atoms + 1],
+        }
+    }
+
+    /// The number of atoms, excluding the vacuum.
+    pub fn atoms(&self) -> usize {
+        self.radius.len()
+    }
+
+    /// Add the contribution `weight` of voxel `p` to the volume with index `atom`.
+    fn add(
+        &mut self,
+        atom: usize,
+        weight: f64,
+        p: usize,
+        density: &[Vec<f64>],
+        laplacian: f64,
+    ) {
+        for (charge, rho) in self.charge[atom].iter_mut().zip(density) {
+            *charge += weight * rho[p];
+        }
+        self.volume[atom] += weight;
+        self.error[atom] += weight * laplacian;
+    }
+
+    fn merge(&mut self, other: Self) {
+        for (a, b) in self.charge.iter_mut().zip(other.charge) {
+            a.iter_mut().zip(b).for_each(|(a, b)| *a += b);
+        }
+        self.volume
+            .iter_mut()
+            .zip(other.volume)
+            .for_each(|(a, b)| *a += b);
+        self.radius
+            .iter_mut()
+            .zip(other.radius)
+            .for_each(|(a, b)| *a = a.min(b));
+        self.error
+            .iter_mut()
+            .zip(other.error)
+            .for_each(|(a, b)| *a += b);
+    }
+}
 
 /// Sums the densities of each Bader volume and calculates associated properties.
 ///
 /// This function integrates the charge density over the volume assigned to each atom.
-/// It returns four vectors containing the results for each atom (plus a final index for vacuum).
 ///
 /// # Arguments
 /// * `density` - A slice of density vectors (e.g., charge, spin).
@@ -19,34 +84,37 @@ type BaderResult = (Box<[Box<[f64]>]>, Box<[f64]>, Box<[f64]>, Box<[f64]>);
 /// * `visible_bar` - Whether to show a progress bar.
 ///
 /// # Returns
-/// A tuple containing:
-/// 1. **Density**: `Box<[Box<[f64]>]>` - Integrated charge for each atom.
-/// 2. **Volume**: `Box<[f64]>` - Volume size for each atom.
-/// 3. **Radius**: `Box<[f64]>` - Distance from the nucleus to the furthest assigned voxel.
-/// 4. **Error**: `Box<[f64]>` - Integrated Laplacian (should be close to 0 for perfect partitioning).
+/// The [`Partition`] with the charge, volume, radius and error of each atom and the vacuum.
 ///
 /// # Example
-/// ```no_run
+/// ```
 /// use bader::analysis::calculate_bader_density;
+/// use bader::atoms::{Atoms, Lattice};
+/// use bader::grid::Grid;
 /// use bader::voxel_map::VoxelMap;
-/// use bader::atoms::Atoms;
 ///
-/// // Assume we have a populated VoxelMap and Atoms struct
-/// # let voxel_map: VoxelMap = unsafe { std::mem::zeroed() };
-/// # let atoms: Atoms = unsafe { std::mem::zeroed() };
-/// // And a calculated charge density flat array
-/// let charge_density = vec![vec![0.1; 1000]]; // 1000 voxels
+/// let lattice = [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]];
+/// let atoms = Atoms::new(Lattice::new(lattice), vec![[0.0; 3]], String::new());
+/// // a 2x2x2 grid with every voxel assigned to atom 0
+/// let voxel_map = VoxelMap::new(
+///     vec![0; 8],
+///     vec![],
+///     Grid::new([2, 2, 2], lattice, [0.0; 3]),
+/// );
+/// let charge_density = vec![vec![0.5; 8]];
 ///
-/// let (charges, volumes, radii, errors) = calculate_bader_density(
+/// let partition = calculate_bader_density(
 ///     &charge_density,
 ///     &voxel_map,
 ///     &atoms,
-///     4,    // Run on 4 threads
-///     true, // Show progress bar
+///     2,     // Run on 2 threads
+///     false, // No progress bar
 /// );
 ///
-/// println!("Atom 0 Charge: {}", charges[0][0]);
-/// println!("Atom 0 Volume: {}", volumes[0]);
+/// // the whole cell belongs to atom 0: volume 8 and charge 0.5 * 8
+/// assert!((partition.volume[0] - 8.0).abs() < 1e-12);
+/// assert!((partition.charge[0][0] - 4.0).abs() < 1e-12);
+/// assert_eq!(partition.volume[1], 0.0); // vacuum
 /// ```
 pub fn calculate_bader_density(
     density: &[Vec<f64>],
@@ -54,159 +122,62 @@ pub fn calculate_bader_density(
     atoms: &Atoms,
     threads: usize,
     visible_bar: bool,
-) -> BaderResult {
-    let progress_bar: Box<dyn ProgressBar> = match visible_bar {
-        false => Box::new(HiddenBar {}),
-        true => Box::new(Bar::new(
-            density[0].len(),
-            String::from("Summing Bader Density"),
-        )),
-    };
-    let pbar = &progress_bar;
-    let mut bader_density =
-        vec![vec![0.0; density.len()]; atoms.positions.len() + 1];
-    let mut bader_volume = vec![0.0; atoms.positions.len() + 1];
-    let mut bader_radius = vec![f64::INFINITY; atoms.positions.len()];
-    let mut bader_error = vec![0.0; atoms.positions.len() + 1];
-    let vm = &voxel_map;
-    // Calculate the size of the vector to be passed to each thread.
-    let chunk_size =
-        (density[0].len() / threads) + (density[0].len() % threads).min(1);
-    thread::scope(|s| {
-        let spawned_threads = voxel_map
-            .maxima_chunks(chunk_size)
-            .enumerate()
-            .map(|(index, chunk)| {
-                s.spawn(move || {
-                    let mut bd = vec![
-                        vec![0.0; density.len()];
-                        atoms.positions.len() + 1
-                    ];
-                    let mut bv = vec![0.0; atoms.positions.len() + 1];
-                    let mut br = vec![f64::INFINITY; atoms.positions.len()];
-                    let mut be = vec![0.0; atoms.positions.len() + 1];
-                    chunk.iter().enumerate().for_each(
-                        |(voxel_index, maxima)| {
-                            let p = index * chunk.len() + voxel_index;
-                            let lapl = laplacian(p, &density[0], &vm.grid);
-                            match vm.maxima_to_voxel(*maxima) {
-                                Voxel::Maxima(m) => {
-                                    let m = m.atom_index() as usize;
-                                    // Bader density
-                                    for (i, rho) in density.iter().enumerate() {
-                                        bd[m][i] += rho[p];
-                                    }
-                                    // Bader Volume
-                                    bv[m] += 1.0;
-                                    // Bader Error
-                                    be[m] += lapl
-                                }
-                                Voxel::Boundary(weights) => {
-                                    for (m, w) in weights.into_iter() {
-                                        let m = m.atom_index() as usize;
-                                        let w = w as f64;
-                                        // Bader density
-                                        for (i, rho) in
-                                            density.iter().enumerate()
-                                        {
-                                            bd[m][i] += w * rho[p];
-                                        }
-                                        // Bader radius
-                                        let atom_number = vm.maxima_to_atom(m);
-                                        let p_c =
-                                            vm.grid.to_cartesian(p as isize);
-                                        let p_lll_c = atoms
-                                            .lattice
-                                            .cartesian_to_reduced(p_c);
-                                        let atom = atoms.reduced_positions
-                                            [atom_number];
-                                        br[atom_number] =
-                                            atoms.lattice.minimum_distance(
-                                                p_lll_c,
-                                                atom,
-                                                Some(br[atom_number]),
-                                            );
-                                        // Bader volume
-                                        bv[m] += w;
-                                        // Bader error
-                                        be[m] += w * lapl;
-                                    }
-                                }
-                                Voxel::Vacuum => {
-                                    // Bader Density
-                                    for (i, rho) in density.iter().enumerate() {
-                                        bd[atoms.positions.len()][i] += rho[p];
-                                    }
-                                    // Bader Volume
-                                    bv[atoms.positions.len()] += 1.0;
-                                    // Bader Error
-                                    be[atoms.positions.len()] += lapl
-                                }
-                            };
-                            pbar.tick();
-                        },
-                    );
-                    (bd, bv, br, be)
-                })
-            })
-            .collect::<Vec<_>>();
-        // Join each thread and collect the results.
-        // If one thread terminates before the other this is not operated on first.
-        // Either use the sorted index to remove vacuum from the summation or
-        // find a way to operate on finshed threads first (ideally both).
-        for thread in spawned_threads {
-            if let Ok((tmp_bd, tmp_bv, tmp_br, tmp_be)) = thread.join() {
-                bader_density.iter_mut().zip(tmp_bd.into_iter()).for_each(
-                    |(a, b)| {
-                        a.iter_mut().zip(b).for_each(|(c, d)| *c += d);
-                    },
-                );
-                bader_volume.iter_mut().zip(tmp_bv.into_iter()).for_each(
-                    |(a, b)| {
-                        *a += b;
-                    },
-                );
-                bader_radius.iter_mut().zip(tmp_br.into_iter()).for_each(
-                    |(a, b)| {
-                        *a = a.min(b);
-                    },
-                );
-                bader_error.iter_mut().zip(tmp_be.into_iter()).for_each(
-                    |(a, b)| {
-                        *a += b;
-                    },
-                );
-            } else {
-                panic!("Unable to join thread in sum_bader_densities.")
-            };
-        }
-    });
-    // The final result needs to be converted to a charge rather than a density.
-    bader_density.iter_mut().for_each(|a| {
-        a.iter_mut()
-            .for_each(|b| *b *= voxel_map.grid_get().voxel_lattice.volume);
-    });
-    // The distance isn't square rooted in the calcation of distance to save time.
-    // As we need to filter out the infinite distances (atoms with no assigned maxima)
-    // we can square root here also.
-    bader_volume.iter_mut().for_each(|a| {
-        *a *= voxel_map.grid_get().voxel_lattice.volume;
-    });
-    bader_radius.iter_mut().for_each(|d| {
-        match (*d).partial_cmp(&f64::INFINITY) {
-            Some(std::cmp::Ordering::Less) => *d = d.powf(0.5),
-            _ => *d = 0.0,
-        }
-    });
-    (
-        bader_density
-            .into_iter()
-            .map(|bd| bd.into_boxed_slice())
-            .collect(),
-        bader_volume.into(),
-        bader_radius.into(),
-        bader_error.into(),
-    )
+) -> Partition {
+    let pbar =
+        progress_bar(visible_bar, density[0].len(), "Summing Bader Density");
+    let atom_len = atoms.positions.len();
+    let grid = &voxel_map.grid;
+    let mut partition = parallel_map_reduce(
+        &voxel_map.voxel_map,
+        || Partition::new(density.len(), atom_len),
+        |partition, p, _| {
+            let lapl = laplacian(p, &density[0], grid);
+            match voxel_map.voxel_get(p as isize) {
+                Voxel::Maxima(atom) => partition.add(
+                    atom.atom_index() as usize,
+                    1.0,
+                    p,
+                    density,
+                    lapl,
+                ),
+                Voxel::Boundary(weights) => {
+                    let p_reduced = atoms
+                        .lattice
+                        .cartesian_to_reduced(grid.to_cartesian(p as isize));
+                    for (atom, weight) in weights.iter().map(|w| w.decode()) {
+                        let atom = atom.atom_index() as usize;
+                        partition.add(atom, weight as f64, p, density, lapl);
+                        // the radius is the closest boundary voxel to the atom
+                        partition.radius[atom] =
+                            atoms.lattice.minimum_distance(
+                                p_reduced,
+                                atoms.reduced_positions[atom],
+                                Some(partition.radius[atom]),
+                            );
+                    }
+                }
+                Voxel::Vacuum => partition.add(atom_len, 1.0, p, density, lapl),
+            }
+        },
+        Partition::merge,
+        threads,
+        pbar,
+    );
+    // convert from density to charge and from voxel count to volume
+    let voxel_volume = grid.voxel_lattice.volume;
+    for charge in partition.charge.iter_mut() {
+        charge.iter_mut().for_each(|c| *c *= voxel_volume);
+    }
+    partition.volume.iter_mut().for_each(|v| *v *= voxel_volume);
+    // the distances are squared and atoms without a boundary are infinite
+    for radius in partition.radius.iter_mut() {
+        *radius = if radius.is_finite() {
+            radius.sqrt()
+        } else {
+            0.0
+        };
+    }
+    partition
 }
 
 #[cfg(test)]
@@ -257,7 +228,7 @@ mod tests {
             grid,
         };
 
-        let (b_rho, b_vol, _b_rad, _b_err) = calculate_bader_density(
+        let partition = calculate_bader_density(
             &density_data,
             &v_map,
             &atoms,
@@ -270,17 +241,60 @@ mod tests {
         let total_vol = 27.0;
 
         assert!(
-            (b_rho[0][0] - total_vol).abs() < 1e-4,
+            (partition.charge[0][0] - total_vol).abs() < 1e-4,
             "Atom 0 should contain all density"
         );
         assert!(
-            (b_vol[0] - total_vol).abs() < 1e-4,
+            (partition.volume[0] - total_vol).abs() < 1e-4,
             "Atom 0 should have full volume"
         );
 
         // Atom 1 should be empty
-        assert_eq!(b_rho[1][0], 0.0);
-        assert_eq!(b_vol[1], 0.0);
+        assert_eq!(partition.charge[1][0], 0.0);
+        assert_eq!(partition.volume[1], 0.0);
+        assert_eq!(partition.radius[1], 0.0);
+        assert_eq!(partition.atoms(), 2);
+    }
+
+    #[test]
+    fn test_calculate_bader_density_thread_independent() {
+        // the result must not depend on the number of threads, including
+        // thread counts that do not divide the number of voxels
+        let dim = 5;
+        let size = dim * dim * dim;
+        let (grid, atoms) = setup_env(dim);
+        let density_data = vec![
+            (0..size)
+                .map(|i| 1.0 + (i % 7) as f64)
+                .collect::<Vec<f64>>(),
+            (0..size)
+                .map(|i| (i % 3) as f64 - 1.0)
+                .collect::<Vec<f64>>(),
+        ];
+        let voxel_indices = (0..size as isize)
+            .map(|i| if i % 11 == 0 { -1 } else { i % 2 })
+            .collect();
+        let v_map = VoxelMap::new(voxel_indices, vec![], grid);
+        let reference =
+            calculate_bader_density(&density_data, &v_map, &atoms, 1, false);
+        for threads in [2, 3, 4, 7] {
+            let partition = calculate_bader_density(
+                &density_data,
+                &v_map,
+                &atoms,
+                threads,
+                false,
+            );
+            for (a, b) in partition.charge.iter().zip(&reference.charge) {
+                for (a, b) in a.iter().zip(b) {
+                    assert!((a - b).abs() < 1e-9, "{} threads", threads);
+                }
+            }
+            for (a, b) in partition.error.iter().zip(&reference.error) {
+                assert!((a - b).abs() < 1e-9, "{} threads", threads);
+            }
+            assert_eq!(partition.volume, reference.volume);
+        }
     }
 
     #[test]
@@ -313,7 +327,7 @@ mod tests {
             grid,
         };
 
-        let (__rho, b_vol, b_rad, b_err) =
+        let partition =
             calculate_bader_density(&density_data, &v_map, &atoms, 1, false);
 
         // Voxel Volume
@@ -324,11 +338,12 @@ mod tests {
         // Atom 1: 0 full voxels + 0.5 voxel
         let expected_vol_1 = 0.5 * v_vol;
 
-        assert!((b_vol[0] - expected_vol_0).abs() < f64::EPSILON);
-        assert!((b_vol[1] - expected_vol_1).abs() < f64::EPSILON);
+        assert!((partition.volume[0] - expected_vol_0).abs() < f64::EPSILON);
+        assert!((partition.volume[1] - expected_vol_1).abs() < f64::EPSILON);
         assert!(
-            (b_rad[0] - (3.0 * 1.5f64.powi(2)).powf(0.5)).abs() < f64::EPSILON
+            (partition.radius[0] - (3.0 * 1.5f64.powi(2)).sqrt()).abs()
+                < f64::EPSILON
         );
-        assert!((b_err[0] - 0.0).abs() < f64::EPSILON);
+        assert!((partition.error[0] - 0.0).abs() < f64::EPSILON);
     }
 }

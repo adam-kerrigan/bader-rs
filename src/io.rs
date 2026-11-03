@@ -2,314 +2,266 @@ use crate::arguments::{Args, Reference};
 use crate::atoms::Atoms;
 use crate::io::cube::Cube;
 use crate::io::vasp::Vasp;
+use std::io::BufRead;
 
 /// File I/O for the gaussian cube format.
 pub mod cube;
 /// Write analysis files.
 pub mod output;
-/// Custom BufReader.
-pub mod reader;
 /// File I/O for the VASP file format.
 pub mod vasp;
 
-macro_rules! define_file_format {
-    // 1. HELPER: Generates the Match Block
-    (@match_block $self:ident, $method:ident, $args:tt, ($($variant:ident),*) ) => {
-        match $self {
-            $(
-                // We just paste $args here. Since it includes the parentheses '()',
-                // it forms a valid function call: inner.read(a, b)
-                Self::$variant(inner) => inner.$method $args,
-            )*
-        }
-    };
+/// Return type of the read function in FileFormat: the voxel origin, grid
+/// dimensions, atoms and densities read from a file.
+pub type ReadFunction =
+    std::io::Result<([f64; 3], [usize; 3], Atoms, Vec<Vec<f64>>)>;
 
-    // 2. HELPER: Recursive Method Implementer
-    // Base Case: No more methods
-    (@implement_required
-        enum: $enum_name:ident,
-        variants: [ $($variant:ident),* ],
-        methods: []
-    ) => {};
+/// Return type of the init function in FileFormat: the densities, reference
+/// density (empty if there is none), atoms, grid dimensions and voxel origin.
+pub type InitReturn = (Vec<Vec<f64>>, Vec<f64>, Atoms, [usize; 3], [f64; 3]);
 
-    // Recursive Case: Process Head, recurse on Tail
-    (@implement_required
-        enum: $enum_name:ident,
-        variants: [ $($variant:ident),* ],
-        methods: [
-            (
-                $(#[$req_fn_attr:meta])*
-                fn $req_fn_name:ident( &self $(, $req_arg_name:ident : $req_arg_type:ty )* $(,)? ) -> $req_ret:ty;
-            )
-            $($rest:tt)*
-        ]
-    ) => {
-        // Implement the current method
-        fn $req_fn_name(&self $(, $req_arg_name : $req_arg_type )* ) -> $req_ret {
-            // Call the match block helper.
-            // note: We pass the args wrapped in (...) so they match $args:tt
-            define_file_format!(@match_block self, $req_fn_name, ($($req_arg_name),*), ($($variant),*) )
-        }
+/// FileFormat trait. Used for handling input from a file.
+pub trait FileFormat {
+    /// Reads the file into a [`ReadFunction`] containing the information
+    /// needed from the file to build a [`Grid`](crate::grid::Grid).
+    ///
+    /// * `filename`: The name of the file to read.
+    fn read(&self, filename: String) -> ReadFunction;
 
-        // Recurse for the rest
-        define_file_format!(@implement_required
-            enum: $enum_name,
-            variants: [ $($variant),* ],
-            methods: [ $($rest)* ]
-        );
-    };
+    /// Reads the non-density section of the file into an [`Atoms`] object.
+    ///
+    /// * `atom_text`: The full string of non-density information from the
+    ///   density file.
+    fn to_atoms(&self, atom_text: String) -> Atoms;
 
-    // MAIN ENTRY POINT
-    (
-        enum $enum_name:ident { $( $variant:ident ),* $(,)? }
+    /// Writes a density, `data`, to file in the correct format.
+    ///
+    /// * `atoms`: The associated &[`Atoms`] object for the density file.
+    /// * `data`: The density to write to file.
+    /// * `filename`: Where to save the file, minus any suffix as this should
+    ///   be applied in the function.
+    /// * `visible_pbar`: Whether to show a progress bar for the write.
+    fn write(
+        &self,
+        atoms: &Atoms,
+        data: Vec<f64>,
+        filename: String,
+        visible_pbar: bool,
+    ) -> std::io::Result<()>;
 
-        $(#[$trait_attr:meta])*
-        $vis:vis trait $trait_name:ident {
+    /// How to format the positions of maxima and atoms for the file format.
+    ///
+    /// * `coords`: The 3d representation of the position.
+    fn coordinate_format(&self, coords: [f64; 3]) -> [f64; 3];
 
-            // Group A: Required Methods
-            required {
-                $(
-                    $(#[$req_fn_attr:meta])*
-                    fn $req_fn_name:ident( &self $(, $req_arg_name:ident : $req_arg_type:ty )* $(,)? ) -> $req_ret:ty;
-                )*
-            }
-
-            // Group B: Provided Methods (Shared Logic)
-            $(
-                provided {
-                    $(
-                        $(#[$prov_fn_attr:meta])*
-                        // Capture args as 'tt' to preserve 'self' hygiene contexts
-                        fn $prov_fn_name:ident $args:tt -> $prov_ret:ty
-                        { $($prov_body:tt)* }
-                    )*
-                }
-            )?
-        }
-    ) => {
-        // A. Trait Definition
-        $(#[$trait_attr])* $vis trait $trait_name {
-            // 1. Required Signatures
-            $(
-                $(#[$req_fn_attr])*
-                fn $req_fn_name(&self $(, $req_arg_name : $req_arg_type )* ) -> $req_ret;
-            )*
-
-            // 2. Provided Bodies
-            $(
-                $(
-                    $(#[$prov_fn_attr])*
-                    fn $prov_fn_name $args -> $prov_ret {
-                        $($prov_body)*
-                    }
-                )*
-            )?
-        }
-
-        // B. Enum Implementation
-        impl $trait_name for $enum_name {
-            define_file_format!(@implement_required
-                enum: $enum_name,
-                variants: [ $($variant),* ],
-                methods: [
-                    $(
-                        (
-                            $(#[$req_fn_attr])*
-                            fn $req_fn_name( &self $(, $req_arg_name : $req_arg_type )* ) -> $req_ret;
-                        )
-                    )*
-                ]
+    /// Reads the density file and any spin or reference files from the
+    /// arguments, checking they all share a grid.
+    ///
+    /// * `args`: [`Args`] parsed from the command line.
+    ///
+    /// # Panics
+    /// Panics if a file cannot be read or the grids do not match.
+    fn init(&self, args: &Args) -> InitReturn {
+        let (voxel_origin, grid, atoms, mut densities) = self
+            .read(args.file.clone())
+            .unwrap_or_else(|e| panic!("Error: Problem reading file.\n{}", e));
+        // reads an additional file, checking it has the same grid
+        let read_extra = |filename: &String, kind: &str| {
+            let (_, g, _, d) =
+                self.read(filename.clone()).unwrap_or_else(|e| {
+                    panic!("Error: Problem reading {}.\n{}", filename, e)
+                });
+            assert_eq!(
+                g, grid,
+                "Error: {} density has different grid size.",
+                kind
             );
+            d
+        };
+        if let Some(spin_file) = &args.spin {
+            if densities.len() != 1 {
+                panic!(
+                    "Number of densities in original file is not 1.\nAmbiguous how to handle new spin when {} already has {} spin densities.",
+                    args.file,
+                    densities.len() - 1
+                );
+            }
+            let mut spin = read_extra(spin_file, "Spin");
+            if spin.len() != 1 {
+                panic!(
+                    "Number of densities in original file is not 1.\nAmbiguous how to handle spin density when {} contains {} densities.",
+                    spin_file,
+                    spin.len()
+                );
+            }
+            densities.push(spin.remove(0));
         }
-    };
+        let rho = match &args.reference {
+            Reference::None => Vec::new(),
+            Reference::One(f) => read_extra(f, "Reference").remove(0),
+            Reference::Two(f1, f2) => {
+                let mut rho = read_extra(f1, "Reference").remove(0);
+                let rho2 = read_extra(f2, "Reference").remove(0);
+                rho.iter_mut().zip(rho2).for_each(|(a, b)| *a += b);
+                rho
+            }
+        };
+        (densities, rho, atoms, grid, voxel_origin)
+    }
 }
 
 /// Indicates the available file types of the density file.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FileType {
     /// CHGCAR, CHG and PARCHG.
     Vasp(Vasp),
-    /// Guassian, CP2K etc.
+    /// Gaussian, CP2K etc.
     Cube(Cube),
 }
 
-define_file_format! {
-    enum FileType { Vasp, Cube }
-
-    /// FileFormat trait. Used for handling input from a file.
-    pub trait FileFormat {
-        required {
-            /// Reads the file into a [`ReadFunction`] containing the information
-            /// needed from the file to build a [`Grid`](crate::grid::Grid).
-            ///
-            /// * `filename`: The name of the file to read.
-            fn read(&self, filename: String) -> ReadFunction;
-
-            /// Reads the non-density section of the file into an [`Atoms`] object.
-            ///
-            /// * `atom_text`: The full string of non-density information from the
-            ///   density file.
-            fn to_atoms(&self, atom_text: String) -> Atoms;
-
-            /// Writes a specific density, data, to tile in the correct format.
-            ///
-            /// * `atoms`: The associated &[`Atoms`] object for the density file.
-            /// * `data`: The density to write to file wrapped in options with None representing 0.
-            /// * `filename`: Where to save the file, minus any suffix as this should
-            ///   be applied in the function.
-            /// * `pbar`: A progress bar for monitoring the write.
-            fn write(
-                &self,
-                atoms: &Atoms,
-                data: Vec<Option<f64>>,
-                filename: String,
-                visible_pbar: bool,
-            ) -> std::io::Result<()>;
-
-            /// How the format the positions of maxima and atoms
-            ///
-            /// * `coords`: The 3d representation of the position.
-            fn coordinate_format(&self, coords: [f64; 3]) -> [f64; 3];
+impl FileFormat for FileType {
+    fn read(&self, filename: String) -> ReadFunction {
+        match self {
+            Self::Vasp(f) => f.read(filename),
+            Self::Cube(f) => f.read(filename),
         }
+    }
 
-        provided {
-            /// Returns the parts required to build [`Grid`](crate::grid::Grid) and [`Atoms`] structures.
-            ///
-            /// * `args`: [`Args`] parsed from the command line.
-            fn init(&self, args: &Args) -> InitReturn {
-                let (voxel_origin, grid, atoms, mut densities) =
-                    match self.read(args.file.clone()) {
-                        Ok(x) => x,
-                        Err(e) => panic!("Error: Problem reading file.\n{}", e),
-                    };
-                if let Some(x) = args.spin.clone() {
-                    match densities.len() {
-                        1 => {
-                            let (_, g, _, d) = match self.read(x.clone()) {
-                                Ok(r) => r,
-                                Err(e) => panic!("{}", e),
-                            };
-                            if 1 != d.len() {
-                                panic!(
-                                    "Number of densities in original file is not 1.
-Ambiguous how to handle spin density when {} contains {} densities.",
-                                    x,
-                                    d.len()
-                                );
-                            }
-                            assert_eq!(
-                                g, grid,
-                                "Error: Spin density has different grid size."
-                            );
-                            densities.push(d[0].clone());
-                        }
-                        x => panic!(
-                            "Number of densities in original file is not 1.
-Ambiguous how to handle new spin when {} already has {} spin densities.",
-                            args.file,
-                            x - 1
-                        ),
-                    }
-                }
-                let rho = match args.reference.clone() {
-                    Reference::None => Vec::with_capacity(0),
-                    Reference::One(f) => {
-                        let (_, g, _, densities) = match self.read(f) {
-                            Ok(r) => r,
-                            Err(e) => panic!("{}", e),
-                        };
-                        assert_eq!(
-                            g, grid,
-                            "Error: Reference density has different grid size."
-                        );
-                        densities[0].clone()
-                    }
-                    Reference::Two(f1, f2) => {
-                        let (_, g, _, densities) = match self.read(f1) {
-                            Ok(r) => r,
-                            Err(e) => panic!("{}", e),
-                        };
-                        assert_eq!(
-                            g, grid,
-                            "Error: Reference density has different grid size."
-                        );
-                        let (_, g2, _, densities2) = match self.read(f2) {
-                            Ok(r) => r,
-                            Err(e) => panic!("{}", e),
-                        };
+    fn to_atoms(&self, atom_text: String) -> Atoms {
+        match self {
+            Self::Vasp(f) => f.to_atoms(atom_text),
+            Self::Cube(f) => f.to_atoms(atom_text),
+        }
+    }
 
-                        assert_eq!(
-                            g2, grid,
-                            "Error: Reference density has different grid size."
-                        );
-                        densities[0]
-                            .iter()
-                            .zip(&densities2[0])
-                            .map(|(a, b)| a + b)
-                            .collect::<Vec<f64>>()
-                    }
-                };
-                (densities, rho, atoms, grid, voxel_origin)
-            }
+    fn write(
+        &self,
+        atoms: &Atoms,
+        data: Vec<f64>,
+        filename: String,
+        visible_pbar: bool,
+    ) -> std::io::Result<()> {
+        match self {
+            Self::Vasp(f) => f.write(atoms, data, filename, visible_pbar),
+            Self::Cube(f) => f.write(atoms, data, filename, visible_pbar),
+        }
+    }
 
+    fn coordinate_format(&self, coords: [f64; 3]) -> [f64; 3] {
+        match self {
+            Self::Vasp(f) => f.coordinate_format(coords),
+            Self::Cube(f) => f.coordinate_format(coords),
         }
     }
 }
 
 /// What type of density to write.
 pub enum WriteType {
-    /// Write a Bader Atom.
-    Atom(Vec<isize>),
+    /// Write the Bader volumes of these atoms, all atoms if empty.
+    Atom(Vec<usize>),
     /// Don't write anything.
     None,
 }
 
-/// Turn a float into fortran "scientific" notation (leading digit is zero).
-pub struct FortranFormat {
-    /// The float to convert to a string. Wrapped in an option as we need to log
-    /// so `0f64` should be stored as None.
-    float: Option<f64>,
-    /// A value to multiply the float by before printing, eg. a volume.
-    mult: f64,
-}
-
-impl std::fmt::Display for FortranFormat {
-    /// Format the structure into a fortran style exponential.
-    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let prec = formatter.precision().unwrap_or(6);
-        match self.float {
-            None => {
-                write!(formatter, " 0.{:0<width$}E{:+03}", 0, 0, width = prec)
-            }
-            Some(f) => {
-                let float = f * self.mult;
-                let exponant = float.log10() as i32 + 1;
-                let decimals = float.abs() * 10f64.powi(prec as i32 - exponant);
-                let decimals = decimals.round() as usize;
-                if float.is_sign_negative() {
-                    write!(
-                        formatter,
-                        "-0.{:0<width$}E{:+03}",
-                        decimals,
-                        exponant,
-                        width = prec
-                    )
-                } else {
-                    write!(
-                        formatter,
-                        " 0.{:0<width$}E{:+03}",
-                        decimals,
-                        exponant,
-                        width = prec
-                    )
-                }
-            }
-        }
+/// Reads a line from `reader` into `buffer`, including the newline.
+///
+/// Returns `None` at the end of the file and an error if the file ends
+/// before `expected` lines have been read.
+pub(crate) fn read_line<'a>(
+    reader: &mut impl BufRead,
+    buffer: &'a mut String,
+) -> std::io::Result<Option<&'a str>> {
+    buffer.clear();
+    match reader.read_line(buffer)? {
+        0 => Ok(None),
+        _ => Ok(Some(buffer.as_str())),
     }
 }
 
-/// Return type of the read function in FileFormat.
-pub type ReadFunction =
-    std::io::Result<([f64; 3], [usize; 3], Atoms, Vec<Vec<f64>>)>;
-/// Return type of the init function in FileFormat.
-type InitReturn = (Vec<Vec<f64>>, Vec<f64>, Atoms, [usize; 3], [f64; 3]);
+/// An error for a file that does not match the expected format.
+pub(crate) fn invalid_data(filename: &str, format: &str) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!("Cannot read {} as a {} file.", filename, format),
+    )
+}
+
+/// Parses every whitespace separated number on a line.
+pub(crate) fn parse_line<T: std::str::FromStr>(line: &str) -> Option<Vec<T>> {
+    line.split_whitespace()
+        .map(|x| x.parse::<T>().ok())
+        .collect()
+}
+
+/// Turn a float into fortran "scientific" notation (leading digit is zero).
+///
+/// The precision of the formatter sets the number of digits in the mantissa.
+///
+/// # Example
+/// ```
+/// use bader::io::FortranFormat;
+///
+/// assert_eq!(format!("{:.5}", FortranFormat::new(12.5)), " 0.12500E+02");
+/// assert_eq!(format!("{:.5}", FortranFormat::new(-0.05)), "-0.50000E-01");
+/// assert_eq!(format!("{:.3}", FortranFormat::new(0.0)), " 0.000E+00");
+/// ```
+pub struct FortranFormat(f64);
+
+impl FortranFormat {
+    /// Format `float`.
+    pub fn new(float: f64) -> Self {
+        Self(float)
+    }
+}
+
+impl std::fmt::Display for FortranFormat {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let prec = formatter.precision().unwrap_or(6);
+        let sign = if self.0.is_sign_negative() { '-' } else { ' ' };
+        let float = self.0.abs();
+        if float == 0.0 || !float.is_finite() {
+            return write!(formatter, "{}0.{:0<prec$}E+00", sign, 0);
+        }
+        // normalise so the mantissa is 0.d1d2...dn
+        let mut exponent = float.log10().floor() as i32 + 1;
+        let mut mantissa =
+            (float * 10f64.powi(prec as i32 - exponent)).round() as u64;
+        // rounding can carry into the next power of ten
+        if mantissa >= 10u64.pow(prec as u32) {
+            mantissa /= 10;
+            exponent += 1;
+        }
+        write!(formatter, "{}0.{:0>prec$}E{:+03}", sign, mantissa, exponent)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fortran_format() {
+        let f = |x: f64, p: usize| format!("{:.p$}", FortranFormat::new(x));
+        assert_eq!(f(152.46, 11), " 0.15246000000E+03");
+        assert_eq!(f(1.0, 5), " 0.10000E+01");
+        assert_eq!(f(0.5, 5), " 0.50000E+00");
+        assert_eq!(f(0.05, 5), " 0.50000E-01");
+        assert_eq!(f(-0.10283642961E-07, 11), "-0.10283642961E-07");
+        assert_eq!(f(-3.0, 2), "-0.30E+01");
+        assert_eq!(f(0.0, 4), " 0.0000E+00");
+        assert_eq!(f(-0.0, 4), "-0.0000E+00");
+        // rounding up to the next power of ten
+        assert_eq!(f(9.99999999, 5), " 0.10000E+02");
+        assert_eq!(f(0.099999999, 3), " 0.100E+00");
+    }
+
+    #[test]
+    fn test_parse_line() {
+        assert_eq!(
+            parse_line::<f64>(" 1.0 2.5\t-3e2 \n"),
+            Some(vec![1.0, 2.5, -300.0])
+        );
+        assert_eq!(parse_line::<usize>("1 2 x"), None);
+        assert_eq!(parse_line::<usize>(""), Some(vec![]));
+    }
+}
