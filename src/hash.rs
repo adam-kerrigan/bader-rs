@@ -8,7 +8,7 @@ const GOLDEN_RATIO: u64 = 0x9E3779B97F4A7C15;
 /// It ignores previous state and simply multiplies the input by the Golden Ratio.
 /// This is the fastest possible hasher for single integer keys.
 ///
-/// # Safety
+/// # Warning
 /// DO NOT use this for composite keys (structs with >1 field or vectors).
 /// It will overwrite the hash of previous fields, leading to collisions.
 #[derive(Default)]

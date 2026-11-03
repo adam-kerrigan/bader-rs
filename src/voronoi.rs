@@ -80,7 +80,7 @@ impl Voronoi {
                                             vector_inv[i],
                                         )
                                     }
-                                    // Check that the vertex isn't on the orginal vector which would make all
+                                    // Check that the vertex isn't on the original vector which would make all
                                     // vertices apart from this one outside the Voronoi volume
                                     let vertex_mag = vdot(vertex, vertex);
                                     if (vertex_mag - 0.5 * n_mag).abs()
@@ -144,7 +144,7 @@ impl Voronoi {
                 vertices.push(vertices[0]);
                 // calculate the area of the facet and divide by the length
                 // first calculate the volume of the tetrahedron of v[i], v[i+1] & n/2. This is the
-                // scalar tripple product of the vectors divided by 6. The volume is for the Laplacian
+                // scalar triple product of the vectors divided by 6. The volume is for the Laplacian
                 // calculation later
                 let wedge_volume = vertices
                     .windows(2)

@@ -35,7 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check linting
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
   msrv:
     name: MSRV
     runs-on: ubuntu-latest

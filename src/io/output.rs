@@ -1,6 +1,6 @@
 use crate::analysis::Partition;
 use crate::atoms::Atoms;
-use crate::critical::{CriticalPoint, CriticalPoints};
+use crate::critical::CriticalPoints;
 use crate::grid::Grid;
 use crate::io::{FileFormat, FileType};
 use crate::methods::laplacian;
@@ -328,7 +328,7 @@ pub fn write(string: String, filename: String) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use crate::atoms::Lattice;
-    use crate::critical::CriticalPointKind;
+    use crate::critical::{CriticalPoint, CriticalPointKind};
     use crate::io::cube::Cube;
     use crate::voxel_map::EncodedImage;
 
