@@ -63,11 +63,36 @@ impl ProgressBar for Bar {
 
 /// A silent progress bar (No-op).
 ///
-/// Used when the user requests "silent" mode or when output is redirected.
-/// All calls to `tick` are ignored.
+/// Used when the user requests "silent" mode. All calls to `tick` are ignored.
 pub struct HiddenBar {}
 impl ProgressBar for HiddenBar {
     fn tick(&self) {}
+}
+
+/// Creates a [`Bar`] if `visible` is true, otherwise a [`HiddenBar`].
+///
+/// # Arguments
+/// * `visible` - Whether the bar should be drawn to `stderr`.
+/// * `length` - The total number of items to process (100% progress).
+/// * `text` - A label to display alongside the bar.
+///
+/// # Example
+/// ```
+/// use bader::progress::progress_bar;
+///
+/// let bar = progress_bar(false, 10, "Working");
+/// bar.tick();
+/// ```
+pub fn progress_bar(
+    visible: bool,
+    length: usize,
+    text: &str,
+) -> Box<dyn ProgressBar> {
+    if visible {
+        Box::new(Bar::new(length, text.to_string()))
+    } else {
+        Box::new(HiddenBar {})
+    }
 }
 
 #[cfg(test)]
@@ -118,5 +143,13 @@ mod tests {
         let bar = HiddenBar {};
         bar.tick();
         bar.tick();
+    }
+
+    #[test]
+    fn test_progress_bar_constructor() {
+        let hidden = progress_bar(false, 5, "hidden");
+        hidden.tick();
+        let visible = progress_bar(true, 5, "visible");
+        visible.tick();
     }
 }

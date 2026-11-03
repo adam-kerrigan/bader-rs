@@ -53,8 +53,9 @@ pub enum CriticalPointKind {
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct CriticalPointKey(Vec<EncodedAtom>);
 impl CriticalPointKey {
-    pub fn from_cp(cp: CriticalPoint) -> Self {
-        let mut atoms = cp.atoms.to_vec();
+    /// Builds the canonical key for a list of atoms.
+    pub fn new(atoms: &[EncodedAtom]) -> Self {
+        let mut atoms = atoms.to_vec();
         atoms.sort_unstable();
         if let Some(anchor) = atoms.first() {
             let image = anchor.image();
@@ -465,7 +466,7 @@ mod tests {
     fn test_critical_point_key_sorting() {
         // CP with atoms [2, 1, 3] should sort to [1, 2, 3]
         let cp = create_cp(0, CriticalPointKind::Bond, &[2, 1, 3]);
-        let key = CriticalPointKey::from_cp(cp);
+        let key = CriticalPointKey::new(&cp.atoms);
 
         let ids: Vec<u32> =
             key.into_box().iter().map(|a| a.atom_index()).collect();
@@ -489,7 +490,7 @@ mod tests {
             vec![a1, a2].into_boxed_slice(),
         );
 
-        let key = CriticalPointKey::from_cp(cp);
+        let key = CriticalPointKey::new(&cp.atoms);
 
         // Both images should be [0,0,0] after normalisation (subtracted the first one's image)
         for atom in key.into_box().iter() {

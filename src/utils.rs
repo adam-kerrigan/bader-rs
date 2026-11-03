@@ -1,5 +1,3 @@
-use std::cmp::Ordering;
-
 use crate::errors::VacuumError;
 
 /// compute the cross product between two vectors
@@ -16,24 +14,14 @@ pub fn subtract(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
 
-/// compute the dot product between a vector and a matrix
+/// compute the product of a row vector and a matrix, v.M
 pub fn dot(v: [f64; 3], m: [[f64; 3]; 3]) -> [f64; 3] {
-    (0..3)
-        .map(|i| v[0] * m[0][i] + v[1] * m[1][i] + v[2] * m[2][i])
-        .collect::<Vec<f64>>()
-        .try_into()
-        .unwrap() // safe to unwrap as is size 3
+    [0, 1, 2].map(|i| v[0] * m[0][i] + v[1] * m[1][i] + v[2] * m[2][i])
 }
 
-/// compute the integer dot product between a vector and a matrix
+/// compute v.M rounded to the nearest integers
 pub fn idot(v: [f64; 3], m: [[f64; 3]; 3]) -> [isize; 3] {
-    (0..3)
-        .map(|i| {
-            (v[0] * m[0][i] + v[1] * m[1][i] + v[2] * m[2][i]).round() as isize
-        })
-        .collect::<Vec<isize>>()
-        .try_into()
-        .unwrap() // safe to unwrap as is size 3
+    dot(v, m).map(|x| x.round() as isize)
 }
 
 /// compute the dot product between two vectors
@@ -41,35 +29,19 @@ pub fn vdot(a: [f64; 3], b: [f64; 3]) -> f64 {
     a.iter().zip(b.iter()).map(|(a, b)| a * b).sum()
 }
 
+/// compute the squared norm of a vector
+pub fn norm_squared(a: [f64; 3]) -> f64 {
+    vdot(a, a)
+}
+
 /// compute the norm of a vector
 pub fn norm(a: [f64; 3]) -> f64 {
-    a.iter().map(|a| a.powi(2)).sum::<f64>().powf(0.5)
+    norm_squared(a).sqrt()
 }
 
 /// compute the sum of two vectors
 pub fn vsum(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
-}
-
-/// compute M.T * M
-pub fn transpose_square(m: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
-    [
-        [
-            vdot([m[0][0], m[1][0], m[2][0]], [m[0][0], m[1][0], m[2][0]]),
-            vdot([m[0][0], m[1][0], m[2][0]], [m[0][1], m[1][1], m[2][1]]),
-            vdot([m[0][0], m[1][0], m[2][0]], [m[0][2], m[1][2], m[2][2]]),
-        ],
-        [
-            vdot([m[0][1], m[1][1], m[2][1]], [m[0][0], m[1][0], m[2][0]]),
-            vdot([m[0][1], m[1][1], m[2][1]], [m[0][1], m[1][1], m[2][1]]),
-            vdot([m[0][1], m[1][1], m[2][1]], [m[0][2], m[1][2], m[2][2]]),
-        ],
-        [
-            vdot([m[0][2], m[1][2], m[2][2]], [m[0][0], m[1][0], m[2][0]]),
-            vdot([m[0][2], m[1][2], m[2][2]], [m[0][1], m[1][1], m[2][1]]),
-            vdot([m[0][2], m[1][2], m[2][2]], [m[0][2], m[1][2], m[2][2]]),
-        ],
-    ]
 }
 
 /// calculates the inverse of a 3x3 lattice if it is invertible
@@ -109,33 +81,26 @@ pub fn invert_lattice(lattice: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
     }
 }
 
-/// returns the first index that is not vacuum from a sorted index list
+/// Returns the indices of every voxel above the vacuum `tolerance`, sorted
+/// from the highest density to the lowest.
+///
+/// # Errors
+/// Returns a [`VacuumError`] if no voxel is above the tolerance.
 pub fn index_generator(
     density: &[f64],
     tolerance: f64,
 ) -> Result<Vec<usize>, VacuumError> {
-    let mut index: Vec<usize> = density
-        .iter()
-        .enumerate()
-        .filter_map(|(i, f)| {
-            if let Some(Ordering::Greater) = f.partial_cmp(&tolerance) {
-                Some(i)
-            } else {
-                None
-            }
-        })
+    let mut index: Vec<usize> = (0..density.len())
+        .filter(|&i| density[i] > tolerance)
         .collect();
     if index.is_empty() {
-        Err(VacuumError {
+        return Err(VacuumError {
             vacuum_tolerance: tolerance,
-            density: density.iter().copied().reduce(f64::max).unwrap(),
-        })
-    } else {
-        index.sort_unstable_by(|a, b| {
-            density[*b].partial_cmp(&density[*a]).unwrap()
+            density: density.iter().copied().fold(f64::NEG_INFINITY, f64::max),
         });
-        Ok(index)
     }
+    index.sort_unstable_by(|a, b| density[*b].total_cmp(&density[*a]));
+    Ok(index)
 }
 
 #[cfg(test)]
@@ -161,10 +126,10 @@ mod tests {
     }
 
     #[test]
-    fn utils_transpose_square() {
-        let matrix = [[3., 0., 0.], [2.5, 2., 0.], [0., 0., 5.]];
-        let t_squared = [[15.25, 5., 0.], [5., 4., 0.], [0., 0., 25.]];
-        assert_eq!(transpose_square(matrix), t_squared)
+    fn utils_norm_squared_and_vsum() {
+        assert_eq!(norm_squared([3., 4., 12.]), 169.);
+        assert_eq!(vsum([1., 2., 3.], [4., 5., 6.]), [5., 7., 9.]);
+        assert_eq!(subtract([4., 5., 6.], [1., 2., 3.]), [3., 3., 3.]);
     }
 
     #[test]
