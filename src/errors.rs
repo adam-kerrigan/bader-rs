@@ -1,35 +1,38 @@
 use crate::arguments::App;
 use std::fmt::{Debug, Display};
 
-/// An error for not being able to assign Bader maxima to atoms
+/// An error for not being able to assign a Bader maximum to an atom.
+///
+/// The position is in the Cartesian frame of the [`Grid`](crate::grid::Grid),
+/// the binary formats it for the file type before reporting it.
+#[derive(Debug)]
 pub struct MaximaError {
-    /// The position of the maxima
+    /// The position of the maximum
     pub maximum: [f64; 3],
-    /// The index of the atom
+    /// The index of the nearest atom
     pub atom: usize,
-    /// the distance between maximum and atom
+    /// The distance between the maximum and the atom
     pub distance: f64,
 }
 
-/// Display should never be called explicitly as the Bader maximum needs to be formatted by the
-/// file type
 impl Display for MaximaError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "")
+        write!(
+            f,
+            "Bader maximum at {:?} is too far away from nearest atom: {} with a distance of {} Ang.",
+            self.maximum,
+            self.atom + 1,
+            self.distance
+        )
     }
 }
 
-/// Debug should never be called explicitly as the Bader maximum needs to be formatted by the
-/// file type
-impl Debug for MaximaError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "")
-    }
-}
-
-/// An error for the vacuum tolerance being heigher than the highest density value
+/// An error for the vacuum tolerance being higher than the highest density value
+#[derive(Debug)]
 pub struct VacuumError {
+    /// The tolerance that was passed.
     pub vacuum_tolerance: f64,
+    /// The highest value in the density.
     pub density: f64,
 }
 
@@ -40,12 +43,6 @@ impl Display for VacuumError {
             "Vacuum tolerance ({}) is higher than maximum value of density ({}).",
             self.vacuum_tolerance, self.density
         )
-    }
-}
-
-impl Debug for VacuumError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self)
     }
 }
 
@@ -62,11 +59,11 @@ pub enum ArgumentError<'a> {
     /// Passed too many values.
     /// TooManyValues(flag, max, supplied)
     TooManyValues(String, usize, usize),
-    /// Passed an unvalid value for the flag, ie. filetype.
+    /// Passed an invalid value for the flag, ie. filetype.
     /// NotValidValue(flag, value)
     NotValidValue(String, String),
-    /// Missing a dependant flag.
-    /// MissingDependant(flag, dependancy)
+    /// Missing a flag this one depends on.
+    /// MissingDependant(flag, dependency)
     MissingDependant(String, String),
     /// Passed a flag for a different filetype than the one given.
     /// WrongFileType(flag, filetype)
@@ -125,5 +122,37 @@ impl Display for ArgumentError<'_> {
 impl Debug for ArgumentError<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_messages() {
+        let e = MaximaError {
+            maximum: [1.0, 2.0, 3.0],
+            atom: 3,
+            distance: 1.5,
+        };
+        assert_eq!(
+            e.to_string(),
+            "Bader maximum at [1.0, 2.0, 3.0] is too far away from nearest atom: 4 with a distance of 1.5 Ang."
+        );
+        let e = VacuumError {
+            vacuum_tolerance: 1.0,
+            density: 0.5,
+        };
+        assert_eq!(
+            e.to_string(),
+            "Vacuum tolerance (1) is higher than maximum value of density (0.5)."
+        );
+        let e = ArgumentError::TooManyValues(String::from("ref"), 2, 3);
+        assert_eq!(
+            e.to_string(),
+            "Option \"ref\" was supplied 3 times, the maximum allowed is \"2\"."
+        );
+        assert_eq!(format!("{:?}", e), e.to_string());
     }
 }

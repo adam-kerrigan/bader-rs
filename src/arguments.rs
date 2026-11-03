@@ -1,13 +1,14 @@
 use crate::{
     errors::ArgumentError,
-    hash::SliceMap,
     io::{FileType, WriteType, cube::Cube, vasp::Vasp},
 };
+use std::collections::HashMap;
 use std::fmt::{Debug, Display, Write};
+use std::str::FromStr;
 use std::thread::available_parallelism;
 
 /// Indicates how many reference files are passed
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Reference {
     /// One file as a reference, usually either a CHGCAR_sum or spin.cube.
     One(String),
@@ -17,62 +18,39 @@ pub enum Reference {
     None,
 }
 
-/// Defualt values for arguments.
-#[derive(Debug)]
-enum DefaultValue {
-    /// None
-    None,
-    /// Integer
-    Int(usize),
-    /// Float
-    Float(f64),
-}
-
-/// Allowed values for arguments.
-#[derive(Debug)]
-enum AllowedValue {
-    /// Anything
-    None,
-    /// Specific list
-    Strs(Vec<String>),
-}
-
-/// The validated configuration for a Bader analysis run.
-///
-/// This struct is produced by `App::parse_args` and contains all the settings required
-/// to execute the analysis, including file paths, thread counts, and physical tolerances.
+/// The definition of a command-line option.
 #[derive(Debug)]
 struct Arg {
-    /// Name of the argument.
-    name: String,
+    /// Name of the argument, used as the key for its values.
+    name: &'static str,
     /// Text displayed as help for the argument when -h is passed.
-    short_help: String,
+    short_help: &'static str,
     /// Text displayed as help for the argument when --help is passed.
-    long_help: String,
+    long_help: &'static str,
     /// Single character for flag e.g. -h.
     short_flag: char,
     /// Longer flag e.g. --help.
-    long_flag: String,
+    long_flag: &'static str,
     /// Whether the argument takes a value.
     takes_value: bool,
-    /// Whether the argument takes multiple values
+    /// Whether the argument can be passed multiple times.
     multiple_values: bool,
-    /// Whether the argument had a default value and if so what it is.
-    default_value: DefaultValue,
+    /// The default value, if any, as it is parsed and displayed.
+    default_value: Option<&'static str>,
     /// Whether to restrict the argument to specific values and if so what they are.
-    allowed_values: AllowedValue,
+    allowed_values: &'static [&'static str],
 }
 
 /// The main configuration parser for the application.
 ///
 /// This struct defines the available command-line arguments and handles the logic
-/// for parsing the raw argument vector into a structured `Args` object.
+/// for parsing the raw argument vector into a structured [`Args`] object.
 ///
 /// # Logic
 /// It supports:
 /// * **Short Flags**: Single character (e.g., `-h`).
 /// * **Long Flags**: Full name (e.g., `--help`).
-/// * **Clusters**: Combining boolean short flags (e.g., `-xvi` equivalent to `-x -v ...`).
+/// * **Clusters**: Combining short flags (e.g., `-xo` equivalent to `-x -o`).
 /// * **Positional Arguments**: Identifying the input filename amidst flags.
 ///
 /// # Examples
@@ -96,195 +74,177 @@ pub struct App {
 }
 
 impl App {
+    /// Defines the options of the program.
     pub fn new() -> Self {
         // Start options
         let options = vec![
-            Arg{
-                name: String::from("aec"),
-                short_help: String::from("Convience flag for reading both AECCARs."),
-                long_help: String::from("
-\tFlag for reading and summing both the AECCAR0 and AECCAR2 from a VASP calculation"),
+            Arg {
+                name: "aec",
+                short_help: "Convenience flag for reading both AECCARs.",
+                long_help: "
+\tFlag for reading and summing both the AECCAR0 and AECCAR2 from a VASP calculation",
                 short_flag: 'a',
-                long_flag: String::from("aec"),
+                long_flag: "aec",
                 takes_value: false,
                 multiple_values: false,
-                default_value: DefaultValue::None,
-                allowed_values: AllowedValue::None,
+                default_value: None,
+                allowed_values: &[],
             },
             Arg {
-                name: String::from("file type"),
-                short_help: String::from("File containing spin density."),
-                long_help: String::from("
-\tA path to the spin density associated with the original file. This is primarily
-\tfor cube files as if spin density exists in a CHGCAR it will be read automatically.
-\tIf using with VASP outputs then the files for charge and spin density must only
-\tcontain a single density (ie. the original file has been split)."),
+                name: "file type",
+                short_help: "The file format of the density file.",
+                long_help: "
+\tThe file format of the density file. If not set the format is guessed from the
+\tfilename: a name containing \"cube\" is read as a cube file and anything else
+\tis read as a VASP file.",
                 short_flag: 'f',
-                long_flag: String::from("file_type"),
+                long_flag: "file_type",
                 takes_value: true,
                 multiple_values: false,
-                default_value: DefaultValue::None,
-                allowed_values: AllowedValue::Strs(vec![String::from("cube"), String::from("vasp")]),
+                default_value: None,
+                allowed_values: &["cube", "vasp"],
             },
             Arg {
-                name: String::from("index"),
-                short_help: String::from("Index of Bader atoms to be written out."),
-                long_help: String::from("
+                name: "index",
+                short_help: "Index of Bader atoms to be written out.",
+                long_help: "
 \tAn index of a Bader atom to be written out, starting at 1. This flag requires
 \tthe output flag to be set. Multiple atoms can only be written by repeating the
-\tflag ie. bca CHGCAR -oi 1 -i 2."),
+\tflag ie. bca CHGCAR -oi 1 -i 2.",
                 short_flag: 'i',
-                long_flag: String::from("index"),
+                long_flag: "index",
                 takes_value: true,
                 multiple_values: true,
-                default_value: DefaultValue::None,
-                allowed_values: AllowedValue::None,
+                default_value: None,
+                allowed_values: &[],
             },
             Arg {
-                name: String::from("maximum distance"),
-                short_help: String::from("Cut-off after which an error will be thrown for distance of Bader maximum to atom."),
-                long_help: String::from("
+                name: "maximum distance",
+                short_help: "Cut-off after which an error will be thrown for distance of Bader maximum to atom.",
+                long_help: "
 \tThe distance allowed between Bader maximum and its associated atom, in angstrom, before
 \tan error is thrown. This will cause a hard crash of the program, consider whether
 \tincreasing the cut-off or adding a \"ghost atom\" at the location of the Bader
-\tmaximum is more appropriate."),
+\tmaximum is more appropriate.",
                 short_flag: 'm',
-                long_flag: String::from("max_dist"),
+                long_flag: "max_dist",
                 takes_value: true,
                 multiple_values: false,
-                default_value: DefaultValue::Float(1.0),
-                allowed_values: AllowedValue::None,
+                default_value: Some("1"),
+                allowed_values: &[],
             },
             Arg {
-                name: String::from("output"),
-                short_help: String::from("Output the Bader atoms."),
-                long_help: String::from("
+                name: "output",
+                short_help: "Output the Bader atoms.",
+                long_help: "
 \tOutput the bader atoms in the same file format as the input density.
 \tthis can be used in conjunction with the index flag to specify a
-\tspecific atom. without the index flag it will print all the atoms."),
+\tspecific atom. without the index flag it will print all the atoms.",
                 short_flag: 'o',
-                long_flag: String::from("output"),
+                long_flag: "output",
                 takes_value: false,
                 multiple_values: false,
-                default_value: DefaultValue::None,
-                allowed_values: AllowedValue::None,
+                default_value: None,
+                allowed_values: &[],
             },
             Arg {
-                name: String::from("reference"),
-                short_help: String::from("File(s) containing reference charge."),
-                long_help: String::from("
+                name: "reference",
+                short_help: "File(s) containing reference charge.",
+                long_help: "
 \tA reference charge to do the partitioning upon. Two files can be passed
 \tby using multiple flags (bca CHGCAR -r AECCAR0 -r AECCAR2). If two files are
-\tpassed they are summed together."),
+\tpassed they are summed together.",
                 short_flag: 'r',
-                long_flag: String::from("ref"),
+                long_flag: "ref",
                 takes_value: true,
                 multiple_values: true,
-                default_value: DefaultValue::None,
-                allowed_values: AllowedValue::None,
+                default_value: None,
+                allowed_values: &[],
             },
             Arg {
-                name: String::from("silent"),
-                short_help: String::from("Whether to display any output."),
-                long_help: String::from("
-\tRuns the program without displaying any output text or progress bars."),
+                name: "silent",
+                short_help: "Whether to display any output.",
+                long_help: "
+\tRuns the program without displaying any output text or progress bars.",
                 short_flag: 'x',
-                long_flag: String::from("silent"),
+                long_flag: "silent",
                 takes_value: false,
                 multiple_values: false,
-                default_value: DefaultValue::None,
-                allowed_values: AllowedValue::None,
+                default_value: None,
+                allowed_values: &[],
             },
             Arg {
-                name: String::from("self bonding"),
-                short_help: String::from("Whether to include self bonding in the critical point analysis."),
-                long_help: String::from("
-\tSelf bonds are removed in the pruning step by default, this option will leave them in."),
-                short_flag: 'b',
-                long_flag: String::from("bond"),
-                takes_value: false,
-                multiple_values: false,
-                default_value: DefaultValue::None,
-                allowed_values: AllowedValue::None,
-            },
-            Arg {
-                name: String::from("spin"),
-                short_help: String::from("File containing spin density."),
-                long_help: String::from("
+                name: "spin",
+                short_help: "File containing spin density.",
+                long_help: "
 \tA path to the spin density associated with the original file. This is primarily
 \tfor cube files as if spin density exists in a CHGCAR it will be read automatically.
 \tIf using with VASP outputs then the files for charge and spin density must only
-\tcontain a single density (ie. the original file has been split)."),
+\tcontain a single density (ie. the original file has been split).",
                 short_flag: 's',
-                long_flag: String::from("spin"),
+                long_flag: "spin",
                 takes_value: true,
                 multiple_values: false,
-                default_value: DefaultValue::None,
-                allowed_values: AllowedValue::None,
+                default_value: None,
+                allowed_values: &[],
             },
             Arg {
-                name: String::from("threads"),
-                short_help: String::from("Number of threads to distribute the calculation over."),
-                long_help: String::from("
+                name: "threads",
+                short_help: "Number of threads to distribute the calculation over.",
+                long_help: "
 \tThe number of threads to be used by the program. A default value of 0 is used
 \tto allow the program to best decide how to use the available hardware. It does
-\tthis by using the minimum value out of the number cores available and 12."),
+\tthis by using the minimum value out of the number cores available and 12.",
                 short_flag: 't',
-                long_flag: String::from("threads"),
+                long_flag: "threads",
                 takes_value: true,
                 multiple_values: false,
-                default_value: DefaultValue::Int(0),
-                allowed_values: AllowedValue::None,
+                default_value: Some("0"),
+                allowed_values: &[],
             },
             Arg {
-                name: String::from("vacuum tolerance"),
-                short_help: String::from("Cut-off at which charge is considered vacuum."),
-                long_help: String::from("
+                name: "vacuum tolerance",
+                short_help: "Cut-off at which charge is considered vacuum.",
+                long_help: "
 \tValues of density below the supplied value are considered vacuum and are not
-\tincluded in the calculation."),
+\tincluded in the calculation.",
                 short_flag: 'v',
-                long_flag: String::from("vac"),
+                long_flag: "vac",
                 takes_value: true,
                 multiple_values: false,
-                default_value: DefaultValue::Float(1E-6),
-                allowed_values: AllowedValue::None,
+                default_value: Some("0.000001"),
+                allowed_values: &[],
             },
             Arg {
-                name: String::from("weight tolerance"),
-                short_help: String::from("Cut-off at which contributions to the weighting will be ignored."),
-                long_help: String::from("
-\tValues of density below the supplied value are ignored from the weighting and
+                name: "weight tolerance",
+                short_help: "Cut-off at which contributions to the weighting will be ignored.",
+                long_help: "
+\tWeights below the supplied value are ignored from the weighting and not
 \tincluded in the calculation. By raising the tolerance the calculation speed can
 \tbe increased but every ignored weight is unaccounted for in the final partitions.
-\tBe sure to test this!"),
+\tBe sure to test this!",
                 short_flag: 'w',
-                long_flag: String::from("weight"),
+                long_flag: "weight",
                 takes_value: true,
                 multiple_values: false,
-                default_value: DefaultValue::Float(1E-6),
-                allowed_values: AllowedValue::None,
-            }
+                default_value: Some("0.000001"),
+                allowed_values: &[],
+            },
         ];
         // End options
         let help = Arg {
-            name: String::from("help"),
-            short_help: String::from("Print help (see more with '--help')"),
-            long_help: String::from("Print help (see a summary with '-h')"),
+            name: "help",
+            short_help: "Print help (see more with '--help')",
+            long_help: "Print help (see a summary with '-h')",
             short_flag: 'h',
-            long_flag: String::from("help"),
+            long_flag: "help",
             takes_value: false,
             multiple_values: false,
-            default_value: DefaultValue::None,
-            allowed_values: AllowedValue::None,
+            default_value: None,
+            allowed_values: &[],
         };
-        let max_width = options
-            .iter()
-            .map(|o| {
-                1 + o.long_flag.len()
-                    + if o.takes_value { 7 + o.name.len() } else { 4 }
-            })
-            .max()
-            .unwrap_or(0);
+        let max_width =
+            options.iter().map(|o| o.flags().len()).max().unwrap_or(0);
         Self {
             options,
             help,
@@ -295,52 +255,33 @@ impl App {
     /// Get the text for all the options either in short or long format.
     fn get_options_text(&self, long: bool) -> String {
         self.options.iter().fold(String::new(), |mut output, o| {
+            let help = if long {
+                o.long_help.to_string()
+            } else {
+                format!("  {}", o.short_help)
+            };
+            let default = match (o.default_value, long) {
+                (None, true) => String::from("\n"),
+                (None, false) => String::new(),
+                (Some(d), true) => format!("\n\n\t[default: {}]\n", d),
+                (Some(d), false) => format!(" [default: {}]", d),
+            };
+            let allowed = match (o.allowed_values.is_empty(), long) {
+                (true, _) => String::new(),
+                (false, true) => {
+                    format!("\n\t[possible values: {:?}]\n", o.allowed_values)
+                }
+                (false, false) => {
+                    format!(" [possible values: {:?}]", o.allowed_values)
+                }
+            };
             let _ = writeln!(
                 output,
                 " {:<width$}{}{}{}",
-                // the short and long flag
-                if o.takes_value {
-                    format!("-{},--{} [{}]", o.short_flag, o.long_flag, o.name)
-                } else {
-                    format!("-{},--{}", o.short_flag, o.long_flag)
-                },
-                // the help text
-                if long {
-                    o.long_help.to_string()
-                } else {
-                    format!("  {}", o.short_help)
-                },
-                // does it have a default value
-                match o.default_value {
-                    DefaultValue::None =>
-                        if long {
-                            String::from("\n")
-                        } else {
-                            String::with_capacity(0)
-                        },
-                    DefaultValue::Int(u) =>
-                        if long {
-                            format!("\n\n\t[default: {}]\n", u)
-                        } else {
-                            format!(" [default: {}]", u)
-                        },
-                    DefaultValue::Float(f) =>
-                        if long {
-                            format!("\n\n\t[default: {}]\n", f)
-                        } else {
-                            format!(" [default: {}]", f)
-                        },
-                },
-                // does it have allowed values
-                match &o.allowed_values {
-                    AllowedValue::None => String::with_capacity(0),
-                    AllowedValue::Strs(v) =>
-                        if long {
-                            format!("\n\t[possible values: {:?}]\n", v)
-                        } else {
-                            format!(" [possible values: {:?}]", v)
-                        },
-                },
+                o.flags(),
+                help,
+                default,
+                allowed,
                 width = self.max_width
             );
             output
@@ -351,7 +292,7 @@ impl App {
     fn get_help_text(&self, long: bool) -> String {
         format!(
             " {:<width$}{}",
-            format!("-{},--{}", self.help.short_flag, self.help.long_flag),
+            self.help.flags(),
             if long {
                 format!("\n\t{}", self.help.long_help)
             } else {
@@ -369,347 +310,170 @@ impl App {
         if f == self.help.short_flag {
             return Err(ArgumentError::ShortHelp(self));
         }
-        for opt in self.options.iter() {
-            if f == opt.short_flag {
-                return Ok(opt);
-            }
-        }
-        Err(ArgumentError::NotFlag(f.to_string()))
+        self.options
+            .iter()
+            .find(|opt| opt.short_flag == f)
+            .ok_or_else(|| ArgumentError::NotFlag(f.to_string()))
     }
 
     /// Get the `Arg` from a supplied long flag.
     fn get_option_from_long_flag(
         &self,
-        f: String,
+        f: &str,
     ) -> Result<&Arg, ArgumentError<'_>> {
         if f == self.help.long_flag {
             return Err(ArgumentError::LongHelp(self));
         }
-        for opt in self.options.iter() {
-            if f == opt.long_flag {
-                return Ok(opt);
-            }
-        }
-        Err(ArgumentError::NotFlag(f))
+        self.options
+            .iter()
+            .find(|opt| opt.long_flag == f)
+            .ok_or_else(|| ArgumentError::NotFlag(f.to_string()))
+    }
+
+    /// Get the `Arg` with the given name.
+    fn get_option(&self, name: &str) -> &Arg {
+        self.options.iter().find(|opt| opt.name == name).unwrap()
+    }
+
+    /// Parse the single value of the option `name`, falling back to the
+    /// default if it was not passed.
+    fn parse_value<T: FromStr>(
+        &self,
+        values: &HashMap<&str, Vec<String>>,
+        name: &'static str,
+    ) -> Result<T, ArgumentError<'_>> {
+        let option = self.get_option(name);
+        let value = match values.get(name) {
+            Some(v) => v.last().unwrap().as_str(),
+            None => option.default_value.unwrap(),
+        };
+        value.parse().map_err(|_| {
+            ArgumentError::Unparsable(
+                name.to_string(),
+                value.to_string(),
+                std::any::type_name::<T>().to_string(),
+            )
+        })
     }
 
     /// Parse arguments from flags and values.
+    ///
+    /// The first argument is the name of the program and is ignored. Every
+    /// other argument that does not start with `-` is the file to analyse.
     pub fn parse_args(
         &self,
         args: Vec<&str>,
     ) -> Result<Args, ArgumentError<'_>> {
-        let mut arguments = SliceMap::<String, String>::default();
-        let mut multi_arguments = SliceMap::<String, Vec<String>>::default();
-        args.iter().enumerate()
-                   .try_for_each(|(i, flag)| {
-                       match flag.strip_prefix('-') {
-                           // starts with - so is arg
-                           Some(stripped_flag) => {
-                               // longer than 1 char after being stripped means either cluster
-                               // of flags or long flag
-                               match stripped_flag.len().cmp(&1) {
-                                   std::cmp::Ordering::Greater => match stripped_flag.strip_prefix('-') {
-                                       // matches - again is long flag
-                                       Some(long_flag) => {
-                                           match self.get_option_from_long_flag(long_flag.to_string()) {
-                                               // if it's in the argument list we are good and
-                                               // just need to check if it takes values
-                                               Ok(o) => {if o.takes_value {
-                                                   let value = match args.get(i + 1) {
-                                                       Some(v) => v.to_string(),
-                                                       None => return Err(ArgumentError::NoValue(long_flag.to_string())),
-                                                   };
-                                                   if o.multiple_values {
-                                                       let key = multi_arguments.entry(o.name.to_string()).or_insert(vec![]);
-                                                       key.push(value);
-                                                   } else {
-                                                       arguments.insert(o.name.to_string(), value);
-                                                   }
-                                               } else {
-                                                   arguments.insert(o.name.to_string(), String::with_capacity(0));
-                                               };
-                                               Ok(())},
-                                               // else it isn't an argument
-                                               Err(e) => Err(e),
-                                           }
-                                       },
-                                       // doesn't match again so is cluster of short flags
-                                       None => {
-                                           stripped_flag.chars().try_for_each(|f| match self.get_option_from_short_flag(f) {
-                                               // if it's in the argument list we are good and
-                                               // just need to check if it takes values
-                                               Ok(o) => {if o.takes_value {
-                                                   let value = match args.get(i + 1) {
-                                                       Some(v) => v.to_string(),
-                                                       None => return Err(ArgumentError::NoValue(f.to_string())),
-                                                   };
-                                                   if o.multiple_values {
-                                                       let key = multi_arguments.entry(o.name.to_string()).or_insert(vec![]);
-                                                       key.push(value);
-                                                   } else {
-                                                       arguments.insert(o.name.to_string(), value);
-                                                   }
-                                               } else {
-                                                   arguments.insert(o.name.to_string(), String::with_capacity(0));
-                                               };
-                                               Ok(())},
-                                               // else it isn't an argument
-                                               Err(e) => Err(e),
-                                           })
-                                       },
-                                   },
-                               // is 1 in length so short flag
-                               std::cmp::Ordering::Equal => {
-                                   let f = stripped_flag.chars().nth(0).unwrap();
-                                   match self.get_option_from_short_flag(f) {
-                                       // if it's in the argument list we are good and just
-                                       // need to check if it takes values
-                                       Ok(o) => {if o.takes_value {
-                                           let value = match args.get(i + 1) {
-                                               Some(v) => v.to_string(),
-                                               None => return Err(ArgumentError::NoValue(stripped_flag.to_string())),
-                                           };
-                                           if o.multiple_values {
-                                               let key = multi_arguments.entry(o.name.to_string()).or_insert(vec![]);
-                                               key.push(value);
-                                           } else {
-                                               arguments.insert(o.name.to_string(), value);
-                                           }
-                                       } else {
-                                           arguments.insert(o.name.to_string(), String::with_capacity(0));
-                                       };
-                                       Ok(())},
-                                       // else it isn't an argument
-                                       Err(e) => Err(e),
-                                   }
-                               },
-                               std::cmp::Ordering::Less => Err(ArgumentError::NotFlag("-".to_string()))
-                               }
-                           },
-                           None => Ok(()),
-                       }
-                   })?;
-        let mut file = String::with_capacity(0);
-        args.windows(2).for_each(|window| {
-            let flag = window[0].to_string();
-            let arg = window[1].to_string();
-            // doesn't start with - so could be out file
-            if !arg.starts_with('-') {
-                match flag.strip_prefix('-') {
-                    // previous argument does start with - so we need to check if it is a passed value
-                    Some(short_flag) => match short_flag.strip_prefix('-') {
-                        Some(long_flag) => {
-                            if !self
-                                .get_option_from_long_flag(
-                                    long_flag.to_string(),
-                                )
-                                .unwrap()
-                                .takes_value
-                            {
-                                file = arg;
-                            }
-                        }
-                        None => {
-                            if short_flag.len() > 1 {
-                                let mut takes_value_flag = false;
-                                for f in short_flag.chars() {
-                                    if self
-                                        .get_option_from_short_flag(f)
-                                        .unwrap()
-                                        .takes_value
-                                    {
-                                        takes_value_flag = true;
-                                        break;
-                                    }
-                                }
-                                if !takes_value_flag {
-                                    file = arg;
-                                }
-                            } else if !self
-                                .get_option_from_short_flag(
-                                    // this should have a flag bu if not pass something that won't
-                                    // be matched by any flag
-                                    short_flag.chars().nth(0).unwrap_or(','),
-                                )
-                                .unwrap()
-                                .takes_value
-                            {
-                                file = arg;
-                            }
-                        }
-                    },
-                    None => file = arg,
-                }
+        // the values passed for each option, keyed by the option's name
+        let mut values: HashMap<&str, Vec<String>> = HashMap::new();
+        let mut file = None;
+        let mut args = args.into_iter().skip(1);
+        // stores the option, taking the next argument as its value if needed
+        let mut store = |option: &Arg,
+                         flag: &str,
+                         args: &mut dyn Iterator<Item = &str>|
+         -> Result<(), ArgumentError<'_>> {
+            let value = if option.takes_value {
+                args.next()
+                    .ok_or_else(|| ArgumentError::NoValue(flag.to_string()))?
+            } else {
+                ""
+            };
+            let entry = values.entry(option.name).or_default();
+            if !option.multiple_values {
+                entry.clear();
             }
-        });
-        if file.is_empty() {
-            return Err(ArgumentError::NoFile(self));
+            entry.push(value.to_string());
+            Ok(())
+        };
+        while let Some(arg) = args.next() {
+            if let Some(long_flag) = arg.strip_prefix("--") {
+                let option = self.get_option_from_long_flag(long_flag)?;
+                store(option, long_flag, &mut args)?;
+            } else if let Some(short_flags) = arg.strip_prefix('-') {
+                if short_flags.is_empty() {
+                    return Err(ArgumentError::NotFlag(arg.to_string()));
+                }
+                // a cluster of short flags, each may take the next argument
+                for flag in short_flags.chars() {
+                    let option = self.get_option_from_short_flag(flag)?;
+                    store(option, &flag.to_string(), &mut args)?;
+                }
+            } else {
+                file = Some(arg.to_string());
+            }
         }
-        let file_type = match arguments.get("file type") {
+        let file = file.ok_or(ArgumentError::NoFile(self))?;
+        let file_type = match values.get("file type") {
             Some(ftype) => {
-                let ftype = ftype.to_lowercase();
-                if ftype.eq("cube") {
-                    FileType::Cube(Cube {})
-                } else if ftype.eq("vasp") {
-                    FileType::Vasp(Vasp {})
-                } else {
-                    return Err(ArgumentError::NotValidValue(
-                        String::from("file type"),
-                        ftype,
-                    ));
+                match ftype.last().unwrap().to_lowercase().as_str() {
+                    "cube" => FileType::Cube(Cube {}),
+                    "vasp" => FileType::Vasp(Vasp {}),
+                    other => {
+                        return Err(ArgumentError::NotValidValue(
+                            String::from("file type"),
+                            other.to_string(),
+                        ));
+                    }
                 }
             }
             None => parse_filetype(&file),
         };
-        let weight_tolerance = match arguments.get("weight tolerance") {
-            Some(w) => match w.parse::<f64>() {
-                Ok(f) => f,
-                Err(_) => {
-                    return Err(ArgumentError::Unparsable(
-                        String::from("weight tolerance"),
-                        w.to_string(),
-                        String::from("f64"),
+        let weight_tolerance = self.parse_value(&values, "weight tolerance")?;
+        let maximum_distance = self.parse_value(&values, "maximum distance")?;
+        let vacuum_tolerance = self.parse_value(&values, "vacuum tolerance")?;
+        let threads = match self.parse_value::<usize>(&values, "threads")? {
+            0 => available_parallelism().map_or(1, |n| n.get().min(12)),
+            t => t,
+        };
+        let output = match (values.contains_key("output"), values.get("index"))
+        {
+            (true, Some(indices)) => WriteType::Atom(
+                indices
+                    .iter()
+                    .map(|i| match i.parse::<usize>() {
+                        Ok(i) if i > 0 => Ok(i - 1),
+                        _ => Err(ArgumentError::Unparsable(
+                            String::from("index"),
+                            i.to_string(),
+                            String::from("positive integer"),
+                        )),
+                    })
+                    .collect::<Result<Vec<usize>, _>>()?,
+            ),
+            (true, None) => WriteType::Atom(Vec::new()),
+            (false, Some(_)) => {
+                return Err(ArgumentError::MissingDependant(
+                    String::from("index"),
+                    String::from("output"),
+                ));
+            }
+            (false, None) => WriteType::None,
+        };
+        let reference = match values.get("reference").map(|v| v.as_slice()) {
+            Some([f]) => Reference::One(f.clone()),
+            Some([f1, f2]) => Reference::Two(f1.clone(), f2.clone()),
+            Some(v) => {
+                return Err(ArgumentError::TooManyValues(
+                    String::from("reference"),
+                    2,
+                    v.len(),
+                ));
+            }
+            None if values.contains_key("aec") => match file_type {
+                FileType::Vasp(_) => Reference::Two(
+                    String::from("AECCAR0"),
+                    String::from("AECCAR2"),
+                ),
+                FileType::Cube(_) => {
+                    return Err(ArgumentError::WrongFileType(
+                        String::from("aec"),
+                        String::from("cube"),
                     ));
                 }
             },
-            None => match self
-                .get_option_from_short_flag('w')
-                .unwrap()
-                .default_value
-            {
-                DefaultValue::Float(f) => f,
-                _ => panic!(""),
-            },
+            None => Reference::None,
         };
-        let maximum_distance = match arguments.get("maximum distance") {
-            Some(m) => match m.parse::<f64>() {
-                Ok(f) => f,
-                Err(_) => {
-                    return Err(ArgumentError::Unparsable(
-                        String::from("maximum distance"),
-                        m.to_string(),
-                        String::from("f64"),
-                    ));
-                }
-            },
-            None => match self
-                .get_option_from_short_flag('m')
-                .unwrap()
-                .default_value
-            {
-                DefaultValue::Float(f) => f,
-                _ => panic!(""),
-            },
-        };
-        let vacuum_tolerance = match arguments.get("vacuum tolerance") {
-            Some(m) => match m.parse::<f64>() {
-                Ok(f) => f,
-                Err(_) => {
-                    return Err(ArgumentError::Unparsable(
-                        String::from("vacuum tolerance"),
-                        m.to_string(),
-                        String::from("f64"),
-                    ));
-                }
-            },
-            None => match self
-                .get_option_from_short_flag('v')
-                .unwrap()
-                .default_value
-            {
-                DefaultValue::Float(f) => f,
-                _ => panic!(""),
-            },
-        };
-        let mut threads = match arguments.get("threads") {
-            Some(t) => match t.parse::<usize>() {
-                Ok(f) => f,
-                Err(_) => {
-                    return Err(ArgumentError::Unparsable(
-                        String::from("threads"),
-                        t.to_string(),
-                        String::from("usize"),
-                    ));
-                }
-            },
-            None => match self
-                .get_option_from_short_flag('t')
-                .unwrap()
-                .default_value
-            {
-                DefaultValue::Int(u) => u,
-                _ => panic!(""),
-            },
-        };
-        if threads == 0 {
-            threads = match available_parallelism() {
-                Ok(u) => u.get().min(12),
-                Err(_) => todo!(),
-            };
-        }
-        let output = match arguments.get("output") {
-            Some(_) => match multi_arguments.get("index") {
-                Some(v) => {
-                    let mut a = Vec::with_capacity(v.len());
-                    for i in v.iter() {
-                        match i.parse::<isize>() {
-                            Ok(i) => a.push(i - 1),
-                            Err(_) => {
-                                return Err(ArgumentError::Unparsable(
-                                    String::from("index"),
-                                    i.to_string(),
-                                    String::from("isize"),
-                                ));
-                            }
-                        }
-                    }
-                    WriteType::Atom(a)
-                }
-                None => WriteType::Atom(Vec::with_capacity(0)),
-            },
-            None => match multi_arguments.get("index") {
-                Some(_) => {
-                    return Err(ArgumentError::MissingDependant(
-                        String::from("index"),
-                        String::from("output"),
-                    ));
-                }
-                None => WriteType::None,
-            },
-        };
-        let reference = match multi_arguments.get("reference") {
-            Some(v) => match v.len().cmp(&2) {
-                std::cmp::Ordering::Less => Reference::One(v[0].to_string()),
-                std::cmp::Ordering::Equal => {
-                    Reference::Two(v[0].to_string(), v[1].to_string())
-                }
-                std::cmp::Ordering::Greater => {
-                    return Err(ArgumentError::TooManyValues(
-                        String::from("reference"),
-                        2,
-                        v.len(),
-                    ));
-                }
-            },
-            None => match arguments.get("aec") {
-                Some(_) => match file_type {
-                    FileType::Vasp(_) => Reference::Two(
-                        String::from("AECCAR0"),
-                        String::from("AECCAR2"),
-                    ),
-                    FileType::Cube(_) => {
-                        return Err(ArgumentError::WrongFileType(
-                            String::from("aec"),
-                            String::from("cube"),
-                        ));
-                    }
-                },
-                None => Reference::None,
-            },
-        };
-        let spin = arguments.get("spin").cloned();
-        let silent = arguments.contains_key("silent");
-        let self_bond = arguments.contains_key("self bonding");
         Ok(Args {
             file,
             file_type,
@@ -717,54 +481,59 @@ impl App {
             maximum_distance,
             output,
             reference,
-            self_bond,
-            silent,
-            spin,
+            silent: values.contains_key("silent"),
+            spin: values.get("spin").map(|s| s.last().unwrap().clone()),
             threads,
             vacuum_tolerance,
         })
     }
 }
 
-// To make clippy happy.
+impl Arg {
+    /// The flags as displayed in the help, e.g. `-t,--threads [threads]`.
+    fn flags(&self) -> String {
+        if self.takes_value {
+            format!("-{},--{} [{}]", self.short_flag, self.long_flag, self.name)
+        } else {
+            format!("-{},--{}", self.short_flag, self.long_flag)
+        }
+    }
+}
+
 impl Default for App {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// The short help, printed with `-h`.
 impl Display for App {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let usage = String::from("Usage: bca [OPTIONS] <file>");
-        let arguments =
-            String::from("Arguments:\n <file>  The file to analyse.");
-        let options = self.get_options_text(false);
-        let help = self.get_help_text(false);
         write!(
             f,
-            "{}\n\n{}\n\nOptions:\n{}{}",
-            usage, arguments, options, help
+            "Usage: bca [OPTIONS] <file>\n\nArguments:\n <file>  The file to analyse.\n\nOptions:\n{}{}",
+            self.get_options_text(false),
+            self.get_help_text(false)
         )
     }
 }
 
+/// The long help, printed with `--help`.
 impl Debug for App {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let usage = String::from("Usage: bca [OPTIONS] <file>");
-        let arguments = String::from(
-            "Arguments:\n <file>  The file containing the charge density to analyse.",
-        );
-        let options = self.get_options_text(true);
-        let help = self.get_help_text(true);
         write!(
             f,
-            "{}\n\n{}\n\nOptions:\n{}{}",
-            usage, arguments, options, help
+            "Usage: bca [OPTIONS] <file>\n\nArguments:\n <file>  The file containing the charge density to analyse.\n\nOptions:\n{}{}",
+            self.get_options_text(true),
+            self.get_help_text(true)
         )
     }
 }
 
-/// Holds the arguments passed to the program from the command-line
+/// The validated configuration for a Bader analysis run.
+///
+/// This struct is produced by [`App::parse_args`] and contains all the settings required
+/// to execute the analysis, including file paths, thread counts, and physical tolerances.
 pub struct Args {
     /// The filename.
     pub file: String,
@@ -778,8 +547,6 @@ pub struct Args {
     pub output: WriteType,
     /// Is there a reference file.
     pub reference: Reference,
-    /// Should self bonds be included.
-    pub self_bond: bool,
     /// Should the program be ran silently.
     pub silent: bool,
     /// Is there a spin density to include as well.
@@ -795,10 +562,10 @@ pub fn parse_filetype(fname: &str) -> FileType {
     let f = fname.to_lowercase();
     if f.contains("cube") {
         FileType::Cube(Cube {})
-    } else if f.contains("car") {
-        FileType::Vasp(Vasp {})
     } else {
-        eprintln!("Cannot detect file type, attempting to read as VASP.");
+        if !f.contains("car") {
+            eprintln!("Cannot detect file type, attempting to read as VASP.");
+        }
         FileType::Vasp(Vasp {})
     }
 }
@@ -1099,6 +866,62 @@ mod tests {
         let args2 = app.parse_args(v2).unwrap();
         assert_eq!(args2.file, "CHGCAR");
         assert_eq!(args2.threads, 2);
+    }
+
+    #[test]
+    fn test_help_flags() {
+        let app = App::new();
+        assert!(matches!(
+            app.parse_args(vec!["bca", "-h"]),
+            Err(ArgumentError::ShortHelp(_))
+        ));
+        assert!(matches!(
+            app.parse_args(vec!["bca", "CHGCAR", "--help"]),
+            Err(ArgumentError::LongHelp(_))
+        ));
+        assert!(matches!(
+            app.parse_args(vec!["bca", "-t", "2"]),
+            Err(ArgumentError::NoFile(_))
+        ));
+        // the help lists every option
+        let short = format!("{}", app);
+        let long = format!("{:?}", app);
+        for option in &app.options {
+            assert!(short.contains(&format!("--{}", option.long_flag)));
+            assert!(long.contains(option.long_help));
+        }
+    }
+
+    #[test]
+    fn test_argument_errors() {
+        let app = App::new();
+        assert!(matches!(
+            app.parse_args(vec!["bca", "CHGCAR", "-t"]),
+            Err(ArgumentError::NoValue(_))
+        ));
+        assert!(matches!(
+            app.parse_args(vec!["bca", "CHGCAR", "--nope"]),
+            Err(ArgumentError::NotFlag(_))
+        ));
+        assert!(matches!(
+            app.parse_args(vec!["bca", "CHGCAR", "-q"]),
+            Err(ArgumentError::NotFlag(_))
+        ));
+        assert!(matches!(
+            app.parse_args(vec![
+                "bca", "CHGCAR", "-r", "a", "-r", "b", "-r", "c"
+            ]),
+            Err(ArgumentError::TooManyValues(_, 2, 3))
+        ));
+        assert!(matches!(
+            app.parse_args(vec!["bca", "CHGCAR", "-oi", "0"]),
+            Err(ArgumentError::Unparsable(_, _, _))
+        ));
+        // repeated single value options take the last value
+        let args = app
+            .parse_args(vec!["bca", "CHGCAR", "-t", "1", "-t", "3"])
+            .unwrap();
+        assert_eq!(args.threads, 3);
     }
 
     #[test]

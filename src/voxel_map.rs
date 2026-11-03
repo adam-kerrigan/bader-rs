@@ -1,8 +1,6 @@
 use crate::grid::Grid;
-use crate::hash::{IntMap, IntSet};
 use std::mem::MaybeUninit;
 use std::ops::{Add, Sub};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
 /// A compressed 3D image offset stored as a single `u16`.
@@ -24,43 +22,45 @@ use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 /// let encoded = EncodedImage::new(vec);
 /// assert_eq!(encoded.decode(), vec);
 /// ```
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EncodedImage(u16);
 
 impl EncodedImage {
     const BIAS: i8 = 8;
     const BITS: usize = 4;
-    const MASK: u16 = 2u16.pow(Self::BITS as u32) - 1; // 4 bits
-    const ZERO: u16 = ((Self::BIAS as u16) & Self::MASK)
-        | (((Self::BIAS as u16) & Self::MASK) << Self::BITS)
-        | (((Self::BIAS as u16) & Self::MASK) << (2 * Self::BITS));
+    const MASK: u16 = (1 << Self::BITS) - 1;
+    const ZERO: u16 = (Self::BIAS as u16)
+        | ((Self::BIAS as u16) << Self::BITS)
+        | ((Self::BIAS as u16) << (2 * Self::BITS));
 
     /// Create a new encoded image from an [i8; 3]
+    ///
+    /// # Panics
+    /// In debug builds, panics if a component is outside `[-8, 7]`.
     pub fn new(image: [i8; 3]) -> Self {
         let mut encoded: u16 = 0;
-        image.iter().enumerate().for_each(|(i, img)| {
+        for (i, img) in image.iter().enumerate() {
             let biased = (img + Self::BIAS) as u16;
             debug_assert!(biased <= Self::MASK, "Image out of encoding range");
             encoded |= (biased & Self::MASK) << (i * Self::BITS);
-        });
+        }
         Self(encoded)
     }
 
     /// Decode to an [i8; 3]
     pub fn decode(self) -> [i8; 3] {
-        let mut image = [0; 3];
-        image.iter_mut().enumerate().for_each(|(i, img)| {
-            let biased = (self.0 >> (i * Self::BITS)) & Self::MASK;
-            *img = (biased as i8) - Self::BIAS;
-        });
-        image
+        [0, 1, 2].map(|i| {
+            ((self.0 >> (i * Self::BITS)) & Self::MASK) as i8 - Self::BIAS
+        })
     }
 
+    /// Add a raw image to this one.
     pub fn image_add(self, b: [i8; 3]) -> Self {
         let a = self.decode();
         Self::new([a[0] + b[0], a[1] + b[1], a[2] + b[2]])
     }
 
+    /// Whether this is the image `[0, 0, 0]`.
     pub fn is_zero(&self) -> bool {
         self.0 == Self::ZERO
     }
@@ -69,17 +69,15 @@ impl EncodedImage {
 impl Add for EncodedImage {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
-        let a = self.decode();
-        let b = rhs.decode();
-        Self::new([a[0] + b[0], a[1] + b[1], a[2] + b[2]])
+        self.image_add(rhs.decode())
     }
 }
+
 impl Sub for EncodedImage {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self {
-        let a = self.decode();
         let b = rhs.decode();
-        Self::new([a[0] - b[0], a[1] - b[1], a[2] - b[2]])
+        self.image_add([-b[0], -b[1], -b[2]])
     }
 }
 
@@ -102,17 +100,22 @@ impl Sub for EncodedImage {
 /// let encoded = EncodedAtom::new(atom_id, img);
 ///
 /// assert_eq!(encoded.atom_index(), 42);
+/// assert_eq!(encoded.image(), img);
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 #[repr(transparent)]
-pub struct EncodedAtom(pub u32);
+pub struct EncodedAtom(u32);
 
 impl EncodedAtom {
     const SHIFT: usize = EncodedImage::BITS * 3;
-    const MASK: u32 = 2u32.pow(Self::SHIFT as u32) - 1;
+    const MASK: u32 = (1 << Self::SHIFT) - 1;
     const BITS: u32 = 20;
-    const MAX_ATOM: u32 = 2u32.pow(Self::BITS) - 1;
+    const MAX_ATOM: u32 = (1 << Self::BITS) - 1;
 
+    /// Create a new encoded atom from an atom index and its image.
+    ///
+    /// # Panics
+    /// In debug builds, panics if `atom` cannot be stored in 20 bits.
     pub fn new(atom: u32, image: EncodedImage) -> Self {
         debug_assert!(
             atom < Self::MAX_ATOM,
@@ -121,32 +124,29 @@ impl EncodedAtom {
         Self((atom << Self::SHIFT) | (image.0) as u32)
     }
 
+    /// Create a new encoded atom in the image `[0, 0, 0]`.
     pub fn new_zero_image(atom: u32) -> Self {
-        Self((atom << Self::SHIFT) | (EncodedImage::ZERO) as u32)
+        Self::new(atom, EncodedImage(EncodedImage::ZERO))
     }
 
+    /// The index of the atom.
     pub fn atom_index(&self) -> u32 {
         self.0 >> Self::SHIFT
     }
 
+    /// The image of the atom.
     pub fn image(&self) -> EncodedImage {
         EncodedImage((self.0 & Self::MASK) as u16)
     }
 
+    /// The same atom with `image` added to its image.
     pub fn image_add(self, image: EncodedImage) -> Self {
         Self::new(self.atom_index(), self.image() + image)
     }
 
+    /// The same atom with `image` subtracted from its image.
     pub fn image_sub(self, image: EncodedImage) -> Self {
         Self::new(self.atom_index(), self.image() - image)
-    }
-
-    pub fn decode_partial(self) -> (u32, EncodedImage) {
-        (self.atom_index(), self.image())
-    }
-
-    pub fn decode_full(self) -> (u32, [i8; 3]) {
-        (self.atom_index(), self.image().decode())
     }
 }
 
@@ -180,10 +180,12 @@ impl EncodedAtom {
 pub struct EncodedWeight(u64);
 
 impl EncodedWeight {
+    /// Pack an atom and its weight.
     pub fn new(encoded_atom: EncodedAtom, weight: f32) -> Self {
         Self((encoded_atom.0 as u64) | ((weight.to_bits() as u64) << 32))
     }
 
+    /// Unpack into the atom and its weight.
     pub fn decode(self) -> (EncodedAtom, f32) {
         (
             EncodedAtom(self.0 as u32),
@@ -192,33 +194,111 @@ impl EncodedWeight {
     }
 }
 
-/// Describes the state of the voxel.
-pub enum Voxel {
-    /// Contians the position of the voxel's maxima.
+/// Describes the state of a voxel.
+///
+/// # Storage
+/// Both voxel maps store an `isize` for every voxel:
+/// * **`>= 0`**: The voxel belongs entirely to the [`EncodedAtom`] with this value.
+/// * **`-1`**: The voxel is vacuum (or not yet assigned in a [`BlockingVoxelMap`]).
+/// * **`< -1`**: The voxel is on a boundary. The value is `-2 - index`, where `index`
+///   points to a slice of weights in the weight map.
+pub enum Voxel<'a> {
+    /// Entirely assigned to the maximum of this atom.
     Maxima(EncodedAtom),
-    /// Contians a vector of the maxima the current voxel contributes to and
-    /// their weights.
-    Boundary(IntMap<EncodedAtom, f32>),
+    /// Shared between the atoms in the slice with the given weights.
+    Boundary(&'a [EncodedWeight]),
     /// A voxel beneath the vacuum tolerance and not contributing to any maxima.
     Vacuum,
+}
+
+impl<'a> Voxel<'a> {
+    /// Decode a stored value, `weights` looks up the slice for a boundary index.
+    fn from_stored(
+        stored: isize,
+        weights: impl FnOnce(usize) -> &'a [EncodedWeight],
+    ) -> Self {
+        match stored {
+            -1 => Voxel::Vacuum,
+            i if i < -1 => Voxel::Boundary(weights((-2 - i) as usize)),
+            i => Voxel::Maxima(EncodedAtom(i as u32)),
+        }
+    }
+}
+
+/// Append-only, lock-free storage for the weights of boundary voxels.
+///
+/// Slots are claimed with an atomic counter so each is written exactly once,
+/// after which it may be read freely. The slot index is published to readers
+/// through the voxel map's Release/Acquire ordering so a slot is never read
+/// before it has been written.
+struct WeightStore {
+    slots: Box<[MaybeUninit<Box<[EncodedWeight]>>]>,
+    len: AtomicUsize,
+}
+
+impl WeightStore {
+    fn new(capacity: usize) -> Self {
+        let mut slots = Vec::with_capacity(capacity);
+        slots.resize_with(capacity, MaybeUninit::uninit);
+        Self {
+            slots: slots.into_boxed_slice(),
+            len: AtomicUsize::new(0),
+        }
+    }
+
+    /// Store the weights and return their slot index.
+    fn push(&self, weights: Box<[EncodedWeight]>) -> usize {
+        let i = self.len.fetch_add(1, Ordering::Relaxed);
+        let slot = &self.slots[i] as *const _
+            as *mut MaybeUninit<Box<[EncodedWeight]>>;
+        // SAFETY: the counter hands out each index once so no other thread
+        // writes this slot, and readers only access it after the index has
+        // been published with Release ordering.
+        unsafe { (*slot).write(weights) };
+        i
+    }
+
+    /// The weights stored in slot `i`, which must already have been written.
+    fn get(&self, i: usize) -> &[EncodedWeight] {
+        // SAFETY: callers obtain `i` from the voxel map after an Acquire load
+        // which synchronises with the Release store that followed the write.
+        unsafe { self.slots[i].assume_init_ref() }
+    }
+
+    fn into_vec(mut self) -> Vec<Box<[EncodedWeight]>> {
+        let len = *self.len.get_mut();
+        let slots = std::mem::take(&mut self.slots);
+        *self.len.get_mut() = 0;
+        slots
+            .into_vec()
+            .into_iter()
+            .take(len)
+            // SAFETY: the first `len` slots have been written.
+            .map(|slot| unsafe { slot.assume_init() })
+            .collect()
+    }
+}
+
+impl Drop for WeightStore {
+    fn drop(&mut self) {
+        for slot in self.slots.iter_mut().take(*self.len.get_mut()) {
+            // SAFETY: the first `len` slots have been written and are
+            // dropped exactly once here.
+            unsafe { slot.assume_init_drop() };
+        }
+    }
 }
 
 /// A thread-safe, write-optimised map for populating Bader volumes.
 ///
 /// Designed for concurrent generation of voxel assignments. Threads can safely
-/// store "Maxima" (integer IDs) or "Weights" (boundary contributions) without
-/// global locking.
-///
-/// # Storage Logic
-/// The `voxel_map` stores an `AtomicIsize` for every voxel:
-/// * **`>= 0`**: The voxel belongs entirely to the Atom with this ID (Maxima).
-/// * **`-1`**: The voxel is Vacuum or currently processing.
-/// * **`<-1`**: The voxel is on a boundary. The value is `-2 - index`, where `index`
-///   points to a slice of weights in `weight_map`.
+/// store "Maxima" (atoms) or "Weights" (boundary contributions) without
+/// global locking. Reading a voxel blocks until it has been stored, see
+/// [`Voxel`] for how the states are stored.
 ///
 /// # Examples
 /// ```
-/// use bader::voxel_map::{BlockingVoxelMap, EncodedWeight, EncodedAtom, EncodedImage};
+/// use bader::voxel_map::{BlockingVoxelMap, EncodedWeight, EncodedAtom, EncodedImage, Voxel};
 ///
 /// // 1. Init
 /// let map = BlockingVoxelMap::new(
@@ -229,21 +309,24 @@ pub enum Voxel {
 /// let atom = EncodedAtom::new(100, EncodedImage::new([0,0,0]));
 ///
 /// // 2. Store a Maxima
-/// map.maxima_store(0, atom.0 as isize); // Voxel 0 -> Atom 100 Image [0, 0, 0]
+/// map.maxima_store(0, atom); // Voxel 0 -> Atom 100 Image [0, 0, 0]
 ///
 /// // 3. Store Weights (Boundary)
 /// let w = EncodedWeight::new(atom, 0.5);
 /// map.weight_store(1, vec![w].into_boxed_slice());
+///
+/// assert!(matches!(map.voxel_get(0), Voxel::Maxima(a) if a == atom));
+/// assert!(matches!(map.voxel_get(1), Voxel::Boundary(w) if w.len() == 1));
 /// ```
 pub struct BlockingVoxelMap {
-    weight_map: Arc<[MaybeUninit<Box<[EncodedWeight]>>]>,
-    voxel_map: Arc<[AtomicIsize]>,
+    weight_map: WeightStore,
+    voxel_map: Box<[AtomicIsize]>,
+    /// The Grid used to navigate the VoxelMap.
     pub grid: Grid,
-    weight_counter: AtomicUsize,
 }
 
 impl BlockingVoxelMap {
-    /// Initialises a [`BlockingVoxelMap`] and the [`Grid`] that will faciliate movemoment around the
+    /// Initialises a [`BlockingVoxelMap`] and the [`Grid`] that will facilitate movement around the
     /// map.
     pub fn new(
         grid: [usize; 3],
@@ -252,79 +335,39 @@ impl BlockingVoxelMap {
     ) -> Self {
         let grid = Grid::new(grid, lattice, voxel_origin);
         let size = grid.size.total;
-        // For mapping the the voxels
-        let mut weight_map = Vec::with_capacity(size);
-        weight_map.resize_with(size, MaybeUninit::uninit);
-        let weight_map = Arc::from(weight_map.into_boxed_slice());
         let mut voxel_map = Vec::with_capacity(size);
         voxel_map.resize_with(size, || AtomicIsize::new(-1));
-        let voxel_map = Arc::from(voxel_map.into_boxed_slice());
-        let weight_counter = AtomicUsize::new(0);
-        // For post processing
         Self {
-            weight_map,
-            voxel_map,
+            weight_map: WeightStore::new(size),
+            voxel_map: voxel_map.into_boxed_slice(),
             grid,
-            weight_counter,
         }
     }
 
-    /// Retrieves the state of the voxel, p. This will lock until p has been stored
-    /// in the VoxelMap and then return either a `Voxel::Maxima` or `Voxel::Weight`.
-    /// Calling this on a voxel, p, that is below the vacuum_tolerance will deadlock
-    /// as a voxel is considered stored once voxel_map\[p\] > -1.
-    pub fn weight_get(&self, i: isize) -> IntMap<EncodedAtom, f32> {
-        let i = -2 - i;
-        (unsafe { self.weight_map.get_unchecked(i as usize).assume_init_ref() })
-            .iter()
-            .map(|u| u.decode())
-            .collect()
-    }
-
-    /// Atomic loading of voxel, p, from voxel_map blocks if maxima == -1
-    pub fn maxima_get(&self, p: isize) -> isize {
-        loop {
+    /// Retrieves the state of the voxel, `p`, blocking until it has been
+    /// stored.
+    ///
+    /// Calling this on a voxel that is below the vacuum tolerance will block
+    /// forever as such voxels are never stored.
+    pub fn voxel_get(&self, p: isize) -> Voxel<'_> {
+        let stored = loop {
             match self.voxel_map[p as usize].load(Ordering::Acquire) {
                 -1 => std::thread::yield_now(),
                 x => break x,
             }
-        }
-    }
-    ///
-    /// Atomic loading of voxel, p, from voxel_map blocks if maxima == -1
-    pub fn voxel_get(&self, p: isize) -> Voxel {
-        let i = self.maxima_get(p);
-        match i.cmp(&-1) {
-            std::cmp::Ordering::Less => Voxel::Boundary(self.weight_get(i)),
-            std::cmp::Ordering::Equal => Voxel::Vacuum,
-            std::cmp::Ordering::Greater => Voxel::Maxima(EncodedAtom(i as u32)),
-        }
+        };
+        Voxel::from_stored(stored, |i| self.weight_map.get(i))
     }
 
-    /// Check if a maxima is stored
-    pub fn maxima_check(&self, p: isize) -> Option<isize> {
-        match self.voxel_map[p as usize].load(Ordering::Relaxed) {
-            -1 => None,
-            x => Some(x),
-        }
+    /// Assigns the voxel, `p`, entirely to the maximum of `atom`.
+    pub fn maxima_store(&self, p: isize, atom: EncodedAtom) {
+        self.voxel_map[p as usize].store(atom.0 as isize, Ordering::Release);
     }
 
-    /// Stores the maxima of voxel, p, in the voxel_map. Note: maximas should be stored in their
-    /// encoded form.
-    pub fn maxima_store(&self, p: isize, maxima: isize) {
-        self.voxel_map[p as usize].store(maxima, Ordering::Release);
-    }
-
-    /// Stores the index of p's weight contributions in weight_map into the
-    /// weight_index.
+    /// Stores the weights of the boundary voxel, `p`.
     pub fn weight_store(&self, p: isize, weights: Box<[EncodedWeight]>) {
-        let i = self.weight_counter.fetch_add(1, Ordering::Relaxed);
-        unsafe {
-            let ptr: *mut Box<[EncodedWeight]> =
-                self.weight_map.get_unchecked(i) as *const _ as *mut _;
-            ptr.write(weights)
-        }
-        self.maxima_store(p, -2 - (i as isize));
+        let i = self.weight_map.push(weights);
+        self.voxel_map[p as usize].store(-2 - (i as isize), Ordering::Release);
     }
 
     /// Extract the voxel map data.
@@ -334,11 +377,7 @@ impl BlockingVoxelMap {
                 .iter()
                 .map(|x| x.load(Ordering::Relaxed))
                 .collect(),
-            self.weight_map
-                .iter()
-                .take(self.weight_counter.into_inner())
-                .map(|mu| unsafe { mu.assume_init_read() })
-                .collect(),
+            self.weight_map.into_vec(),
             self.grid,
         )
     }
@@ -348,15 +387,7 @@ impl BlockingVoxelMap {
 ///
 /// While [`BlockingVoxelMap`] is designed for concurrent *write* operations during the
 /// partitioning phase, `VoxelMap` is designed for efficient *read* operations during
-/// the analysis phase. It provides methods to calculate partial volumes and integrate
-/// properties over atoms.
-///
-/// # Structure
-/// * **`voxel_map`**: A flat array matching the grid size.
-///   * `i >= 0`: The voxel belongs to the Maxima (Atom) with index `i`.
-///   * `i == -1`: Vacuum.
-///   * `i < -1`: Boundary voxel. Points to weights at index `(-2 - i)`.
-/// * **`weight_map`**: A collection of weights for boundary voxels.
+/// the analysis phase. See [`Voxel`] for how the states are stored.
 ///
 /// # Examples
 /// ```
@@ -373,13 +404,12 @@ impl BlockingVoxelMap {
 /// // 2. Convert to VoxelMap for analysis (consumes the blocking map)
 /// let map = VoxelMap::from_blocking_voxel_map(blocking);
 ///
-/// // 3. ... (Perform charge summing and critical point analysis) ...
-///
-/// // 4. Analyse volumes
+/// // 3. Analyse volumes
 /// let atom_volume = map.volume_map(0); // Get contributions for Atom 0
+/// assert_eq!(atom_volume.len(), 8);
 /// ```
 pub struct VoxelMap {
-    /// The vector mapping the voxel to a maxima.
+    /// The stored state of each voxel, see [`Voxel`].
     pub voxel_map: Vec<isize>,
     /// The vector containing the weights for boundary voxels.
     pub weight_map: Vec<Box<[EncodedWeight]>>,
@@ -407,120 +437,26 @@ impl VoxelMap {
         Self::new(voxel_map, weight_map, grid)
     }
 
-    /// Produce an Iter over the boundary voxels.
-    pub fn weight_iter(&self) -> std::slice::Iter<'_, Box<[EncodedWeight]>> {
-        self.weight_map.iter()
+    /// Retrieval of the state of the voxel, `p`.
+    pub fn voxel_get(&self, p: isize) -> Voxel<'_> {
+        Voxel::from_stored(self.voxel_map[p as usize], |i| &self.weight_map[i])
     }
 
-    /// Get the length of the weight_map.
-    pub fn weight_len(&self) -> usize {
-        self.weight_map.len()
-    }
-
-    /// Get a refernce to the grid used by the VoxelMap.
-    pub fn grid_get(&self) -> &Grid {
-        &self.grid
-    }
-
-    /// Returns the atom associated with the point.
-    pub fn maxima_to_atom(&self, maxima: usize) -> usize {
-        maxima
-    }
-
-    /// Retrieval of the state of the voxel, p.
-    pub fn maxima_to_voxel(&self, maxima: isize) -> Voxel {
-        match maxima.cmp(&-1) {
-            std::cmp::Ordering::Equal => Voxel::Vacuum,
-            std::cmp::Ordering::Greater => {
-                Voxel::Maxima(EncodedAtom(maxima as u32))
-            }
-            std::cmp::Ordering::Less => {
-                Voxel::Boundary(self.maxima_to_weight(maxima))
-            }
-        }
-    }
-
-    /// Return a reference to the weights from the given maxima, Note: maxima here must be < -1.
-    pub fn maxima_to_weight(&self, maxima: isize) -> IntMap<EncodedAtom, f32> {
-        self.weight_map[(-2 - maxima) as usize]
-            .iter()
-            .map(|ed| ed.decode())
-            .collect()
-    }
-
-    /// Return an Iter over the maxima stored in the VoxelMap.
-    pub fn maxima_iter(&self) -> std::slice::Iter<'_, isize> {
-        self.voxel_map.iter()
-    }
-
-    /// Get the length of the voxel_map.
-    pub fn maxima_len(&self) -> usize {
-        self.voxel_map.len()
-    }
-
-    /// Return a Chunk over the maxima stored in the VoxelMap.
-    pub fn maxima_chunks(
-        &self,
-        chunk_size: usize,
-    ) -> std::slice::Chunks<'_, isize> {
-        self.voxel_map.chunks(chunk_size)
-    }
-
-    /// Retrieval of the state of the voxel, p.
-    pub fn voxel_get(&self, p: isize) -> Voxel {
-        self.maxima_to_voxel(self.maxima_get(p))
-    }
-
-    /// Return the stored maxima at point p.
-    pub fn maxima_get(&self, p: isize) -> isize {
-        self.voxel_map[p as usize]
-    }
-
-    /// Produce a mask for a specific volume number.
-    pub fn volume_map(&self, volume_number: isize) -> Vec<Option<f64>> {
-        self.maxima_iter()
-            .map(|maxima| {
-                if *maxima == volume_number {
-                    Some(1.0)
-                } else if *maxima < -1 {
-                    let mut w = None;
-                    for (m, weight) in
-                        self.maxima_to_weight(*maxima).into_iter()
-                    {
-                        if (m.atom_index() as isize) == volume_number {
-                            w = Some(weight as f64);
-                            break;
-                        }
-                    }
-                    w
-                } else {
-                    None
+    /// Produce the fraction of each voxel that belongs to the atom with index
+    /// `atom`, summed over every image of the atom.
+    pub fn volume_map(&self, atom: usize) -> Vec<f64> {
+        (0..self.voxel_map.len())
+            .map(|p| match self.voxel_get(p as isize) {
+                Voxel::Maxima(a) => {
+                    (a.atom_index() as usize == atom) as u8 as f64
                 }
-            })
-            .collect()
-    }
-    /// Produce a mask for a collection volume numbers.
-    pub fn multi_volume_map(
-        &self,
-        volume_numbers: &IntSet<isize>,
-    ) -> Vec<Option<f64>> {
-        self.maxima_iter()
-            .map(|maxima| {
-                if volume_numbers.contains(maxima) {
-                    Some(1.0)
-                } else if *maxima < -1 {
-                    let mut w = 0.0;
-                    for (m, weight) in
-                        self.maxima_to_weight(*maxima).into_iter()
-                    {
-                        if volume_numbers.contains(&(m.atom_index() as isize)) {
-                            w += weight as f64;
-                        }
-                    }
-                    Some(w)
-                } else {
-                    None
-                }
+                Voxel::Boundary(weights) => weights
+                    .iter()
+                    .map(|w| w.decode())
+                    .filter(|(a, _)| a.atom_index() as usize == atom)
+                    .map(|(_, w)| w as f64)
+                    .sum(),
+                Voxel::Vacuum => 0.0,
             })
             .collect()
     }
@@ -529,7 +465,6 @@ impl VoxelMap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hash::IntSet;
 
     // --- EncodedImage Tests ---
 
@@ -581,21 +516,28 @@ mod tests {
         let encoded = EncodedAtom::new(atom_id, offset);
 
         assert_eq!(encoded.atom_index(), atom_id);
-        assert_eq!(encoded.image().decode(), offset.decode());
-
-        let (id, img) = encoded.decode_full();
-        assert_eq!(id, atom_id);
-        assert_eq!(img, [1, -1, 0]);
+        assert_eq!(encoded.image(), offset);
+        assert_eq!(encoded.image().decode(), [1, -1, 0]);
     }
 
     #[test]
     fn test_encoded_atom_zero_round_trip() {
         let atom_id = 12345;
         let encoded = EncodedAtom::new_zero_image(atom_id);
+        assert_eq!(encoded.atom_index(), atom_id);
+        assert!(encoded.image().is_zero());
+        assert_eq!(
+            encoded,
+            EncodedAtom::new(atom_id, EncodedImage::new([0; 3]))
+        );
+    }
 
-        let (id, img) = encoded.decode_full();
-        assert_eq!(id, atom_id);
-        assert_eq!(img, [0, 0, 0]);
+    #[test]
+    fn test_encoded_weight_round_trip() {
+        let atom = EncodedAtom::new(7, EncodedImage::new([1, 0, -1]));
+        let (a, w) = EncodedWeight::new(atom, 0.25).decode();
+        assert_eq!(a, atom);
+        assert_eq!(w, 0.25);
     }
 
     #[test]
@@ -634,7 +576,7 @@ mod tests {
         let weights = vec![w1, w2].into_boxed_slice();
 
         // Case A: Voxel 0 is a Maxima for Atom 1
-        b_map.maxima_store(0, atom1.0 as isize);
+        b_map.maxima_store(0, atom1);
 
         // Case B: Voxel 1 is a Boundary (50% Atom 1, 50% Atom 2)
         b_map.weight_store(1, weights);
@@ -657,12 +599,9 @@ mod tests {
         // Check Voxel 1 (Boundary)
         match v_map.voxel_get(1) {
             Voxel::Boundary(weights) => {
-                assert!(
-                    (weights.get(&atom1).unwrap() - 0.5).abs() < f32::EPSILON
-                );
-                assert!(
-                    (weights.get(&atom2).unwrap() - 0.5).abs() < f32::EPSILON
-                );
+                assert_eq!(weights.len(), 2);
+                assert_eq!(weights[0].decode(), (atom1, 0.5));
+                assert_eq!(weights[1].decode(), (atom2, 0.5));
             }
             _ => panic!("Voxel 1 should be Boundary"),
         }
@@ -698,26 +637,51 @@ mod tests {
         // 0 -> Maxima (Atom 1)
         // 1 -> Boundary (points to w_box)
         // 2 -> Vacuum
-        let voxel_data = vec![1, -2, -1];
+        let voxel_data = vec![atom1.0 as isize, -2, -1];
         let weight_data = vec![w_box];
 
         let map = VoxelMap::new(voxel_data, weight_data, grid);
 
         // Get volume map for Atom 1
         let volumes = map.volume_map(1);
+        assert_eq!(volumes, vec![1.0, 0.25, 0.0]);
+        // And for Atom 2
+        let volumes = map.volume_map(2);
+        assert_eq!(volumes, vec![0.0, 0.75, 0.0]);
+    }
 
-        assert_eq!(volumes[0], Some(1.0)); // Fully Atom 1
-        assert_eq!(volumes[1], Some(0.25)); // Partially Atom 1
-        assert_eq!(volumes[2], None); // Vacuum
+    #[test]
+    fn test_volume_map_sums_images() {
+        let grid = Grid::new(
+            [4, 4, 4],
+            [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]],
+            [0.0; 3],
+        );
+        // an atom bonded to its own image shares the voxel with itself
+        let w_box = vec![
+            EncodedWeight::new(EncodedAtom::new_zero_image(1), 0.25),
+            EncodedWeight::new(
+                EncodedAtom::new(1, EncodedImage::new([1, 0, 0])),
+                0.75,
+            ),
+        ]
+        .into_boxed_slice();
+        let map = VoxelMap::new(vec![-2], vec![w_box], grid);
+        assert_eq!(map.volume_map(1), vec![1.0]);
+    }
 
-        // Test Multi-Volume Map (e.g. Atoms 1 and 2 combined)
-        let mut set = IntSet::default();
-        set.insert(1);
-        set.insert(2);
-
-        let multi_vol = map.multi_volume_map(&set);
-        assert_eq!(multi_vol[0], Some(1.0)); // Atom 1 is in set
-        assert_eq!(multi_vol[1], Some(1.0)); // 0.25 + 0.75 = 1.0
-        assert_eq!(multi_vol[2], None);
+    #[test]
+    fn test_blocking_voxel_map_drop_without_into_inner() {
+        // weights stored in a BlockingVoxelMap that is dropped must not leak
+        // or double free
+        let b_map = BlockingVoxelMap::new(
+            [2, 2, 2],
+            [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]],
+            [0.0; 3],
+        );
+        let atom = EncodedAtom::new_zero_image(0);
+        b_map.weight_store(0, vec![EncodedWeight::new(atom, 1.0)].into());
+        b_map.weight_store(1, vec![EncodedWeight::new(atom, 1.0)].into());
+        drop(b_map);
     }
 }

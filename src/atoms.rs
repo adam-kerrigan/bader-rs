@@ -1,5 +1,4 @@
 use crate::{utils, voxel_map::EncodedImage};
-use std::cmp::Ordering::Less;
 
 /// Stores the configuration of the atomic system.
 ///
@@ -75,8 +74,6 @@ impl Atoms {
 ///     6 -> (-1, 1,-1)  13 -> (0, 0, 0)   20 -> (1,-1, 1)
 /// </pre>
 pub struct Lattice {
-    /// The cartesian vectors for every combination of lattice vector.
-    pub cartesian_shift_matrix: [[f64; 3]; 27],
     /// Transformation matrix for converting to fractional coordinates.
     pub to_fractional: [[f64; 3]; 3],
     /// Transformation matrix for converting to cartesian coordinates.
@@ -108,172 +105,112 @@ impl Lattice {
     /// 2. Performs LLL reduction to create a `reduced_lattice`.
     /// 3. Generates shift matrices for finding neighbors in the reduced basis.
     pub fn new(lattice: [[f64; 3]; 3]) -> Self {
-        let cartesian_shift_matrix =
-            Lattice::create_cartesian_shift_matrix(&lattice);
-        let to_fractional = match utils::invert_lattice(&lattice) {
-            Some(inv) => inv,
-            None => panic!("Supplied lattice does not span 3d space."),
-        };
+        let to_fractional =
+            utils::invert_lattice(&lattice).unwrap_or_else(|| {
+                panic!("Supplied lattice does not span 3d space.")
+            });
         let reduced_lattice = lll_lattice(lattice);
         let reduced_cartesian_shift_matrix =
             Lattice::create_cartesian_shift_matrix(&reduced_lattice);
+        // the reduced lattice has the same volume so is also invertible
         let reduced_to_fractional =
-            match utils::invert_lattice(&reduced_lattice) {
-                Some(inv) => inv,
-                None => panic!("Supplied lattice does not span 3d space."),
-            };
+            utils::invert_lattice(&reduced_lattice).unwrap();
         let reduced_grid_shift_matrix = Lattice::create_grid_shift_matrix(
             &reduced_cartesian_shift_matrix,
             &reduced_to_fractional,
         );
         let volume =
             utils::vdot(lattice[0], utils::cross(lattice[1], lattice[2])).abs();
-        let to_cartesian = lattice;
-        let reduced_to_cartesian = reduced_lattice;
         Self {
-            cartesian_shift_matrix,
             to_fractional,
-            to_cartesian,
+            to_cartesian: lattice,
             reduced_cartesian_shift_matrix,
             reduced_grid_shift_matrix,
             reduced_to_fractional,
-            reduced_to_cartesian,
+            reduced_to_cartesian: reduced_lattice,
             volume,
         }
     }
 
-    /// Turn fractional coordinates into Cartesian coordinates in the reduced basis.
-    pub fn fractional_to_reduced(&self, p: [f64; 3]) -> [f64; 3] {
-        self.cartesian_to_reduced(utils::dot(p, self.to_cartesian))
-    }
-
+    /// Turn fractional coordinates into Cartesian coordinates.
     pub fn fractional_to_cartesian(&self, p: [f64; 3]) -> [f64; 3] {
         utils::dot(p, self.to_cartesian)
     }
 
-    /// Map Cartesian coordinates into the reduced basis.
+    /// Map Cartesian coordinates into the reduced basis, wrapping them into
+    /// the reduced cell.
     pub fn cartesian_to_reduced(&self, p: [f64; 3]) -> [f64; 3] {
-        let pn = utils::dot(p, self.reduced_to_fractional)
-            .iter()
-            .map(|p| p - p.floor())
-            .collect::<Vec<f64>>()
-            .try_into()
-            .unwrap();
+        let pn =
+            utils::dot(p, self.reduced_to_fractional).map(|p| p - p.floor());
         utils::dot(pn, self.reduced_to_cartesian)
     }
 
-    /// Calculates the shortest distance between two points under Periodic Boundary Conditions.
+    /// Calculates the shortest squared distance between two points under
+    /// Periodic Boundary Conditions.
     ///
-    /// This method checks the distance between `a` and `b` as well as all 26 periodic
-    /// images of `b` defined by the reduced shift matrix.
+    /// This method checks the distance between `a` and `b` as well as all 26
+    /// periodic images of `b` defined by the reduced shift matrix. Both points
+    /// should be Cartesian coordinates inside the reduced cell, see
+    /// [`Lattice::cartesian_to_reduced`].
     ///
     /// # Arguments
-    /// * `a` - Point A (Cartesian).
-    /// * `b` - Point B (Cartesian).
-    /// * `min_dist` - An initial upper bound.
+    /// * `a` - Point A (Cartesian, reduced cell).
+    /// * `b` - Point B (Cartesian, reduced cell).
+    /// * `min_dist` - An initial upper bound on the squared distance.
     ///
     /// # Returns
-    /// The scalar Euclidean distance.
+    /// The squared Euclidean distance, or `min_dist` if no image is closer.
     pub fn minimum_distance(
         &self,
         a: [f64; 3],
         b: [f64; 3],
         min_dist: Option<f64>,
     ) -> f64 {
-        let mut min_dist = min_dist.unwrap_or(f64::INFINITY);
-        for periodic_shift in self.reduced_cartesian_shift_matrix.iter() {
-            let distance = {
-                (a[0] - (b[0] + periodic_shift[0])).powi(2)
-                    + (a[1] - (b[1] + periodic_shift[1])).powi(2)
-                    + (a[2] - (b[2] + periodic_shift[2])).powi(2)
-            };
-            if distance < min_dist {
-                min_dist = distance;
-            }
-        }
-        min_dist
+        self.reduced_cartesian_shift_matrix
+            .iter()
+            .map(|shift| {
+                utils::norm_squared(utils::subtract(a, utils::vsum(b, *shift)))
+            })
+            .fold(min_dist.unwrap_or(f64::INFINITY), f64::min)
     }
 
+    /// Finds the periodic image of `b` that is closest to `a` and returns it
+    /// as an [`EncodedImage`] in the (non-reduced) lattice basis.
+    ///
+    /// Both points should be Cartesian coordinates inside the reduced cell.
     pub fn closest_image(&self, a: [f64; 3], b: [f64; 3]) -> EncodedImage {
-        let mut min_dist = f64::INFINITY;
-        let mut position = [0.0; 3];
-        for periodic_shift in self.reduced_cartesian_shift_matrix.iter() {
-            let image_position = b
-                .iter()
-                .zip(periodic_shift)
-                .map(|(f, image)| *f + *image)
-                .collect::<Vec<f64>>();
-            let distance = a
-                .iter()
-                .zip(&image_position)
-                .fold(0.0, |acc, (f, p)| acc + (f - p).powi(2));
-            if distance < min_dist {
-                min_dist = distance;
-                position[0] = image_position[0];
-                position[1] = image_position[1];
-                position[2] = image_position[2];
-            }
-        }
+        let position = self
+            .reduced_cartesian_shift_matrix
+            .iter()
+            .map(|shift| utils::vsum(b, *shift))
+            .min_by(|p, q| {
+                utils::norm_squared(utils::subtract(a, *p))
+                    .total_cmp(&utils::norm_squared(utils::subtract(a, *q)))
+            })
+            .unwrap();
         let image = utils::dot(position, self.to_fractional);
-        EncodedImage::new([
-            image[0].floor() as i8,
-            image[1].floor() as i8,
-            image[2].floor() as i8,
-        ])
+        EncodedImage::new(image.map(|i| i.floor() as i8))
     }
 
     /// Create the shift matrix from the lattice supplied.
+    ///
+    /// The vectors are ordered with the coefficients of `lattice[0]`,
+    /// `lattice[1]` and `lattice[2]` running over `[-1, 0, 1]` so that the
+    /// index of the shift `(i, j, k)` is `(i + 1) * 9 + (j + 1) * 3 + (k + 1)`.
     fn create_cartesian_shift_matrix(
         lattice: &[[f64; 3]; 3],
     ) -> [[f64; 3]; 27] {
-        let x = lattice[0];
-        let y = lattice[1];
-        let z = lattice[2];
-        [
-            [
-                -x[0] - y[0] - z[0],
-                -x[1] - y[1] - z[1],
-                -x[2] - y[2] - z[2],
-            ],
-            [-x[0] - y[0], -x[1] - y[1], -x[2] - y[2]],
-            [
-                -x[0] - y[0] + z[0],
-                -x[1] - y[1] + z[1],
-                -x[2] - y[2] + z[2],
-            ],
-            [-x[0] - z[0], -x[1] - z[1], -x[2] - z[2]],
-            [-x[0], -x[1], -x[2]],
-            [-x[0] + z[0], -x[1] + z[1], -x[2] + z[2]],
-            [
-                -x[0] + y[0] - z[0],
-                -x[1] + y[1] - z[1],
-                -x[2] + y[2] - z[2],
-            ],
-            [-x[0] + y[0], -x[1] + y[1], -x[2] + y[2]],
-            [
-                -x[0] + y[0] + z[0],
-                -x[1] + y[1] + z[1],
-                -x[2] + y[2] + z[2],
-            ],
-            [-y[0] - z[0], -y[1] - z[1], -y[2] - z[2]],
-            [-y[0], -y[1], -y[2]],
-            [-y[0] + z[0], -y[1] + z[1], -y[2] + z[2]],
-            [-z[0], -z[1], -z[2]],
-            [0.0, 0.0, 0.0],
-            [z[0], z[1], z[2]],
-            [y[0] - z[0], y[1] - z[1], y[2] - z[2]],
-            [y[0], y[1], y[2]],
-            [y[0] + z[0], y[1] + z[1], y[2] + z[2]],
-            [x[0] - y[0] - z[0], x[1] - y[1] - z[1], x[2] - y[2] - z[2]],
-            [x[0] - y[0], x[1] - y[1], x[2] - y[2]],
-            [x[0] - y[0] + z[0], x[1] - y[1] + z[1], x[2] - y[2] + z[2]],
-            [x[0] - z[0], x[1] - z[1], x[2] - z[2]],
-            [x[0], x[1], x[2]],
-            [x[0] + z[0], x[1] + z[1], x[2] + z[2]],
-            [x[0] + y[0] - z[0], x[1] + y[1] - z[1], x[2] + y[2] - z[2]],
-            [x[0] + y[0], x[1] + y[1], x[2] + y[2]],
-            [x[0] + y[0] + z[0], x[1] + y[1] + z[1], x[2] + y[2] + z[2]],
-        ]
+        let mut shifts = [[0.0; 3]; 27];
+        for (index, shift) in shifts.iter_mut().enumerate() {
+            let coefficients = [index / 9, (index / 3) % 3, index % 3];
+            for (c, vector) in coefficients.iter().zip(lattice) {
+                let c = *c as f64 - 1.0;
+                for (s, v) in shift.iter_mut().zip(vector) {
+                    *s += c * v;
+                }
+            }
+        }
+        shifts
     }
 
     /// Turn the shift matrix into a vector of all the required steps in the [`crate::grid::Grid`]
@@ -286,25 +223,14 @@ impl Lattice {
             .iter()
             .map(|c_shift| {
                 let shift = utils::idot(*c_shift, *to_fractional);
-                // how many times are we going to have to reduce the vector
-                let max = shift.iter().map(|x| x.abs()).max().unwrap();
-                (0..max)
+                // the number of single steps needed is the largest component,
+                // each step moves by one along every axis not yet exhausted
+                let steps = shift.iter().map(|x| x.abs()).max().unwrap();
+                (0..steps)
                     .map(|i| {
-                        let out = shift
-                            .iter()
-                            .map(|s| {
-                                // if the value is 0 or below we have
-                                // finshed reducing this axis
-                                if let Less = (s.abs() - i).cmp(&1) {
-                                    0
-                                // if it is 1 or above then we need to
-                                // add a 1 with the same sign as the value
-                                } else {
-                                    s.signum()
-                                }
-                            })
-                            .collect::<Vec<isize>>();
-                        (out[0] * 9 + out[1] * 3 + out[2] + 13) as usize
+                        let step = shift
+                            .map(|s| if s.abs() > i { s.signum() } else { 0 });
+                        (step[0] * 9 + step[1] * 3 + step[2] + 13) as usize
                     })
                     .collect()
             })
@@ -312,8 +238,11 @@ impl Lattice {
     }
 }
 
-/// Calculates the lll reduction of a lattice.
-#[allow(clippy::needless_range_loop)] // This is pure stupid stuff
+/// Calculates the LLL reduction of a lattice.
+///
+/// The returned basis spans the same lattice but with shorter, more
+/// orthogonal vectors which keeps the number of periodic images that need
+/// checking for minimum distances small.
 pub fn lll_lattice(lattice: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
     let delta = 0.75;
     let mut a = lattice;
@@ -321,50 +250,36 @@ pub fn lll_lattice(lattice: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
     let mut i = 1usize;
     while i <= 2 {
         for j in (0..i).rev() {
-            match mu[i][j] {
-                q if q.abs() <= 0.5 => (),
-                q => {
-                    for k in 0..3 {
-                        a[i][k] -= q.round() * a[j][k];
-                    }
-                    let (b_temp, mu_temp) = gram_schmidt(&a);
-                    b = b_temp;
-                    mu = mu_temp;
-                }
+            if mu[i][j].abs() > 0.5 {
+                let q = mu[i][j].round();
+                a[i] = utils::subtract(a[i], a[j].map(|x| q * x));
+                (b, mu) = gram_schmidt(&a);
             }
         }
-        if utils::vdot(b[i], b[i])
-            >= (delta - mu[i][i - 1].powi(2)) * utils::vdot(b[i - 1], b[i - 1])
+        if utils::norm_squared(b[i])
+            >= (delta - mu[i][i - 1].powi(2)) * utils::norm_squared(b[i - 1])
         {
             i += 1;
         } else {
-            for j in 0..3 {
-                b[0][0] = a[i][j];
-                a[i][j] = a[i - 1][j];
-                a[i - 1][j] = b[0][0];
-            }
-            let (b_temp, mu_temp) = gram_schmidt(&a);
-            b = b_temp;
-            mu = mu_temp;
+            a.swap(i, i - 1);
+            (b, mu) = gram_schmidt(&a);
             i = 1usize.max(i - 1);
         }
     }
     a
 }
 
-/// Calculates the Gram-Schmidt co-effecients for the lll-reduction.
+/// Calculates the Gram-Schmidt orthogonalisation, `u`, of `v` and the
+/// projection coefficients, `mu`, for the LLL reduction.
 fn gram_schmidt(v: &[[f64; 3]; 3]) -> ([[f64; 3]; 3], [[f64; 3]; 3]) {
     let mut u = [[0f64; 3]; 3];
     let mut mu = [[0f64; 3]; 3];
-    u[0] = [v[0][0], v[0][1], v[0][2]];
-    mu[1][0] = utils::vdot(v[1], u[0]) / utils::vdot(u[0], u[0]);
     for i in 0..3 {
-        u[1][i] = v[1][i] - (mu[1][0] * u[0][i]);
-    }
-    mu[2][0] = utils::vdot(v[2], u[0]) / utils::vdot(u[0], u[0]);
-    mu[2][1] = utils::vdot(v[2], u[1]) / utils::vdot(u[1], u[1]);
-    for i in 0..3 {
-        u[2][i] = v[2][i] - (mu[2][0] * u[0][i]) - (mu[2][1] * u[1][i]);
+        u[i] = v[i];
+        for j in 0..i {
+            mu[i][j] = utils::vdot(v[i], u[j]) / utils::norm_squared(u[j]);
+            u[i] = utils::subtract(u[i], u[j].map(|x| mu[i][j] * x));
+        }
     }
     (u, mu)
 }
@@ -439,6 +354,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_closest_image() {
+        let matrix = [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]];
+        let lattice = Lattice::new(matrix);
+        let a = [1.0, 1.0, 1.0];
+        // the image of b at [-1, 1, 1] is closest to a
+        let b = [9.0, 1.0, 1.0];
+        assert_eq!(lattice.closest_image(a, b).decode(), [-1, 0, 0]);
+        // and the image in the cell when b is already close
+        let b = [2.0, 1.0, 1.0];
+        assert_eq!(lattice.closest_image(a, b).decode(), [0, 0, 0]);
+        // crossing in the positive direction
+        let a = [9.0, 1.0, 1.0];
+        let b = [1.0, 1.0, 1.0];
+        assert_eq!(lattice.closest_image(a, b).decode(), [1, 0, 0]);
+    }
+
+    #[test]
+    fn test_shift_matrix_ordering() {
+        let lattice =
+            Lattice::new([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]]);
+        let shifts = lattice.reduced_cartesian_shift_matrix;
+        assert_eq!(shifts[0], [-1.0, -2.0, -3.0]);
+        assert_eq!(shifts[13], [0.0, 0.0, 0.0]);
+        assert_eq!(shifts[14], [0.0, 0.0, 3.0]);
+        assert_eq!(shifts[22], [1.0, 0.0, 0.0]);
+        assert_eq!(shifts[26], [1.0, 2.0, 3.0]);
+        // one grid step along each axis per shift
+        assert_eq!(lattice.reduced_grid_shift_matrix[0], vec![0]);
+        assert_eq!(lattice.reduced_grid_shift_matrix[13], Vec::<usize>::new());
+        assert_eq!(lattice.reduced_grid_shift_matrix[22], vec![22]);
+    }
+
     // --- LLL Reduction Test (Wikipedia Example) ---
 
     #[test]
@@ -475,7 +423,7 @@ mod tests {
         // We check if the rows match the expected set.
 
         let expected_rows =
-            vec![[0.0, 1.0, 0.0], [1.0, 0.0, 1.0], [-1.0, 0.0, 2.0]];
+            [[0.0, 1.0, 0.0], [1.0, 0.0, 1.0], [-1.0, 0.0, 2.0]];
 
         for row in reduced.iter() {
             let found = expected_rows.iter().any(|exp| {

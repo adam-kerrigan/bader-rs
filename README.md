@@ -1,11 +1,11 @@
 # bader-rs (0.5.0)
-![build](https://github.com/kerrigoon/bader-rs/workflows/build/badge.svg?branch=master)
+![build](https://github.com/adam-kerrigan/bader-rs/workflows/build/badge.svg?branch=master)
 [![Latest Version](https://img.shields.io/crates/v/bader.svg)](https://crates.io/crates/bader)
 [![Documentation](https://docs.rs/bader/badge.svg)](https://docs.rs/bader/)
 [![DOI](https://zenodo.org/badge/292534636.svg)](https://zenodo.org/badge/latestdoi/292534636)
 [![MSRV: rustc 1.85.0+](https://img.shields.io/badge/MSRV-rustc_1.85.0+-lightgray.svg)](https://blog.rust-lang.org/2025/02/20/Rust-1.85.0/)
 
-An incredibly fast, multi-threaded, Bader charge partitioning tool. Based on methods presented in [Yu Min  and Trinkle Dallas R. 2011  J. Che.m Phys. 134 064111] with adaptions for multi-threading and increased speed.
+An incredibly fast, multi-threaded, Bader charge partitioning tool. Based on methods presented in [Yu Min and Trinkle Dallas R. 2011 J. Chem. Phys. 134 064111] with adaptions for multi-threading and increased speed.
 ## Installation
 ### Pre-built Binary
 There are pre-built 64bit binaries for Linux, Mac and Windows provided with the source code for the latest [release].
@@ -15,7 +15,7 @@ If these binaries don't cover your OS the easiest way to install is via [cargo].
 $ cargo install bader
 ```
 ### From Source
-To check out the lastest features not in the binaries yet you can compile from source. To do this run the following, which will create the ./target/release/bca executable.
+To check out the latest features not in the binaries yet you can compile from source. To do this run the following, which will create the ./target/release/bca executable.
 ```sh
 $ git clone https://github.com/adam-kerrigan/bader-rs
 $ cd bader-rs
@@ -41,7 +41,9 @@ For a detailed list of usage options run
 $ bca --help
 ```
 ## Output
-The program outputs the Atomic Charge File (ACF.dat) which contians the charge (and spin) information for each atom.
+The program writes a markdown report, bader_charge_analysis.md, containing the partitioned charge (and spin), volume, distance to the nearest boundary and integrated Laplacian (error) of each atom, followed by the critical points (nucleus, bond, ring and cage) associated with each atom.
+
+Passing the -o, --output flag also writes the Bader volume of every atom (or those selected with -i, --index) as a density file in the input format, e.g. 1_charge_CHGCAR or 1_charge.cube.
 ## License
 MIT
 
@@ -51,5 +53,5 @@ MIT
 [VASP]: <https://www.vasp.at/>
 [cube]: <https://gaussian.com/>
 [LAECHG]: <https://www.vasp.at/wiki/index.php/LAECHG>
-[Yu Min  and Trinkle Dallas R. 2011  J. Che.m Phys. 134 064111]: <https://doi.org/10.1063/1.3553716>
+[Yu Min and Trinkle Dallas R. 2011 J. Chem. Phys. 134 064111]: <https://doi.org/10.1063/1.3553716>
 [cargo]: <https://doc.rust-lang.org/cargo/getting-started/installation.html>

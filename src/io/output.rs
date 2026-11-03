@@ -1,4 +1,6 @@
-use crate::critical::CriticalPoint;
+use crate::analysis::Partition;
+use crate::atoms::Atoms;
+use crate::critical::CriticalPoints;
 use crate::grid::Grid;
 use crate::io::{FileFormat, FileType};
 use crate::methods::laplacian;
@@ -7,425 +9,456 @@ use core::fmt;
 use std::fs::File;
 use std::io::Write;
 
-type CriticalPoints = (
-    Vec<CriticalPoint>,
-    Vec<CriticalPoint>,
-    Vec<CriticalPoint>,
-    Vec<CriticalPoint>,
-);
+/// The names of the densities in a calculation: the charge followed by the
+/// spin components.
+pub fn density_names(densities: usize) -> &'static [&'static str] {
+    match densities {
+        0 | 1 => &["Charge"],
+        2 => &["Charge", "Spin"],
+        _ => &["Charge", "Spin X", "Spin Y", "Spin Z"],
+    }
+}
 
-type CriticalPointInfo = ([f64; 3], Box<[EncodedAtom]>, f64, f64);
+/// A row of the critical point table of an atom.
+struct CriticalPointRow {
+    kind: &'static str,
+    position: [String; 3],
+    density: String,
+    laplacian: String,
+    members: String,
+}
 
+/// The critical point information of every atom, formatted as markdown
+/// tables by its [`Display`](fmt::Display) implementation.
 pub struct CriticalPointOutput {
-    splash: String,
+    summary: String,
     positions: Vec<[f64; 3]>,
-    atom_nucleus_map: Vec<Vec<CriticalPointInfo>>,
-    atom_bond_map: Vec<Vec<CriticalPointInfo>>,
-    atom_ring_map: Vec<Vec<CriticalPointInfo>>,
-    atom_cage_map: Vec<Vec<CriticalPointInfo>>,
+    coordination: Vec<usize>,
+    rows: Vec<Vec<CriticalPointRow>>,
 }
 
 impl CriticalPointOutput {
+    /// Pivots the critical points onto the atoms they involve.
+    ///
+    /// # Arguments
+    /// * `atoms`: The atoms of the system.
+    /// * `critical_points`: The pruned critical points.
+    /// * `density`: The reference density.
+    /// * `grid`: The grid the density is stored on.
+    /// * `file_type`: Used to format the coordinates for the file format.
     pub fn new(
-        positions: Vec<[f64; 3]>,
-        critical_points: CriticalPoints,
+        atoms: &Atoms,
+        critical_points: &CriticalPoints,
         density: &[f64],
         grid: &Grid,
         file_type: FileType,
     ) -> Self {
-        let atom_num = positions.len();
-        let (nuclei, bonds, rings, cages) = critical_points;
-        let pivot_critical_points =
-            |cps: &[CriticalPoint]| -> Vec<Vec<CriticalPointInfo>> {
-                let mut pivot = vec![vec![]; atom_num];
-                cps.iter().for_each(|cp| {
-                    'pivot: for (i, encoded_atom) in cp.atoms.iter().enumerate()
+        let atom_len = atoms.positions.len();
+        let mut rows: Vec<Vec<CriticalPointRow>> =
+            (0..atom_len).map(|_| Vec::new()).collect();
+        let mut coordination = vec![0; atom_len];
+        for (kind, cps) in [
+            ("Nucleus", &critical_points.nuclei),
+            ("Bond", &critical_points.bonds),
+            ("Ring", &critical_points.rings),
+            ("Cage", &critical_points.cages),
+        ] {
+            // sort so the output does not depend on thread scheduling
+            let mut cps = cps.iter().collect::<Vec<_>>();
+            cps.sort_unstable_by_key(|cp| cp.position);
+            for cp in cps {
+                let position = file_type
+                    .coordinate_format(grid.to_cartesian(cp.position))
+                    .map(|p| format!("{:.6}", p));
+                let density_text =
+                    format!("{:.6}", density[cp.position as usize]);
+                let laplacian_text = format!(
+                    "{:.6}",
+                    laplacian(cp.position as usize, density, grid)
+                );
+                // each atom of the point gets a row, once per atom even if
+                // the point involves more than one image of it
+                for (i, atom) in cp.atoms.iter().enumerate() {
+                    if cp.atoms[..i]
+                        .iter()
+                        .any(|a| a.atom_index() == atom.atom_index())
                     {
-                        let atom_index = encoded_atom.atom_index();
-                        let image = encoded_atom.image();
-                        for cp_check in cp.atoms[..i].iter() {
-                            if atom_index == cp_check.atom_index() {
-                                continue 'pivot;
-                            }
-                        }
-                        pivot[atom_index as usize].push((
-                            file_type.coordinate_format(
-                                grid.to_cartesian(cp.position),
-                            ),
-                            cp.atoms
-                                .iter()
-                                .map(|encoded_atom| {
-                                    encoded_atom.image_sub(image)
-                                })
-                                .collect(),
-                            density[cp.position as usize],
-                            laplacian(cp.position as usize, density, grid),
-                        ));
+                        continue;
                     }
-                });
-                pivot
-            };
-        let positions = positions
+                    let members = cp
+                        .atoms
+                        .iter()
+                        .map(|a| a.image_sub(atom.image()))
+                        .filter(|a| {
+                            *a != EncodedAtom::new_zero_image(atom.atom_index())
+                        })
+                        .map(format_member)
+                        .collect::<Vec<String>>()
+                        .join(", ");
+                    let atom = atom.atom_index() as usize;
+                    if kind == "Bond" {
+                        coordination[atom] += 1;
+                    }
+                    rows[atom].push(CriticalPointRow {
+                        kind,
+                        position: position.clone(),
+                        density: density_text.clone(),
+                        laplacian: laplacian_text.clone(),
+                        members,
+                    });
+                }
+            }
+        }
+        let positions = atoms
+            .positions
             .iter()
-            .map(|p| file_type.coordinate_format([p[0], p[1], p[2]]))
+            .map(|p| file_type.coordinate_format(*p))
             .collect();
-        let atom_nucleus_map = pivot_critical_points(&nuclei);
-        let atom_bond_map = pivot_critical_points(&bonds);
-        let atom_ring_map = pivot_critical_points(&rings);
-        let atom_cage_map = pivot_critical_points(&cages);
-        let splash = format!(
+        let summary = format!(
             "## Topological Information\n\n * Total nuclei: {}\n * Total bonds: {}\n * Total rings: {}\n * Total cages: {}\n",
-            nuclei.len(),
-            bonds.len(),
-            rings.len(),
-            cages.len()
+            critical_points.nuclei.len(),
+            critical_points.bonds.len(),
+            critical_points.rings.len(),
+            critical_points.cages.len()
         );
         Self {
-            splash,
+            summary,
             positions,
-            atom_nucleus_map,
-            atom_bond_map,
-            atom_ring_map,
-            atom_cage_map,
+            coordination,
+            rows,
         }
+    }
+}
+
+/// Formats an atom as its 1-based index followed by its image if not `[0, 0, 0]`.
+fn format_member(atom: EncodedAtom) -> String {
+    let index = atom.atom_index() + 1;
+    if atom.image().is_zero() {
+        format!("{}", index)
+    } else {
+        let [x, y, z] = atom.image().decode();
+        format!("{}({} {} {})", index, x, y, z)
     }
 }
 
 impl fmt::Display for CriticalPointOutput {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut output = self.splash.clone();
-        self.positions.iter().enumerate().for_each(|(i, position)| {
-            output.push_str(&format!(
-                "\n### Atom: {}\n * Position: {:.6} {:.6} {:.6}\n * Coordination: {}\n * Critical Points:\n",
-                i + 1, position[0], position[1], position[2], self.atom_bond_map[i].len(),
-            ));
-            let self_atom = EncodedAtom::new_zero_image(i as u32);
-            let mut crit_type= Vec::<String>::with_capacity(self.atom_nucleus_map[i].len() + self.atom_bond_map[i].len() + self.atom_ring_map[i].len() + self.atom_cage_map[i].len());
-            let mut max_type: usize = 4;
-            let mut crit_pos= Vec::<Vec<String>>::with_capacity(crit_type.capacity());
-            let mut max_pos: usize = 8;
-            let mut crit_den= Vec::<String>::with_capacity(crit_type.capacity());
-            let mut max_den: usize = 6;
-            let mut crit_lap= Vec::<String>::with_capacity(crit_type.capacity());
-            let mut max_lap: usize = 8;
-            let mut crit_mem= Vec::<String>::with_capacity(crit_type.capacity());
-            let mut max_mem: usize = 7;
-            self.atom_nucleus_map[i].iter().for_each(|(position, _, density, laplacian)| {
-                crit_type.push(String::from("Nucleus"));
-                max_type = max_type.max(7);
-                crit_pos.push(Vec::from_iter(position.iter().map(|p| {
-                    let f = format!("{:.6}", p);
-                    max_pos = max_pos.max(f.len());
-                    f
-                })));
-                let d = format!("{:.6}", density);
-                max_den = max_den.max(d.len());
-                crit_den.push(d);
-                let l = format!("{:.6}", laplacian);
-                max_lap = max_lap.max(l.len());
-                crit_lap.push(l);
-                crit_mem.push(String::with_capacity(0));
+        write!(f, "{}", self.summary)?;
+        for (i, (position, rows)) in
+            self.positions.iter().zip(&self.rows).enumerate()
+        {
+            writeln!(
+                f,
+                "\n### Atom: {}\n * Position: {:.6} {:.6} {:.6}\n * Coordination: {}\n * Critical Points:",
+                i + 1,
+                position[0],
+                position[1],
+                position[2],
+                self.coordination[i],
+            )?;
+            // widths are the longest entry in each column or its title
+            let width =
+                |title: &str, column: &dyn Fn(&CriticalPointRow) -> usize| {
+                    rows.iter().map(column).max().unwrap_or(0).max(title.len())
+                };
+            let kind = width("Type", &|r| r.kind.len());
+            let pos = width("", &|r| {
+                r.position.iter().map(String::len).max().unwrap()
             });
-            self.atom_bond_map[i].iter().for_each(|(position, atoms, density, laplacian)| {
-                if let Some(atom) = atoms.iter().find(|a| a != &&self_atom) {
-                    crit_type.push(String::from("Bond"));
-                    crit_pos.push(Vec::from_iter(position.iter().map(|p| {
-                        let f = format!("{:.6}", p);
-                        max_pos = max_pos.max(f.len());
-                        f
-                    })));
-                    let d = format!("{:.6}", density);
-                    max_den = max_den.max(d.len());
-                    crit_den.push(d);
-                    let l = format!("{:.6}", laplacian);
-                    max_lap = max_lap.max(l.len());
-                    crit_lap.push(l);
-                    let m = match atom.image().is_zero() {
-                        true => format!("{}", atom.atom_index()),
-                        false => {
-                            let other_image = atom.image().decode();
-                            format!("{}({} {} {})", atom.atom_index(), other_image[0], other_image[1], other_image[2])
-                        }
-                    };
-                    max_mem = max_mem.max(m.len());
-                    crit_mem.push(m);
-
-                }
-            });
-            self.atom_ring_map[i].iter().for_each(|(position, atoms, density, laplacian)| {
-                crit_type.push(String::from("Ring"));
-                crit_pos.push(Vec::from_iter(position.iter().map(|p| {
-                    let f = format!("{:.6}", p);
-                    max_pos = max_pos.max(f.len());
-                    f
-                })));
-                let d = format!("{:.6}", density);
-                max_den = max_den.max(d.len());
-                crit_den.push(d);
-                let l = format!("{:.6}", laplacian);
-                max_lap = max_lap.max(l.len());
-                crit_lap.push(l);
-                let mut members = String::from("");
-                atoms.iter().for_each(|atom| {
-                    if atom != &self_atom {
-                        let m = match atom.image().is_zero() {
-                            true => format!("{}, ", atom.atom_index()),
-                            false => {
-                                let other_image = atom.image().decode();
-                                format!("{}({} {} {}), ", atom.atom_index(), other_image[0], other_image[1], other_image[2])
-                            }
-                        };
-                        members.push_str(&m);
-                    }
-                });
-                members.pop();
-                members.pop();
-                max_mem = max_mem.max(members.len());
-                crit_mem.push(members);
-            });
-            self.atom_cage_map[i].iter().for_each(|(position, atoms, density, laplacian)| {
-                crit_type.push(String::from("Cage"));
-                crit_pos.push(Vec::from_iter(position.iter().map(|p| {
-                    let f = format!("{:.6}", p);
-                    max_pos = max_pos.max(f.len());
-                    f
-                })));
-                let d = format!("{:.6}", density);
-                max_den = max_den.max(d.len());
-                crit_den.push(d);
-                let l = format!("{:.6}", laplacian);
-                max_lap = max_lap.max(l.len());
-                crit_lap.push(l);
-                let mut members = String::from("");
-                atoms.iter().for_each(|atom| {
-                    if atom != &self_atom {
-                        let m = match atom.image().is_zero() {
-                            true => format!("{}, ", atom.atom_index()),
-                            false => {
-                                let other_image = atom.image().decode();
-                                format!("{}({} {} {}), ", atom.atom_index(), other_image[0], other_image[1], other_image[2])
-                            }
-                        };
-                        members.push_str(&m);
-                    }
-                });
-                members.pop();
-                members.pop();
-                max_mem = max_mem.max(members.len());
-                crit_mem.push(members);
-            });
-            let max_title_pos = max_pos * 3 + 2;
-            output.push_str(&format!("| {:^max_type$} | {:^max_title_pos$} | {:^max_den$} | {:^max_lap$} | {:^max_mem$} |\n", "Type", "Position", "Density", "Laplacian", "Members"));
-            output.push_str(&format!("|-{:-^max_type$}-|-{:-^max_title_pos$}-|-{:-^max_den$}-|-{:-^max_lap$}-|-{:-^max_mem$}-|\n", "-", "-", "-", "-", "-"));
-            crit_type.into_iter().zip(crit_pos).zip(crit_den).zip(crit_lap).zip(crit_mem).for_each(|((((t, p), d), l), m)| {
-                output.push_str(&format!("| {:^max_type$} | {:>max_pos$} {:>max_pos$} {:>max_pos$} | {:>max_den$} | {:>max_lap$} | {:<max_mem$} |\n", t, p[0], p[1], p[2], d, l, m));
-            });
-        });
-        write!(f, "{}", output)
+            let den = width("Density", &|r| r.density.len());
+            let lap = width("Laplacian", &|r| r.laplacian.len());
+            let mem = width("Members", &|r| r.members.len());
+            let pos_title = (pos * 3 + 2).max("Position".len());
+            writeln!(
+                f,
+                "| {:^kind$} | {:^pos_title$} | {:^den$} | {:^lap$} | {:^mem$} |",
+                "Type", "Position", "Density", "Laplacian", "Members"
+            )?;
+            writeln!(
+                f,
+                "|-{:-^kind$}-|-{:-^pos_title$}-|-{:-^den$}-|-{:-^lap$}-|-{:-^mem$}-|",
+                "", "", "", "", ""
+            )?;
+            for r in rows {
+                // right align the coordinates within the position column
+                let position = format!(
+                    "{:>pos$} {:>pos$} {:>pos$}",
+                    r.position[0], r.position[1], r.position[2]
+                );
+                writeln!(
+                    f,
+                    "| {:^kind$} | {:>pos_title$} | {:>den$} | {:>lap$} | {:<mem$} |",
+                    r.kind, position, r.density, r.laplacian, r.members
+                )?;
+            }
+        }
+        Ok(())
     }
 }
 
-/// Structure that contains and builds the table.
+/// The partitioned charge of each atom formatted as a markdown table by its
+/// [`Display`](fmt::Display) implementation.
 pub struct PartitionTable {
-    /// How wide each column is.
-    column_width: Vec<usize>,
-    /// The number of charge and spin densities.
-    density_num: usize,
+    /// The column titles.
+    titles: Vec<String>,
     /// The rows of the table as a vector of strings.
     rows: Vec<Vec<String>>,
+    /// The summary of the vacuum and totals.
     footer: String,
 }
 
 impl PartitionTable {
-    /// Creates a new structure and sets the minimum widths of each.
+    /// Creates the table from the partition.
+    ///
+    /// # Arguments
+    /// * `partition`: The integrated Bader volumes.
+    /// * `boundary_voxels`: The number of voxels shared between volumes.
+    /// * `total_voxels`: The number of voxels in the grid.
     pub fn new(
-        partitioned_density: &[Box<[f64]>],
-        partitioned_volume: &[f64],
-        radius: &[f64],
-        errors: &[f64],
+        partition: &Partition,
         boundary_voxels: usize,
         total_voxels: usize,
     ) -> Self {
-        let density_num = partitioned_density[0].len();
-        let mut rows: Vec<Vec<String>> =
-            vec![Vec::with_capacity(4 + density_num)];
-        let mut column_width: Vec<usize> = vec![6; 4 + density_num];
-        column_width[2 + density_num] = 8;
-        // calculate the total density for each density supplied
-        let total_density: Vec<f64> = partitioned_density.iter().fold(
-            vec![0.0; partitioned_density[0].len()],
-            |mut sum, d| {
-                sum.iter_mut().zip(d).for_each(|(tpd, pd)| *tpd += pd);
-                sum
+        let atoms = partition.atoms();
+        let names = density_names(partition.charge[0].len());
+        let titles = ["Atom #"]
+            .iter()
+            .chain(names)
+            .chain(&["Volume", "Distance", "Error"])
+            .map(|s| s.to_string())
+            .collect();
+        let rows = (0..atoms)
+            .map(|i| {
+                [format!("{}", i + 1)]
+                    .into_iter()
+                    .chain(
+                        partition.charge[i].iter().map(|c| format!("{:.6}", c)),
+                    )
+                    .chain([
+                        format!("{:.6}", partition.volume[i]),
+                        format!("{:.6}", partition.radius[i]),
+                        format!("{:.6}", partition.error[i]),
+                    ])
+                    .collect()
+            })
+            .collect();
+        // the last entries are the vacuum
+        let vacuum_charge = &partition.charge[atoms];
+        let vacuum_volume = partition.volume[atoms];
+        let total_charge = partition.charge[..atoms].iter().fold(
+            vec![0.0; names.len()],
+            |mut total, charge| {
+                total.iter_mut().zip(charge).for_each(|(t, c)| *t += c);
+                total
             },
         );
-        // the last value is is the vacuum and it has definitely been added
-        let vacuum_density = partitioned_density.last().unwrap();
-        let total_partitioned_density = total_density
-            .iter()
-            .zip(vacuum_density)
-            .map(|(td, vd)| td - vd)
-            .collect::<Vec<f64>>();
-        // the volume is the same for all densities
-        let total_volume: f64 = partitioned_volume.iter().sum();
-        // the last value is is the vacuum and it has definitely been added
-        let vacuum_volume = *partitioned_volume.last().unwrap();
-        let total_partitioned_volume = total_volume - vacuum_volume;
-        partitioned_density
-            .iter()
-            .zip(partitioned_volume)
-            .zip(radius)
-            .zip(errors)
-            .for_each(|(((density, volume), radius), error)| {
-                let mut row: Vec<String> =
-                    Vec::with_capacity(rows[0].capacity());
-                row.push(format!("{}", rows.len()));
-                density.iter().for_each(|d| row.push(format!("{:.6}", d)));
-                row.push(format!("{:.6}", volume));
-                row.push(format!("{:.6}", radius));
-                row.push(format!("{:.6}", error));
-                for (i, col) in row.iter().enumerate() {
-                    column_width[i] = column_width[i].max(col.len());
-                }
-                rows.push(row);
-            });
-        let mut footer = match density_num.cmp(&2) {
-            std::cmp::Ordering::Less => format!(
-                "\n * Vacuum Charge: {:>18.4}\n * Vacuum Volume: {:>18.4}\n * Partitioned Charge: {:>13.4}\n * Partitioned Volume: {:>13.4}",
-                vacuum_density[0],
-                vacuum_volume,
-                total_partitioned_density[0],
-                total_partitioned_volume,
-            ),
-            std::cmp::Ordering::Equal => format!(
-                "\n * Vacuum Charge: {:>18.4}\n * Vacuum Spin: {:>20.4}\n * Vacuum Volume: {:>18.4}\n * Partitioned Charge: {:>13.4}\n * Partitioned Spin: {:>15.4}\n * Partitioned Volume: {:>13.4}",
-                vacuum_density[0],
-                vacuum_density[1],
-                vacuum_volume,
-                total_partitioned_density[0],
-                total_partitioned_density[1],
-                total_partitioned_volume,
-            ),
-            std::cmp::Ordering::Greater => format!(
-                "\n * Vacuum Charge: {:>18.4}\n * Vacuum Spin X: {:>18.4}\n * Vacuum Spin Y: {:>18.4}\n * Vacuum Spin Z: {:>18.4}\n * Vacuum Volume: {:>18.4}\n * Partitioned Charge: {:>13.4}\n * Partitioned Spin X: {:>13.4}\n * Partitioned Spin Y: {:>13.4}\n * Partitioned Spin Z: {:>13.4}\n * Partitioned Volume: {:>13.4}",
-                vacuum_density[0],
-                vacuum_density[1],
-                vacuum_density[2],
-                vacuum_density[3],
-                vacuum_volume,
-                total_partitioned_density[0],
-                total_partitioned_density[1],
-                total_partitioned_density[2],
-                total_partitioned_density[3],
-                total_partitioned_volume,
-            ),
+        let total_volume: f64 = partition.volume[..atoms].iter().sum();
+        let mut footer = String::new();
+        let mut line = |label: String, value: String| {
+            footer.push_str(&format!("\n * {:<20}{:>13}", label + ":", value));
         };
-        footer.push_str(&format!(
-            "\n * Boundary Voxels: {:>16.4}\n * Total Voxels: {:>19.4}",
-            boundary_voxels, total_voxels
-        ));
+        for (name, charge) in names.iter().zip(vacuum_charge) {
+            line(format!("Vacuum {}", name), format!("{:.4}", charge));
+        }
+        line(
+            String::from("Vacuum Volume"),
+            format!("{:.4}", vacuum_volume),
+        );
+        for (name, charge) in names.iter().zip(&total_charge) {
+            line(format!("Partitioned {}", name), format!("{:.4}", charge));
+        }
+        line(
+            String::from("Partitioned Volume"),
+            format!("{:.4}", total_volume),
+        );
+        line(
+            String::from("Boundary Voxels"),
+            format!("{}", boundary_voxels),
+        );
+        line(String::from("Total Voxels"), format!("{}", total_voxels));
         Self {
-            column_width,
-            density_num,
+            titles,
             rows,
             footer,
         }
-    }
-
-    /// Creates and formats the header.
-    fn format_header(&self) -> String {
-        let mut header = String::new();
-        let mut iter = self.column_width.iter();
-        header.push_str(&format!(
-            "| {:^width$} |",
-            "Atom #",
-            width = iter.next().unwrap()
-        ));
-        header.push_str(&format!(
-            " {:^width$} |",
-            "Charge",
-            width = iter.next().unwrap()
-        ));
-        match self.density_num.cmp(&2) {
-            std::cmp::Ordering::Equal => {
-                header.push_str(&format!(
-                    " {:^width$} |",
-                    "Spin",
-                    width = iter.next().unwrap()
-                ));
-            }
-            std::cmp::Ordering::Greater => {
-                header.push_str(&format!(
-                    " {:^width$} |",
-                    "Spin X",
-                    width = iter.next().unwrap()
-                ));
-                header.push_str(&format!(
-                    " {:^width$} |",
-                    "Spin Y",
-                    width = iter.next().unwrap()
-                ));
-                header.push_str(&format!(
-                    " {:^width$} |",
-                    "Spin Z",
-                    width = iter.next().unwrap()
-                ));
-            }
-            std::cmp::Ordering::Less => (),
-        }
-        header.push_str(&format!(
-            " {:^width$} |",
-            "Volume",
-            width = iter.next().unwrap()
-        ));
-        header.push_str(&format!(
-            " {:^width$} |",
-            "Distance",
-            width = iter.next().unwrap()
-        ));
-        header.push_str(&format!(
-            " {:^width$} |\n",
-            "Error",
-            width = iter.next().unwrap()
-        ));
-        header
-    }
-
-    /// Creates and formats a separator.
-    fn format_separator(&self) -> String {
-        let mut separator = String::from("|");
-        self.column_width.iter().for_each(|w| {
-            separator.push_str(&format!("-{:-^width$}-|", "-", width = w));
-        });
-        separator
     }
 }
 
 impl fmt::Display for PartitionTable {
     /// Creates a String representation of the Table.
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut table = String::from("## Partition Information\n");
-        table.push_str(&self.format_header());
-        self.rows.iter().for_each(|r| {
-            if r.is_empty() {
-                table.push_str(&self.format_separator());
-            } else {
-                let mut row = String::from("|");
-                r.iter().zip(&self.column_width).for_each(|(s, w)| {
-                    row.push_str(&format!(" {:>width$} |", s, width = w))
-                });
-                table.push_str(&row);
+        let widths = self
+            .titles
+            .iter()
+            .enumerate()
+            .map(|(i, title)| {
+                self.rows
+                    .iter()
+                    .map(|row| row[i].len())
+                    .max()
+                    .unwrap_or(0)
+                    .max(title.len())
+            })
+            .collect::<Vec<usize>>();
+        writeln!(f, "## Partition Information")?;
+        write!(f, "|")?;
+        for (title, width) in self.titles.iter().zip(&widths) {
+            write!(f, " {:^width$} |", title)?;
+        }
+        write!(f, "\n|")?;
+        for width in &widths {
+            write!(f, "-{:-^width$}-|", "")?;
+        }
+        for row in &self.rows {
+            write!(f, "\n|")?;
+            for (cell, width) in row.iter().zip(&widths) {
+                write!(f, " {:>width$} |", cell)?;
             }
-            table.push('\n');
-        });
-        table.push_str(&self.footer);
-        write!(f, "{}", table)
+        }
+        write!(f, "\n{}", self.footer)
     }
 }
 
 /// Write a string to filename. Creates a new file regardless of what exists.
 pub fn write(string: String, filename: String) -> std::io::Result<()> {
-    let mut bader_file = File::create(filename)?;
-    bader_file.write_all(string.as_bytes())?;
-    Ok(())
+    File::create(filename)?.write_all(string.as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::atoms::Lattice;
+    use crate::critical::{CriticalPoint, CriticalPointKind};
+    use crate::io::cube::Cube;
+    use crate::voxel_map::EncodedImage;
+
+    #[test]
+    fn test_density_names() {
+        assert_eq!(density_names(1), &["Charge"]);
+        assert_eq!(density_names(2), &["Charge", "Spin"]);
+        assert_eq!(density_names(4), &["Charge", "Spin X", "Spin Y", "Spin Z"]);
+    }
+
+    #[test]
+    fn test_partition_table() {
+        let partition = Partition {
+            charge: vec![vec![1.5, 0.25], vec![2.5, -0.25], vec![0.1, 0.0]],
+            volume: vec![10.0, 20.0, 0.5],
+            radius: vec![1.0, 2.0],
+            error: vec![0.001, -0.001, 0.0],
+        };
+        let table = PartitionTable::new(&partition, 12, 100).to_string();
+        let expected = "\
+## Partition Information
+| Atom # |  Charge  |   Spin    |  Volume   | Distance |   Error   |
+|--------|----------|-----------|-----------|----------|-----------|
+|      1 | 1.500000 |  0.250000 | 10.000000 | 1.000000 |  0.001000 |
+|      2 | 2.500000 | -0.250000 | 20.000000 | 2.000000 | -0.001000 |
+
+ * Vacuum Charge:             0.1000
+ * Vacuum Spin:               0.0000
+ * Vacuum Volume:             0.5000
+ * Partitioned Charge:        4.0000
+ * Partitioned Spin:          0.0000
+ * Partitioned Volume:       30.0000
+ * Boundary Voxels:               12
+ * Total Voxels:                 100";
+        assert_eq!(table, expected);
+    }
+
+    #[test]
+    fn test_critical_point_output() {
+        let lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]];
+        let atoms = Atoms::new(
+            Lattice::new(lattice),
+            vec![[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+            String::new(),
+        );
+        let grid = Grid::new([4, 4, 4], lattice, [0.0; 3]);
+        let density = vec![1.0; 64];
+        let nuclei = vec![
+            CriticalPoint::new(
+                0,
+                CriticalPointKind::Nuclei,
+                vec![EncodedAtom::new_zero_image(0)].into(),
+            ),
+            CriticalPoint::new(
+                32,
+                CriticalPointKind::Nuclei,
+                vec![EncodedAtom::new_zero_image(1)].into(),
+            ),
+        ];
+        // one bond inside the cell and one across the periodic boundary
+        let bonds = vec![
+            CriticalPoint::new(
+                16,
+                CriticalPointKind::Bond,
+                vec![
+                    EncodedAtom::new_zero_image(0),
+                    EncodedAtom::new_zero_image(1),
+                ]
+                .into(),
+            ),
+            CriticalPoint::new(
+                48,
+                CriticalPointKind::Bond,
+                vec![
+                    EncodedAtom::new_zero_image(1),
+                    EncodedAtom::new(0, EncodedImage::new([1, 0, 0])),
+                ]
+                .into(),
+            ),
+        ];
+        let critical_points = CriticalPoints {
+            nuclei,
+            bonds,
+            ..Default::default()
+        };
+        let output = CriticalPointOutput::new(
+            &atoms,
+            &critical_points,
+            &density,
+            &grid,
+            FileType::Cube(Cube {}),
+        )
+        .to_string();
+        let expected = "\
+## Topological Information
+
+ * Total nuclei: 2
+ * Total bonds: 2
+ * Total rings: 0
+ * Total cages: 0
+
+### Atom: 1
+ * Position: 0.000000 0.000000 0.000000
+ * Coordination: 2
+ * Critical Points:
+|  Type   |          Position          | Density  | Laplacian |  Members  |
+|---------|----------------------------|----------|-----------|-----------|
+| Nucleus | 0.000000 0.000000 0.000000 | 1.000000 |  0.000000 |           |
+|  Bond   | 1.000000 0.000000 0.000000 | 1.000000 |  0.000000 | 2         |
+|  Bond   | 3.000000 0.000000 0.000000 | 1.000000 |  0.000000 | 2(-1 0 0) |
+
+### Atom: 2
+ * Position: 2.000000 0.000000 0.000000
+ * Coordination: 2
+ * Critical Points:
+|  Type   |          Position          | Density  | Laplacian | Members  |
+|---------|----------------------------|----------|-----------|----------|
+| Nucleus | 2.000000 0.000000 0.000000 | 1.000000 |  0.000000 |          |
+|  Bond   | 1.000000 0.000000 0.000000 | 1.000000 |  0.000000 | 1        |
+|  Bond   | 3.000000 0.000000 0.000000 | 1.000000 |  0.000000 | 1(1 0 0) |
+";
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn test_format_member() {
+        assert_eq!(format_member(EncodedAtom::new_zero_image(4)), "5");
+        assert_eq!(
+            format_member(EncodedAtom::new(4, EncodedImage::new([0, -1, 2]))),
+            "5(0 -1 2)"
+        );
+    }
 }

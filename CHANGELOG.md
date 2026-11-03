@@ -1,3 +1,32 @@
+## Unreleased
+### Bug fixes
+- Bader density, volume and error were wrong when the number of voxels was not divisible by the number of threads (the voxel index was computed from the length of the final chunk).
+- Negative densities (spin) were written to output files as zero and values rounding up to a power of ten overflowed the mantissa.
+- Written Bader volumes did not include their interior voxels, only the boundary weights.
+- Member atoms in the critical point tables were 0-based while the atom headings were 1-based.
+- A negative VASP scaling factor (the cell volume) now takes the cube root, Cartesian positions are scaled and three scaling factors apply to the x, y, z components.
+- The cube file origin is converted from Bohr into voxel units rather than being added to the half-voxel offset.
+### Changes
+- `Grid`'s shift tables and `Lattice`'s shift matrix are generated rather than hand-written.
+- `Grid::voronoi_shifts` and `Grid::voronoi_shifts_nocheck` return iterators.
+- `Voxel::Boundary` borrows the stored `EncodedWeight` slice instead of building a map.
+- `BlockingVoxelMap::maxima_store` takes an `EncodedAtom`, `EncodedAtom`'s inner value is private.
+- `calculate_bader_density` returns a `Partition` struct.
+- `parallel_map_reduce` passes the index of each item to the map function.
+- `bond_pruning`, `ring_pruning` and `cage_pruning` take `threads` and `visible_bar` instead of `&Args`; `cage_pruning` no longer takes the nuclei, atoms or grid as its validator was never run.
+- `nuclei_ordering` no longer takes `visible_bar`.
+- `CriticalPointKey::new` replaces `CriticalPointKey::from_cp`, `CriticalPoints` groups the pruned points.
+- `CriticalPointOutput::new` takes `&Atoms` and `&CriticalPoints`, `PartitionTable::new` takes `&Partition`.
+- `FileFormat::write` takes `Vec<f64>` and `VoxelMap::volume_map` returns `Vec<f64>` summed over every image of the atom.
+- `FortranFormat::new` takes an `f64`.
+- `FileFormat` is implemented for `FileType` directly rather than through a macro.
+- Critical points in the report are ordered by voxel so the output is deterministic.
+- `progress::progress_bar` builds a visible or hidden bar.
+- Clippy runs on all targets in CI.
+### Removed
+- The `-b`, `--bond` flag which was parsed but never used.
+- `Grid::full_shift`, `Grid::reduced_shift`, `Grid::gradient_shift`, `Lattice::fractional_to_reduced`, `Lattice::cartesian_shift_matrix`, `utils::transpose_square`, `VoxelMap::multi_volume_map`, `EncodedAtom::decode_partial`, `EncodedAtom::decode_full` and the `VoxelMap` accessors that wrapped public fields.
+- `io::reader::BufReader`.
 ## v0.5.0
 ### Features
 - Added critical point handling.

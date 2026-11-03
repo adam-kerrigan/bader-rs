@@ -1,11 +1,11 @@
 //! An incredibly fast, multi-threaded, Bader charge partitioning binary and
 //! library. Based on methods presented in
-//! [Yu Min  and Trinkle Dallas R. 2011  J. Che.m Phys. 134 064111] and with
+//! [Yu Min and Trinkle Dallas R. 2011 J. Chem. Phys. 134 064111] and with
 //! adaptions for multi-threading.
 //!
 //! ### Supported Platforms
 //! - Linux
-//! - Os X
+//! - macOS
 //! - Windows
 //!
 //! ## Installing the binary
@@ -14,7 +14,7 @@
 //! $ cargo install bader
 //! ```
 //! ### From Source
-//! To check out the lastest features not in the binaries yet you can compile
+//! To check out the latest features not in the binaries yet you can compile
 //! from source. To do this run the following, which will create the
 //! ./target/release/bca executable.
 //! ```sh
@@ -54,11 +54,13 @@
 //! $ bca --help
 //! ```
 //! ## Output
-//! The program outputs two files, ACF.dat & BCF.dat. The Atomic Charge File
-//! (ACF.dat) contians the charge (and spin) information for each atom and the
-//! Bader Charge File (BCF.dat) contains the information about each Bader volume.
-//! The BCF file also includes the atom number in the number column formatted as
-//! 'atom number: bader volume'.
+//! The program writes a markdown report, bader_charge_analysis.md, containing
+//! the partitioned charge (and spin), volume, distance to the nearest boundary
+//! and integrated Laplacian (error) of each atom, followed by the critical
+//! points (nucleus, bond, ring and cage) associated with each atom.
+//!
+//! Passing the -o, --output flag also writes the Bader volume of every atom (or
+//! those selected with -i, --index) as a density file in the input format.
 //! ## License
 //! MIT
 //!
@@ -67,7 +69,7 @@
 //! [VASP]: <https://www.vasp.at/>
 //! [cube]: <https://gaussian.com/>
 //! [LAECHG]: <https://www.vasp.at/wiki/index.php/LAECHG>
-//! [Yu Min  and Trinkle Dallas R. 2011  J. Che.m Phys. 134 064111]: <https://doi.org/10.1063/1.3553716>
+//! [Yu Min and Trinkle Dallas R. 2011 J. Chem. Phys. 134 064111]: <https://doi.org/10.1063/1.3553716>
 //! [cargo]: <https://doc.rust-lang.org/cargo/getting-started/installation.html>
 
 /// Performs analysis of the [VoxelMap](voxel_map::VoxelMap) to find the partitioned charge,
@@ -92,13 +94,13 @@ pub mod hash;
 /// Provides a [FileFormat](io::FileFormat) trait to be implemented by modules designed to
 /// cover a specific file format of a density file.
 pub mod io;
-/// Contains the methods for partioning the density, finding maxima and calculating the
+/// Contains the methods for partitioning the density, finding maxima and calculating the
 /// Laplacian for voxel based grids.
 pub mod methods;
 /// Provides a [visible](progress::Bar) and [hidden](progress::HiddenBar) implementation of the
 /// trait [ProgressBar](progress::ProgressBar).
 pub mod progress;
-/// Handles thread merging and helper functions.
+/// Helpers for running work over several threads.
 pub mod threading;
 /// Misc functions mainly for vector and matrix manipulation.
 pub mod utils;
@@ -106,5 +108,5 @@ pub mod utils;
 /// for lattices. Also useful for periodic minimum distances.
 pub mod voronoi;
 /// Provides the [BlockingVoxelMap](voxel_map::BlockingVoxelMap) and [VoxelMap](voxel_map::VoxelMap)
-/// for storing the maxima and weights of partioned voxels.
+/// for storing the maxima and weights of partitioned voxels.
 pub mod voxel_map;

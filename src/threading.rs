@@ -7,8 +7,9 @@ use std::thread;
 
 /// A generic parallel Map-Reduce implementation using `std::thread::scope`.
 ///
-/// This function splits the input `items` into chunks, processes each chunk in a separate thread
-/// to build a local state (Map phase), and then combines these local states into a final result (Reduce phase).
+/// This function splits the input `items` into contiguous chunks, processes each chunk in a
+/// separate thread to build a local state (Map phase), and then combines these local states
+/// into a final result (Reduce phase).
 ///
 /// # Type Parameters
 /// * `State`: The type of the accumulator
@@ -20,7 +21,8 @@ use std::thread;
 /// # Arguments
 /// * `items`: The slice of data to process.
 /// * `init_state`: Generator for the initial state of each thread.
-/// * `map_op`: The mapper function `fn(&mut State, &Item)`.
+/// * `map_op`: The mapper function `fn(&mut State, index, &Item)` where `index` is the
+///   position of the item in `items`.
 /// * `reduce_op`: The reducer function `fn(&mut State, State)`.
 /// * `threads`: Number of parallel threads to spawn.
 /// * `progress_bar`: [`ProgressBar`] to update as items are processed.
@@ -33,10 +35,10 @@ use std::thread;
 /// let numbers = vec![1, 2, 3, 4, 5];
 /// let sum = parallel_map_reduce(
 ///     &numbers,
-///     || 0,                    // Init
-///     |acc, x| *acc += x,      // Map
+///     || 0,                             // Init
+///     |acc, _index, x| *acc += x,       // Map
 ///     |global, local| *global += local, // Reduce
-///     2,                       // Threads
+///     2,                                // Threads
 ///     Box::new(HiddenBar {})
 /// );
 /// assert_eq!(sum, 15);
@@ -51,31 +53,33 @@ pub fn parallel_map_reduce<State, Item, Init, Map, Reduce>(
 ) -> State
 where
     State: Send,
-    Init: Fn() -> State + Sync + Send,
-    Map: Fn(&mut State, &Item) + Sync + Send + Copy,
-    Reduce: Fn(&mut State, State) + Sync + Send + Copy,
-    Item: Sync + Clone,
+    Init: Fn() -> State + Sync,
+    Map: Fn(&mut State, usize, &Item) + Sync,
+    Reduce: Fn(&mut State, State),
+    Item: Sync,
 {
-    let total_length = items.len();
-    let chunk_size = (total_length / threads) + (total_length % threads).min(1);
+    let chunk_size = items.len().div_ceil(threads.max(1)).max(1);
+    let progress_bar = &progress_bar;
+    let map_op = &map_op;
+    let init_state = &init_state;
     thread::scope(|s| {
-        let mut handles = Vec::with_capacity(threads);
-        items.chunks(chunk_size).for_each(|chunk| {
-            let mut local_state = init_state();
-            handles.push(s.spawn(|| {
-                chunk.iter().for_each(|index| {
-                    map_op(&mut local_state, index);
-                    progress_bar.tick();
-                });
-                local_state
-            }));
-        });
-        let mut handle_iter = handles.into_iter();
-        let mut global_state = match handle_iter.next() {
-            Some(h) => h.join().unwrap(),
-            None => panic!(""),
-        };
-        for handle in handle_iter {
+        let handles = items
+            .chunks(chunk_size)
+            .enumerate()
+            .map(|(chunk_index, chunk)| {
+                s.spawn(move || {
+                    let mut local_state = init_state();
+                    let offset = chunk_index * chunk_size;
+                    for (i, item) in chunk.iter().enumerate() {
+                        map_op(&mut local_state, offset + i, item);
+                        progress_bar.tick();
+                    }
+                    local_state
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut global_state = init_state();
+        for handle in handles {
             reduce_op(&mut global_state, handle.join().unwrap());
         }
         global_state
@@ -86,15 +90,9 @@ where
 ///
 /// This function serves two purposes:
 /// 1. **Validation**: Applies a user-defined filter (e.g., "is this a valid ring?") to all points.
-/// 2. **Deduplication**: Groups valid points by their unique `CriticalPointKey` (Atom IDs).
+/// 2. **Deduplication**: Groups valid points by their unique [`CriticalPointKey`] (Atom IDs).
 ///    If multiple points exist for the same key (e.g., multiple candidates for the same bond),
 ///    only the one with the highest charge density is kept.
-///
-/// # Logic
-/// * **Map Phase**: Each thread processes a chunk of `critical_points`. Valid points are inserted
-///   into a local `HashMap`. If a collision occurs (same key), the point with higher density overwrites.
-/// * **Reduce Phase**: Local HashMaps are merged into a global HashMap, again preserving only the
-///   highest density candidates.
 ///
 /// # Arguments
 /// * `critical_points`: List of candidate points.
@@ -104,7 +102,8 @@ where
 /// * `progress_bar`: [`ProgressBar`] to update as items are processed.
 ///
 /// # Returns
-/// A vector of unique, validated [`CriticalPoint`]s.
+/// A vector of unique, validated [`CriticalPoint`]s with their atoms in the canonical
+/// order of their key.
 pub fn parallel_prune<F>(
     critical_points: &[CriticalPoint],
     density: &[f64],
@@ -113,50 +112,42 @@ pub fn parallel_prune<F>(
     progress_bar: Box<dyn ProgressBar>,
 ) -> Vec<CriticalPoint>
 where
-    F: Fn(&CriticalPoint) -> bool + Sync + Send + Copy,
+    F: Fn(&CriticalPoint) -> bool + Sync,
 {
+    // keep the candidate with the highest density for each key
+    let insert = |map: &mut SliceMap<CriticalPointKey, CriticalPoint>,
+                  key: CriticalPointKey,
+                  cp: CriticalPoint| {
+        let existing = map.entry(key).or_insert_with(|| cp.clone());
+        if density[cp.position as usize] > density[existing.position as usize] {
+            *existing = cp;
+        }
+    };
     let final_map = parallel_map_reduce(
-        // Items
         critical_points,
-        // Init
         SliceMap::default,
-        // Map
-        |local_state, cp| {
+        |local_state, _, cp| {
             if validator(cp) {
-                let key = CriticalPointKey::from_cp(cp.clone());
-                local_state
-                    .entry(key)
-                    .and_modify(|existing: &mut CriticalPoint| {
-                        let rho_new = density[cp.position as usize];
-                        let rho_old = density[existing.position as usize];
-                        if rho_new > rho_old {
-                            *existing = cp.clone();
-                        }
-                    })
-                    .or_insert(cp.clone());
+                insert(
+                    local_state,
+                    CriticalPointKey::new(&cp.atoms),
+                    cp.clone(),
+                );
             }
         },
-        // Reduce
         |global_state, local_state| {
-            local_state.into_iter().for_each(|(key, cp)| {
-                global_state
-                    .entry(key)
-                    .and_modify(|existing: &mut CriticalPoint| {
-                        let rho_new = density[cp.position as usize];
-                        let rho_old = density[existing.position as usize];
-                        if rho_new > rho_old {
-                            *existing = cp.clone();
-                        }
-                    })
-                    .or_insert(cp.clone());
-            });
+            for (key, cp) in local_state {
+                insert(global_state, key, cp);
+            }
         },
         threads,
         progress_bar,
     );
     final_map
         .into_iter()
-        .map(|(k, v)| CriticalPoint::new(v.position, v.kind, k.into_box()))
+        .map(|(key, cp)| {
+            CriticalPoint::new(cp.position, cp.kind, key.into_box())
+        })
         .collect()
 }
 
@@ -189,7 +180,7 @@ mod tests {
         let sum = parallel_map_reduce(
             &data,
             || 0,                             // Init local state
-            |acc, item| *acc += item, // Map: add item to local accumulator
+            |acc, _, item| *acc += item, // Map: add item to local accumulator
             |global, local| *global += local, // Reduce: add local sum to global
             threads,
             pbar,
@@ -208,13 +199,46 @@ mod tests {
         let sum = parallel_map_reduce(
             &data,
             || 0,
-            |acc, item| *acc += item,
+            |acc, _, item| *acc += item,
             |global, local| *global += local,
             threads,
             pbar,
         );
 
         assert_eq!(sum, 6);
+    }
+
+    #[test]
+    fn test_parallel_map_reduce_index() {
+        // The index passed to the map must be the position in the full
+        // slice, including for the final shorter chunk.
+        let data: Vec<usize> = (0..10).collect();
+        let indices = parallel_map_reduce(
+            &data,
+            Vec::new,
+            |acc: &mut Vec<usize>, index, item| {
+                assert_eq!(index, *item);
+                acc.push(index)
+            },
+            |global, local| global.extend(local),
+            3,
+            Box::new(HiddenBar {}),
+        );
+        assert_eq!(indices, data);
+    }
+
+    #[test]
+    fn test_parallel_map_reduce_empty() {
+        let data: Vec<i32> = vec![];
+        let sum = parallel_map_reduce(
+            &data,
+            || 0,
+            |acc, _, item| *acc += item,
+            |global, local| *global += local,
+            4,
+            Box::new(HiddenBar {}),
+        );
+        assert_eq!(sum, 0);
     }
 
     // --- Parallel Prune Tests ---
