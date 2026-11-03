@@ -56,7 +56,6 @@ pub fn weight_step(
     let mut weight_count = 0;
     // colllect the shift and distances and iterate over them.
     grid.voronoi_shifts(p)
-        .into_iter()
         .for_each(|((pt, image), alpha)| {
             let charge_diff = density[pt as usize] - control;
             // density differences of zero should be ignored to avoid division by
@@ -508,9 +507,8 @@ pub fn assign_maximum(
 pub fn laplacian(p: usize, density: &[f64], grid: &Grid) -> f64 {
     let rho = density[p];
     grid.voronoi_shifts_nocheck(p as isize)
-        .iter()
         .fold(0.0, |acc, (pt, alpha)| {
-            acc + alpha * (density[*pt as usize] - rho)
+            alpha * (density[pt as usize] - rho) + acc
         })
         / grid.voronoi.volume
 }

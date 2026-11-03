@@ -19,6 +19,9 @@ pub struct Grid {
 
 impl Grid {
     /// Initialises a grid structure. Computes the voxel_lattice from the grid and lattice.
+    ///
+    /// # Panics
+    /// Panics if any dimension of `grid` is less than 2 or the total size would overflow.
     pub fn new(
         grid: [usize; 3],
         lattice: [[f64; 3]; 3],
@@ -26,23 +29,11 @@ impl Grid {
     ) -> Self {
         let size = Size::new(grid[0], grid[1], grid[2]);
         let shift = Shift::new(&size);
-        let voxel_lattice = Lattice::new([
-            [
-                lattice[0][0] / grid[0] as f64,
-                lattice[0][1] / grid[0] as f64,
-                lattice[0][2] / grid[0] as f64,
-            ],
-            [
-                lattice[1][0] / grid[1] as f64,
-                lattice[1][1] / grid[1] as f64,
-                lattice[1][2] / grid[1] as f64,
-            ],
-            [
-                lattice[2][0] / grid[2] as f64,
-                lattice[2][1] / grid[2] as f64,
-                lattice[2][2] / grid[2] as f64,
-            ],
-        ]);
+        let mut voxel_lattice = lattice;
+        for (vector, n) in voxel_lattice.iter_mut().zip(grid) {
+            vector.iter_mut().for_each(|x| *x /= n as f64);
+        }
+        let voxel_lattice = Lattice::new(voxel_lattice);
         let voronoi = Voronoi::new(&voxel_lattice);
         Self {
             shift,
@@ -53,70 +44,44 @@ impl Grid {
         }
     }
 
-    /// get the full shift to visit the surrounding 26 voxels
-    pub fn full_shift(&self, p: isize) -> [isize; 26] {
-        let (shift, _) = self.shift.get(p);
-        shift
-            .iter()
-            .take(13)
-            .chain(shift.iter().skip(14))
-            .copied()
-            .collect::<Vec<isize>>()
-            .try_into()
-            .unwrap() // safe to unwrap as we know that we will get 26 items
-    }
-
-    /// get the reduced shift to visit the surrounding 6 voxels
-    pub fn reduced_shift(&self, p: isize) -> [isize; 6] {
-        let (shift, _) = self.shift.get(p);
-        // [ +x, -x, +y, -y, +z, -z ]
-        [
-            shift[22], shift[4], shift[16], shift[10], shift[14], shift[12],
-        ]
-    }
-
-    /// Get the gradient shift from the current point
-    pub fn gradient_shift(&self, p: isize, gradient: [f64; 3]) -> isize {
-        let (shift, _) = self.shift.get(p);
-        // [ [-x, 0, +x], [-y, 0, +y], [-z, 0, +z] ]
-        let i = (gradient[0] * 9f64 + gradient[1] * 3f64 + gradient[2] + 13f64)
-            as usize;
-        shift[i]
-    }
-
-    /// Shifts a point, p, by a single voronoi vector.
+    /// Iterates over the neighbours of `p` that share a Voronoi face with it.
+    ///
+    /// Each item is `((neighbour, image), alpha)` where `image` is the periodic
+    /// image the neighbour was found in relative to `p` and `alpha` the Voronoi
+    /// flux coefficient of the shared face.
     pub fn voronoi_shifts(
         &self,
         p: isize,
-    ) -> Vec<((isize, EncodedImage), f64)> {
+    ) -> impl Iterator<Item = ((isize, EncodedImage), f64)> + '_ {
         self.voronoi
             .vectors
             .iter()
-            .map(|shifts| {
-                shifts.iter().fold(
+            .map(move |steps| {
+                steps.iter().fold(
                     (p, EncodedImage::new([0; 3])),
-                    |(pn, pbc), p_shift| {
-                        let (shift, pbc_t) = self.shift.get(pn);
-                        let pt = pn + shift[*p_shift];
-                        (pt, pbc.image_add(pbc_t[*p_shift]))
+                    |(pn, image), step| {
+                        let (shift, pbc) = self.shift.get(pn);
+                        (pn + shift[*step], image.image_add(pbc[*step]))
                     },
                 )
             })
             .zip(self.voronoi.alphas.iter().copied())
-            .collect()
     }
 
-    pub fn voronoi_shifts_nocheck(&self, p: isize) -> Vec<(isize, f64)> {
+    /// As [`Grid::voronoi_shifts`] but without tracking the periodic image.
+    pub fn voronoi_shifts_nocheck(
+        &self,
+        p: isize,
+    ) -> impl Iterator<Item = (isize, f64)> + '_ {
         self.voronoi
             .vectors
             .iter()
-            .map(|shifts| {
-                shifts
+            .map(move |steps| {
+                steps
                     .iter()
-                    .fold(p, |pn, p_shift| pn + self.shift.get(pn).0[*p_shift])
+                    .fold(p, |pn, step| pn + self.shift.get(pn).0[*step])
             })
             .zip(self.voronoi.alphas.iter().copied())
-            .collect()
     }
 
     /// Converts a 1D index of the array into a 3D index
@@ -139,1788 +104,113 @@ impl Grid {
     }
 }
 
-/// Structure for holding the periodic shifts
+/// Pre-computed index offsets for stepping to the 27 surrounding voxels.
+///
+/// A voxel can be in one of 27 "edge classes" depending on whether it sits
+/// on the lower edge, in the bulk or on the upper edge of each axis. For each
+/// class `di` holds the flat-index offset to every neighbour (wrapping
+/// periodically where needed) and `pbc` the periodic image crossed by the step.
+///
+/// The outer (class) index is ordered with `[bulk, upper edge, lower edge]`
+/// per axis so that `class = cx * 9 + cy * 3 + cz`:
+/// <pre class="rust">
+/// 0 -> (0, 0, 0)   7 -> (0,-1, 1)  14 -> (1, 1,-1)   21 -> (-1, 1, 0)
+/// 1 -> (0, 0, 1)   8 -> (0,-1,-1)  15 -> (1,-1, 0)   22 -> (-1, 1, 1)
+/// 2 -> (0, 0,-1)   9 -> (1, 0, 0)  16 -> (1,-1, 1)   23 -> (-1, 1,-1)
+/// 3 -> (0, 1, 0)  10 -> (1, 0, 1)  17 -> (1,-1,-1)   24 -> (-1,-1, 0)
+/// 4 -> (0, 1, 1)  11 -> (1, 0,-1)  18 -> (-1, 0, 0)  25 -> (-1,-1, 1)
+/// 5 -> (0, 1,-1)  12 -> (1, 1, 0)  19 -> (-1, 0, 1)  26 -> (-1,-1,-1)
+/// 6 -> (0,-1, 0)  13 -> (1, 1, 1)  20 -> (-1, 0,-1)
+/// </pre>
+///
+/// The inner (neighbour) index is ordered `[-1, 0, 1]` per axis so that
+/// `neighbour = (dx + 1) * 9 + (dy + 1) * 3 + (dz + 1)`, matching
+/// [`Lattice`]'s shift matrices:
+/// <pre class="rust">
+/// 0 -> (-1,-1,-1)   7 -> (-1, 1, 0)  14 -> (0, 0, 1)  21 -> (1, 0,-1)
+/// 1 -> (-1,-1, 0)   8 -> (-1, 1, 1)  15 -> (0, 1,-1)  22 -> (1, 0, 0)
+/// 2 -> (-1,-1, 1)   9 -> (0,-1,-1)   16 -> (0, 1, 0)  23 -> (1, 0, 1)
+/// 3 -> (-1, 0,-1)  10 -> (0,-1, 0)   17 -> (0, 1, 1)  24 -> (1, 1,-1)
+/// 4 -> (-1, 0, 0)  11 -> (0,-1, 1)   18 -> (1,-1,-1)  25 -> (1, 1, 0)
+/// 5 -> (-1, 0, 1)  12 -> (0, 0,-1)   19 -> (1,-1, 0)  26 -> (1, 1, 1)
+/// 6 -> (-1, 1,-1)  13 -> (0, 0, 0)   20 -> (1,-1, 1)
+/// </pre>
 struct Shift {
+    /// Flat-index offsets for each edge class.
     di: [[isize; 27]; 27],
+    /// Periodic image crossed by each step for each edge class.
     pbc: [[[i8; 3]; 27]; 27],
+    /// The edge class of every voxel.
     index: Vec<u8>,
 }
 
 impl Shift {
-    /// Gets the periodic boundary shift
-    fn get(&self, i: isize) -> ([isize; 27], [[i8; 3]; 27]) {
-        let ii = self.index[i as usize] as usize;
-        (self.di[ii], self.pbc[ii])
+    /// Gets the offsets and periodic images for the neighbours of voxel `i`.
+    fn get(&self, i: isize) -> (&[isize; 27], &[[i8; 3]; 27]) {
+        let class = self.index[i as usize] as usize;
+        (&self.di[class], &self.pbc[class])
     }
 
-    /// Generate the indices for Shift.index
+    /// The edge class of a coordinate along an axis of length `n`:
+    /// 0 for the bulk, 1 for the upper edge and 2 for the lower edge.
+    fn edge_class(i: isize, n: isize) -> u8 {
+        if i == 0 {
+            2
+        } else if i == n - 1 {
+            1
+        } else {
+            0
+        }
+    }
+
+    /// Generate the edge class of every voxel.
     fn index_gen(size: &Size) -> Vec<u8> {
-        let mut index = vec![0u8; size.total];
-        let mut i: usize = 0;
-        let bound_x: usize = (size.x - 1) as usize;
-        let bound_y: usize = (size.y - 1) as usize;
-        let bound_z: usize = (size.z - 1) as usize;
-
-        // first x
-        // first y
-        index[i] = 26;
-        i += 1;
-        for _ in 1..bound_z {
-            index[i] = 24;
-            i += 1;
-        }
-        index[i] = 25;
-        i += 1;
-        // bulk y
-        for _ in 1..bound_y {
-            index[i] = 20;
-            i += 1;
-            for _ in 1..bound_z {
-                index[i] = 18;
-                i += 1;
+        let mut index = Vec::with_capacity(size.total);
+        for x in 0..size.x {
+            let cx = Self::edge_class(x, size.x) * 9;
+            for y in 0..size.y {
+                let cy = Self::edge_class(y, size.y) * 3;
+                for z in 0..size.z {
+                    index.push(cx + cy + Self::edge_class(z, size.z));
+                }
             }
-            index[i] = 19;
-            i += 1;
         }
-        // last y
-        index[i] = 23;
-        i += 1;
-        for _ in 1..bound_z {
-            index[i] = 21;
-            i += 1;
-        }
-        index[i] = 22;
-        i += 1;
-
-        // bulk x
-        // first y
-        for _ in 1..bound_x {
-            index[i] = 8;
-            i += 1;
-            for _ in 1..bound_z {
-                index[i] = 6;
-                i += 1;
-            }
-            index[i] = 7;
-            i += 1;
-            // bulk y
-            for _ in 1..bound_y {
-                index[i] = 2;
-                i += bound_z;
-                index[i] = 1;
-                i += 1;
-            }
-            // last y
-            index[i] = 5;
-            i += 1;
-            for _ in 1..bound_z {
-                index[i] = 3;
-                i += 1;
-            }
-            index[i] = 4;
-            i += 1;
-        }
-
-        // last x
-        // first y
-        index[i] = 17;
-        i += 1;
-        for _ in 1..bound_z {
-            index[i] = 15;
-            i += 1;
-        }
-        index[i] = 16;
-        i += 1;
-        // bulk y
-        for _ in 1..bound_y {
-            index[i] = 11;
-            i += 1;
-            for _ in 1..bound_z {
-                index[i] = 9;
-                i += 1;
-            }
-            index[i] = 10;
-            i += 1;
-        }
-        // last y
-        index[i] = 14;
-        i += 1;
-        for _ in 1..bound_z {
-            index[i] = 12;
-            i += 1;
-        }
-        index[i] = 13;
         index
     }
 
-    /// Creates the shift matrix for moving in the array
-    /// the outer index in di is unraveling the index with a periodic roll so the point
-    /// is at (0, 0, 0) -> 0
-    /// <pre class="rust">
-    /// 0 -> (0, 0, 0)   7 -> (0,-1, 1)  14 -> (1, 1,-1)   21 -> (-1, 1, 0)
-    /// 1 -> (0, 0, 1)   8 -> (0,-1,-1)  15 -> (1,-1, 0)   22 -> (-1, 1, 1)
-    /// 2 -> (0, 0,-1)   9 -> (1, 0, 0)  16 -> (1,-1, 1)   23 -> (-1, 1,-1)
-    /// 3 -> (0, 1, 0)  10 -> (1, 0, 1)  17 -> (1,-1,-1)   24 -> (-1,-1, 0)
-    /// 4 -> (0, 1, 1)  11 -> (1, 0,-1)  18 -> (-1, 0, 0)  25 -> (-1,-1, 1)
-    /// 5 -> (0, 1,-1)  12 -> (1, 1, 0)  19 -> (-1, 0, 1)  26 -> (-1,-1,-1)
-    /// 6 -> (0,-1, 0)  13 -> (1, 1, 1)  20 -> (-1, 0,-1)
-    /// </pre>
-    ///
-    /// Whereas the inner index does not have this roll
-    /// <pre class="rust">
-    /// 0 -> (-1,-1,-1)   7 -> (-1, 1, 0)  14 -> (0, 0, 1)  21 -> (1, 0,-1)
-    /// 1 -> (-1,-1, 0)   8 -> (-1, 1, 1)  15 -> (0, 1,-1)  22 -> (1, 0, 0)
-    /// 2 -> (-1,-1, 1)   9 -> (0,-1,-1)   16 -> (0, 1, 0)  23 -> (1, 0, 1)
-    /// 3 -> (-1, 0,-1)  10 -> (0,-1, 0)   17 -> (0, 1, 1)  24 -> (1, 1,-1)
-    /// 4 -> (-1, 0, 0)  11 -> (0,-1, 1)   18 -> (1,-1,-1)  25 -> (1, 1, 0)
-    /// 5 -> (-1, 0, 1)  12 -> (0, 0,-1)   19 -> (1,-1, 0)  26 -> (1, 1, 1)
-    /// 6 -> (-1, 1,-1)  13 -> (0, 0, 0)   20 -> (1,-1, 1)
-    /// </pre>
-    /// BEWARE: The code for this is god awful
+    /// Creates the offset tables for every edge class.
     fn new(size: &Size) -> Self {
+        let dims = [size.x, size.y, size.z];
+        let strides = [size.y * size.z, size.z, 1];
         let mut di = [[0isize; 27]; 27];
-        let index = Shift::index_gen(size);
-
-        let _x: isize = -(size.y * size.z);
-        let _xx: isize = (size.x * size.y * size.z) + _x;
-        let x: isize = size.y * size.z;
-        let xx: isize = -(size.x * size.y * size.z) + x;
-        let _y: isize = -size.z;
-        let _yy: isize = (size.y * size.z) + _y;
-        let y: isize = size.z;
-        let yy: isize = -(size.y * size.z) + y;
-        let _z: isize = -1;
-        let _zz: isize = size.z + _z;
-        let z: isize = 1;
-        let zz: isize = -size.z + z;
-
-        // GET READY FOR SOME FRESH HELL VECTOR CREATION
-        // We need to make the 27 index shifts for the 27 different positions
-        // we can be in the density grid
-
-        // (0, 0, 0)
-        di[0] = [
-            _x + _y + _z,
-            _x + _y,
-            _x + _y + z,
-            _x + _z,
-            _x,
-            _x + z,
-            _x + y + _z,
-            _x + y,
-            _x + y + z,
-            _y + _z,
-            _y,
-            _y + z,
-            _z,
-            0,
-            z,
-            y + _z,
-            y,
-            y + z,
-            x + _y + _z,
-            x + _y,
-            x + _y + z,
-            x + _z,
-            x,
-            x + z,
-            x + y + _z,
-            x + y,
-            x + y + z,
-        ];
-        // (0, 0, 1)
-        di[1] = [
-            _x + _y + _z,
-            _x + _y,
-            _x + _y + zz,
-            _x + _z,
-            _x,
-            _x + zz,
-            _x + y + _z,
-            _x + y,
-            _x + y + zz,
-            _y + _z,
-            _y,
-            _y + zz,
-            _z,
-            0,
-            zz,
-            y + _z,
-            y,
-            y + zz,
-            x + _y + _z,
-            x + _y,
-            x + _y + zz,
-            x + _z,
-            x,
-            x + zz,
-            x + y + _z,
-            x + y,
-            x + y + zz,
-        ];
-        // (0, 0,-1)
-        di[2] = [
-            _x + _y + _zz,
-            _x + _y,
-            _x + _y + z,
-            _x + _zz,
-            _x,
-            _x + z,
-            _x + y + _zz,
-            _x + y,
-            _x + y + z,
-            _y + _zz,
-            _y,
-            _y + z,
-            _zz,
-            0,
-            z,
-            y + _zz,
-            y,
-            y + z,
-            x + _y + _zz,
-            x + _y,
-            x + _y + z,
-            x + _zz,
-            x,
-            x + z,
-            x + y + _zz,
-            x + y,
-            x + y + z,
-        ];
-        // (0, 1, 0)
-        di[3] = [
-            _x + _y + _z,
-            _x + _y,
-            _x + _y + z,
-            _x + _z,
-            _x,
-            _x + z,
-            _x + yy + _z,
-            _x + yy,
-            _x + yy + z,
-            _y + _z,
-            _y,
-            _y + z,
-            _z,
-            0,
-            z,
-            yy + _z,
-            yy,
-            yy + z,
-            x + _y + _z,
-            x + _y,
-            x + _y + z,
-            x + _z,
-            x,
-            x + z,
-            x + yy + _z,
-            x + yy,
-            x + yy + z,
-        ];
-        // (0, 1, 1)
-        di[4] = [
-            _x + _y + _z,
-            _x + _y,
-            _x + _y + zz,
-            _x + _z,
-            _x,
-            _x + zz,
-            _x + yy + _z,
-            _x + yy,
-            _x + yy + zz,
-            _y + _z,
-            _y,
-            _y + zz,
-            _z,
-            0,
-            zz,
-            yy + _z,
-            yy,
-            yy + zz,
-            x + _y + _z,
-            x + _y,
-            x + _y + zz,
-            x + _z,
-            x,
-            x + zz,
-            x + yy + _z,
-            x + yy,
-            x + yy + zz,
-        ];
-        // (0, 1,-1)
-        di[5] = [
-            _x + _y + _zz,
-            _x + _y,
-            _x + _y + z,
-            _x + _zz,
-            _x,
-            _x + z,
-            _x + yy + _zz,
-            _x + yy,
-            _x + yy + z,
-            _y + _zz,
-            _y,
-            _y + z,
-            _zz,
-            0,
-            z,
-            yy + _zz,
-            yy,
-            yy + z,
-            x + _y + _zz,
-            x + _y,
-            x + _y + z,
-            x + _zz,
-            x,
-            x + z,
-            x + yy + _zz,
-            x + yy,
-            x + yy + z,
-        ];
-        // (0,-1, 0)
-        di[6] = [
-            _x + _yy + _z,
-            _x + _yy,
-            _x + _yy + z,
-            _x + _z,
-            _x,
-            _x + z,
-            _x + y + _z,
-            _x + y,
-            _x + y + z,
-            _yy + _z,
-            _yy,
-            _yy + z,
-            _z,
-            0,
-            z,
-            y + _z,
-            y,
-            y + z,
-            x + _yy + _z,
-            x + _yy,
-            x + _yy + z,
-            x + _z,
-            x,
-            x + z,
-            x + y + _z,
-            x + y,
-            x + y + z,
-        ];
-        // (0,-1, 1)
-        di[7] = [
-            _x + _yy + _z,
-            _x + _yy,
-            _x + _yy + zz,
-            _x + _z,
-            _x,
-            _x + zz,
-            _x + y + _z,
-            _x + y,
-            _x + y + zz,
-            _yy + _z,
-            _yy,
-            _yy + zz,
-            _z,
-            0,
-            zz,
-            y + _z,
-            y,
-            y + zz,
-            x + _yy + _z,
-            x + _yy,
-            x + _yy + zz,
-            x + _z,
-            x,
-            x + zz,
-            x + y + _z,
-            x + y,
-            x + y + zz,
-        ];
-        // (0,-1,-1)
-        di[8] = [
-            _x + _yy + _zz,
-            _x + _yy,
-            _x + _yy + z,
-            _x + _zz,
-            _x,
-            _x + z,
-            _x + y + _zz,
-            _x + y,
-            _x + y + z,
-            _yy + _zz,
-            _yy,
-            _yy + z,
-            _zz,
-            0,
-            z,
-            y + _zz,
-            y,
-            y + z,
-            x + _yy + _zz,
-            x + _yy,
-            x + _yy + z,
-            x + _zz,
-            x,
-            x + z,
-            x + y + _zz,
-            x + y,
-            x + y + z,
-        ];
-        // (1, 0, 0)
-        di[9] = [
-            _x + _y + _z,
-            _x + _y,
-            _x + _y + z,
-            _x + _z,
-            _x,
-            _x + z,
-            _x + y + _z,
-            _x + y,
-            _x + y + z,
-            _y + _z,
-            _y,
-            _y + z,
-            _z,
-            0,
-            z,
-            y + _z,
-            y,
-            y + z,
-            xx + _y + _z,
-            xx + _y,
-            xx + _y + z,
-            xx + _z,
-            xx,
-            xx + z,
-            xx + y + _z,
-            xx + y,
-            xx + y + z,
-        ];
-        // (1, 0, 1)
-        di[10] = [
-            _x + _y + _z,
-            _x + _y,
-            _x + _y + zz,
-            _x + _z,
-            _x,
-            _x + zz,
-            _x + y + _z,
-            _x + y,
-            _x + y + zz,
-            _y + _z,
-            _y,
-            _y + zz,
-            _z,
-            0,
-            zz,
-            y + _z,
-            y,
-            y + zz,
-            xx + _y + _z,
-            xx + _y,
-            xx + _y + zz,
-            xx + _z,
-            xx,
-            xx + zz,
-            xx + y + _z,
-            xx + y,
-            xx + y + zz,
-        ];
-        // (1, 0,-1)
-        di[11] = [
-            _x + _y + _zz,
-            _x + _y,
-            _x + _y + z,
-            _x + _zz,
-            _x,
-            _x + z,
-            _x + y + _zz,
-            _x + y,
-            _x + y + z,
-            _y + _zz,
-            _y,
-            _y + z,
-            _zz,
-            0,
-            z,
-            y + _zz,
-            y,
-            y + z,
-            xx + _y + _zz,
-            xx + _y,
-            xx + _y + z,
-            xx + _zz,
-            xx,
-            xx + z,
-            xx + y + _zz,
-            xx + y,
-            xx + y + z,
-        ];
-        // (1, 1, 0)
-        di[12] = [
-            _x + _y + _z,
-            _x + _y,
-            _x + _y + z,
-            _x + _z,
-            _x,
-            _x + z,
-            _x + yy + _z,
-            _x + yy,
-            _x + yy + z,
-            _y + _z,
-            _y,
-            _y + z,
-            _z,
-            0,
-            z,
-            yy + _z,
-            yy,
-            yy + z,
-            xx + _y + _z,
-            xx + _y,
-            xx + _y + z,
-            xx + _z,
-            xx,
-            xx + z,
-            xx + yy + _z,
-            xx + yy,
-            xx + yy + z,
-        ];
-        // (1, 1, 1)
-        di[13] = [
-            _x + _y + _z,
-            _x + _y,
-            _x + _y + zz,
-            _x + _z,
-            _x,
-            _x + zz,
-            _x + yy + _z,
-            _x + yy,
-            _x + yy + zz,
-            _y + _z,
-            _y,
-            _y + zz,
-            _z,
-            0,
-            zz,
-            yy + _z,
-            yy,
-            yy + zz,
-            xx + _y + _z,
-            xx + _y,
-            xx + _y + zz,
-            xx + _z,
-            xx,
-            xx + zz,
-            xx + yy + _z,
-            xx + yy,
-            xx + yy + zz,
-        ];
-        // (1, 1,-1)
-        di[14] = [
-            _x + _y + _zz,
-            _x + _y,
-            _x + _y + z,
-            _x + _zz,
-            _x,
-            _x + z,
-            _x + yy + _zz,
-            _x + yy,
-            _x + yy + z,
-            _y + _zz,
-            _y,
-            _y + z,
-            _zz,
-            0,
-            z,
-            yy + _zz,
-            yy,
-            yy + z,
-            xx + _y + _zz,
-            xx + _y,
-            xx + _y + z,
-            xx + _zz,
-            xx,
-            xx + z,
-            xx + yy + _zz,
-            xx + yy,
-            xx + yy + z,
-        ];
-        // (1,-1, 0)
-        di[15] = [
-            _x + _yy + _z,
-            _x + _yy,
-            _x + _yy + z,
-            _x + _z,
-            _x,
-            _x + z,
-            _x + y + _z,
-            _x + y,
-            _x + y + z,
-            _yy + _z,
-            _yy,
-            _yy + z,
-            _z,
-            0,
-            z,
-            y + _z,
-            y,
-            y + z,
-            xx + _yy + _z,
-            xx + _yy,
-            xx + _yy + z,
-            xx + _z,
-            xx,
-            xx + z,
-            xx + y + _z,
-            xx + y,
-            xx + y + z,
-        ];
-        // (1,-1, 1)
-        di[16] = [
-            _x + _yy + _z,
-            _x + _yy,
-            _x + _yy + zz,
-            _x + _z,
-            _x,
-            _x + zz,
-            _x + y + _z,
-            _x + y,
-            _x + y + zz,
-            _yy + _z,
-            _yy,
-            _yy + zz,
-            _z,
-            0,
-            zz,
-            y + _z,
-            y,
-            y + zz,
-            xx + _yy + _z,
-            xx + _yy,
-            xx + _yy + zz,
-            xx + _z,
-            xx,
-            xx + zz,
-            xx + y + _z,
-            xx + y,
-            xx + y + zz,
-        ];
-        // (1,-1,-1)
-        di[17] = [
-            _x + _yy + _zz,
-            _x + _yy,
-            _x + _yy + z,
-            _x + _zz,
-            _x,
-            _x + z,
-            _x + y + _zz,
-            _x + y,
-            _x + y + z,
-            _yy + _zz,
-            _yy,
-            _yy + z,
-            _zz,
-            0,
-            z,
-            y + _zz,
-            y,
-            y + z,
-            xx + _yy + _zz,
-            xx + _yy,
-            xx + _yy + z,
-            xx + _zz,
-            xx,
-            xx + z,
-            xx + y + _zz,
-            xx + y,
-            xx + y + z,
-        ];
-        // (-1, 0, 0)
-        di[18] = [
-            _xx + _y + _z,
-            _xx + _y,
-            _xx + _y + z,
-            _xx + _z,
-            _xx,
-            _xx + z,
-            _xx + y + _z,
-            _xx + y,
-            _xx + y + z,
-            _y + _z,
-            _y,
-            _y + z,
-            _z,
-            0,
-            z,
-            y + _z,
-            y,
-            y + z,
-            x + _y + _z,
-            x + _y,
-            x + _y + z,
-            x + _z,
-            x,
-            x + z,
-            x + y + _z,
-            x + y,
-            x + y + z,
-        ];
-        // (-1, 0, 1)
-        di[19] = [
-            _xx + _y + _z,
-            _xx + _y,
-            _xx + _y + zz,
-            _xx + _z,
-            _xx,
-            _xx + zz,
-            _xx + y + _z,
-            _xx + y,
-            _xx + y + zz,
-            _y + _z,
-            _y,
-            _y + zz,
-            _z,
-            0,
-            zz,
-            y + _z,
-            y,
-            y + zz,
-            x + _y + _z,
-            x + _y,
-            x + _y + zz,
-            x + _z,
-            x,
-            x + zz,
-            x + y + _z,
-            x + y,
-            x + y + zz,
-        ];
-        // (-1, 0,-1)
-        di[20] = [
-            _xx + _y + _zz,
-            _xx + _y,
-            _xx + _y + z,
-            _xx + _zz,
-            _xx,
-            _xx + z,
-            _xx + y + _zz,
-            _xx + y,
-            _xx + y + z,
-            _y + _zz,
-            _y,
-            _y + z,
-            _zz,
-            0,
-            z,
-            y + _zz,
-            y,
-            y + z,
-            x + _y + _zz,
-            x + _y,
-            x + _y + z,
-            x + _zz,
-            x,
-            x + z,
-            x + y + _zz,
-            x + y,
-            x + y + z,
-        ];
-        // (-1, 1, 0)
-        di[21] = [
-            _xx + _y + _z,
-            _xx + _y,
-            _xx + _y + z,
-            _xx + _z,
-            _xx,
-            _xx + z,
-            _xx + yy + _z,
-            _xx + yy,
-            _xx + yy + z,
-            _y + _z,
-            _y,
-            _y + z,
-            _z,
-            0,
-            z,
-            yy + _z,
-            yy,
-            yy + z,
-            x + _y + _z,
-            x + _y,
-            x + _y + z,
-            x + _z,
-            x,
-            x + z,
-            x + yy + _z,
-            x + yy,
-            x + yy + z,
-        ];
-        // (-1, 1, 1)
-        di[22] = [
-            _xx + _y + _z,
-            _xx + _y,
-            _xx + _y + zz,
-            _xx + _z,
-            _xx,
-            _xx + zz,
-            _xx + yy + _z,
-            _xx + yy,
-            _xx + yy + zz,
-            _y + _z,
-            _y,
-            _y + zz,
-            _z,
-            0,
-            zz,
-            yy + _z,
-            yy,
-            yy + zz,
-            x + _y + _z,
-            x + _y,
-            x + _y + zz,
-            x + _z,
-            x,
-            x + zz,
-            x + yy + _z,
-            x + yy,
-            x + yy + zz,
-        ];
-        // (-1, 1,-1)
-        di[23] = [
-            _xx + _y + _zz,
-            _xx + _y,
-            _xx + _y + z,
-            _xx + _zz,
-            _xx,
-            _xx + z,
-            _xx + yy + _zz,
-            _xx + yy,
-            _xx + yy + z,
-            _y + _zz,
-            _y,
-            _y + z,
-            _zz,
-            0,
-            z,
-            yy + _zz,
-            yy,
-            yy + z,
-            x + _y + _zz,
-            x + _y,
-            x + _y + z,
-            x + _zz,
-            x,
-            x + z,
-            x + yy + _zz,
-            x + yy,
-            x + yy + z,
-        ];
-        // (-1,-1, 0)
-        di[24] = [
-            _xx + _yy + _z,
-            _xx + _yy,
-            _xx + _yy + z,
-            _xx + _z,
-            _xx,
-            _xx + z,
-            _xx + y + _z,
-            _xx + y,
-            _xx + y + z,
-            _yy + _z,
-            _yy,
-            _yy + z,
-            _z,
-            0,
-            z,
-            y + _z,
-            y,
-            y + z,
-            x + _yy + _z,
-            x + _yy,
-            x + _yy + z,
-            x + _z,
-            x,
-            x + z,
-            x + y + _z,
-            x + y,
-            x + y + z,
-        ];
-        // (-1,-1, 1)
-        di[25] = [
-            _xx + _yy + _z,
-            _xx + _yy,
-            _xx + _yy + zz,
-            _xx + _z,
-            _xx,
-            _xx + zz,
-            _xx + y + _z,
-            _xx + y,
-            _xx + y + zz,
-            _yy + _z,
-            _yy,
-            _yy + zz,
-            _z,
-            0,
-            zz,
-            y + _z,
-            y,
-            y + zz,
-            x + _yy + _z,
-            x + _yy,
-            x + _yy + zz,
-            x + _z,
-            x,
-            x + zz,
-            x + y + _z,
-            x + y,
-            x + y + zz,
-        ];
-        // (-1,-1,-1)
-        di[26] = [
-            _xx + _yy + _zz,
-            _xx + _yy,
-            _xx + _yy + z,
-            _xx + _zz,
-            _xx,
-            _xx + z,
-            _xx + y + _zz,
-            _xx + y,
-            _xx + y + z,
-            _yy + _zz,
-            _yy,
-            _yy + z,
-            _zz,
-            0,
-            z,
-            y + _zz,
-            y,
-            y + z,
-            x + _yy + _zz,
-            x + _yy,
-            x + _yy + z,
-            x + _zz,
-            x,
-            x + z,
-            x + y + _zz,
-            x + y,
-            x + y + z,
-        ];
-        let pbc = [
-            // (0, 0, 0)
-            [
-                [0, 0, 0], //(-1, -1, -1)
-                [0, 0, 0], //(-1, -1,  0)
-                [0, 0, 0], //(-1, -1,  1)
-                [0, 0, 0], //(-1,  0, -1)
-                [0, 0, 0], //(-1,  0,  0)
-                [0, 0, 0], //(-1,  0,  1)
-                [0, 0, 0], //(-1,  1, -1)
-                [0, 0, 0], //(-1,  1,  0)
-                [0, 0, 0], //(-1,  1,  1)
-                [0, 0, 0], //( 0, -1, -1)
-                [0, 0, 0], //( 0, -1,  0)
-                [0, 0, 0], //( 0, -1,  1)
-                [0, 0, 0], //( 0,  0, -1)
-                [0, 0, 0], //( 0,  0,  0)
-                [0, 0, 0], //( 0,  0,  1)
-                [0, 0, 0], //( 0,  1, -1)
-                [0, 0, 0], //( 0,  1,  0)
-                [0, 0, 0], //( 0,  1,  1)
-                [0, 0, 0], //( 1, -1, -1)
-                [0, 0, 0], //( 1, -1,  0)
-                [0, 0, 0], //( 1, -1,  1)
-                [0, 0, 0], //( 1,  0, -1)
-                [0, 0, 0], //( 1,  0,  0)
-                [0, 0, 0], //( 1,  0,  1)
-                [0, 0, 0], //( 1,  1, -1)
-                [0, 0, 0], //( 1,  1,  0)
-                [0, 0, 0], //( 1,  1,  1)
-            ],
-            // (0, 0, 1)
-            [
-                [0, 0, 0], //(-1, -1, -1)
-                [0, 0, 0], //(-1, -1,  0)
-                [0, 0, 1], //(-1, -1,  1)
-                [0, 0, 0], //(-1,  0, -1)
-                [0, 0, 0], //(-1,  0,  0)
-                [0, 0, 1], //(-1,  0,  1)
-                [0, 0, 0], //(-1,  1, -1)
-                [0, 0, 0], //(-1,  1,  0)
-                [0, 0, 1], //(-1,  1,  1)
-                [0, 0, 0], //( 0, -1, -1)
-                [0, 0, 0], //( 0, -1,  0)
-                [0, 0, 1], //( 0, -1,  1)
-                [0, 0, 0], //( 0,  0, -1)
-                [0, 0, 0], //( 0,  0,  0)
-                [0, 0, 1], //( 0,  0,  1)
-                [0, 0, 0], //( 0,  1, -1)
-                [0, 0, 0], //( 0,  1,  0)
-                [0, 0, 1], //( 0,  1,  1)
-                [0, 0, 0], //( 1, -1, -1)
-                [0, 0, 0], //( 1, -1,  0)
-                [0, 0, 1], //( 1, -1,  1)
-                [0, 0, 0], //( 1,  0, -1)
-                [0, 0, 0], //( 1,  0,  0)
-                [0, 0, 1], //( 1,  0,  1)
-                [0, 0, 0], //( 1,  1, -1)
-                [0, 0, 0], //( 1,  1,  0)
-                [0, 0, 1], //( 1,  1,  1)
-            ],
-            // (0, 0,-1)
-            [
-                [0, 0, -1], //(-1, -1, -1)
-                [0, 0, 0],  //(-1, -1,  0)
-                [0, 0, 0],  //(-1, -1,  1)
-                [0, 0, -1], //(-1,  0, -1)
-                [0, 0, 0],  //(-1,  0,  0)
-                [0, 0, 0],  //(-1,  0,  1)
-                [0, 0, -1], //(-1,  1, -1)
-                [0, 0, 0],  //(-1,  1,  0)
-                [0, 0, 0],  //(-1,  1,  1)
-                [0, 0, -1], //( 0, -1, -1)
-                [0, 0, 0],  //( 0, -1,  0)
-                [0, 0, 0],  //( 0, -1,  1)
-                [0, 0, -1], //( 0,  0, -1)
-                [0, 0, 0],  //( 0,  0,  0)
-                [0, 0, 0],  //( 0,  0,  1)
-                [0, 0, -1], //( 0,  1, -1)
-                [0, 0, 0],  //( 0,  1,  0)
-                [0, 0, 0],  //( 0,  1,  1)
-                [0, 0, -1], //( 1, -1, -1)
-                [0, 0, 0],  //( 1, -1,  0)
-                [0, 0, 0],  //( 1, -1,  1)
-                [0, 0, -1], //( 1,  0, -1)
-                [0, 0, 0],  //( 1,  0,  0)
-                [0, 0, 0],  //( 1,  0,  1)
-                [0, 0, -1], //( 1,  1, -1)
-                [0, 0, 0],  //( 1,  1,  0)
-                [0, 0, 0],  //( 1,  1,  1)
-            ],
-            // (0, 1, 0)
-            [
-                [0, 0, 0], //(-1, -1, -1)
-                [0, 0, 0], //(-1, -1,  0)
-                [0, 0, 0], //(-1, -1,  1)
-                [0, 0, 0], //(-1,  0, -1)
-                [0, 0, 0], //(-1,  0,  0)
-                [0, 0, 0], //(-1,  0,  1)
-                [0, 1, 0], //(-1,  1, -1)
-                [0, 1, 0], //(-1,  1,  0)
-                [0, 1, 0], //(-1,  1,  1)
-                [0, 0, 0], //( 0, -1, -1)
-                [0, 0, 0], //( 0, -1,  0)
-                [0, 0, 0], //( 0, -1,  1)
-                [0, 0, 0], //( 0,  0, -1)
-                [0, 0, 0], //( 0,  0,  0)
-                [0, 0, 0], //( 0,  0,  1)
-                [0, 1, 0], //( 0,  1, -1)
-                [0, 1, 0], //( 0,  1,  0)
-                [0, 1, 0], //( 0,  1,  1)
-                [0, 0, 0], //( 1, -1, -1)
-                [0, 0, 0], //( 1, -1,  0)
-                [0, 0, 0], //( 1, -1,  1)
-                [0, 0, 0], //( 1,  0, -1)
-                [0, 0, 0], //( 1,  0,  0)
-                [0, 0, 0], //( 1,  0,  1)
-                [0, 1, 0], //( 1,  1, -1)
-                [0, 1, 0], //( 1,  1,  0)
-                [0, 1, 0], //( 1,  1,  1)
-            ],
-            // (0, 1, 1)
-            [
-                [0, 0, 0], //(-1, -1, -1)
-                [0, 0, 0], //(-1, -1,  0)
-                [0, 0, 1], //(-1, -1,  1)
-                [0, 0, 0], //(-1,  0, -1)
-                [0, 0, 0], //(-1,  0,  0)
-                [0, 0, 1], //(-1,  0,  1)
-                [0, 1, 0], //(-1,  1, -1)
-                [0, 1, 0], //(-1,  1,  0)
-                [0, 1, 1], //(-1,  1,  1)
-                [0, 0, 0], //( 0, -1, -1)
-                [0, 0, 0], //( 0, -1,  0)
-                [0, 0, 1], //( 0, -1,  1)
-                [0, 0, 0], //( 0,  0, -1)
-                [0, 0, 0], //( 0,  0,  0)
-                [0, 0, 1], //( 0,  0,  1)
-                [0, 1, 0], //( 0,  1, -1)
-                [0, 1, 0], //( 0,  1,  0)
-                [0, 1, 1], //( 0,  1,  1)
-                [0, 0, 0], //( 1, -1, -1)
-                [0, 0, 0], //( 1, -1,  0)
-                [0, 0, 1], //( 1, -1,  1)
-                [0, 0, 0], //( 1,  0, -1)
-                [0, 0, 0], //( 1,  0,  0)
-                [0, 0, 1], //( 1,  0,  1)
-                [0, 1, 0], //( 1,  1, -1)
-                [0, 1, 0], //( 1,  1,  0)
-                [0, 1, 1], //( 1,  1,  1)
-            ],
-            // (0, 1,-1)
-            [
-                [0, 0, -1], //(-1, -1, -1)
-                [0, 0, 0],  //(-1, -1,  0)
-                [0, 0, 0],  //(-1, -1,  1)
-                [0, 0, -1], //(-1,  0, -1)
-                [0, 0, 0],  //(-1,  0,  0)
-                [0, 0, 0],  //(-1,  0,  1)
-                [0, 1, -1], //(-1,  1, -1)
-                [0, 1, 0],  //(-1,  1,  0)
-                [0, 1, 0],  //(-1,  1,  1)
-                [0, 0, -1], //( 0, -1, -1)
-                [0, 0, 0],  //( 0, -1,  0)
-                [0, 0, 0],  //( 0, -1,  1)
-                [0, 0, -1], //( 0,  0, -1)
-                [0, 0, 0],  //( 0,  0,  0)
-                [0, 0, 0],  //( 0,  0,  1)
-                [0, 1, -1], //( 0,  1, -1)
-                [0, 1, 0],  //( 0,  1,  0)
-                [0, 1, 0],  //( 0,  1,  1)
-                [0, 0, -1], //( 1, -1, -1)
-                [0, 0, 0],  //( 1, -1,  0)
-                [0, 0, 0],  //( 1, -1,  1)
-                [0, 0, -1], //( 1,  0, -1)
-                [0, 0, 0],  //( 1,  0,  0)
-                [0, 0, 0],  //( 1,  0,  1)
-                [0, 1, -1], //( 1,  1, -1)
-                [0, 1, 0],  //( 1,  1,  0)
-                [0, 1, 0],  //( 1,  1,  1)
-            ],
-            // (0,-1, 0)
-            [
-                [0, -1, 0], //(-1, -1, -1)
-                [0, -1, 0], //(-1, -1,  0)
-                [0, -1, 0], //(-1, -1,  1)
-                [0, 0, 0],  //(-1,  0, -1)
-                [0, 0, 0],  //(-1,  0,  0)
-                [0, 0, 0],  //(-1,  0,  1)
-                [0, 0, 0],  //(-1,  1, -1)
-                [0, 0, 0],  //(-1,  1,  0)
-                [0, 0, 0],  //(-1,  1,  1)
-                [0, -1, 0], //( 0, -1, -1)
-                [0, -1, 0], //( 0, -1,  0)
-                [0, -1, 0], //( 0, -1,  1)
-                [0, 0, 0],  //( 0,  0, -1)
-                [0, 0, 0],  //( 0,  0,  0)
-                [0, 0, 0],  //( 0,  0,  1)
-                [0, 0, 0],  //( 0,  1, -1)
-                [0, 0, 0],  //( 0,  1,  0)
-                [0, 0, 0],  //( 0,  1,  1)
-                [0, -1, 0], //( 1, -1, -1)
-                [0, -1, 0], //( 1, -1,  0)
-                [0, -1, 0], //( 1, -1,  1)
-                [0, 0, 0],  //( 1,  0, -1)
-                [0, 0, 0],  //( 1,  0,  0)
-                [0, 0, 0],  //( 1,  0,  1)
-                [0, 0, 0],  //( 1,  1, -1)
-                [0, 0, 0],  //( 1,  1,  0)
-                [0, 0, 0],  //( 1,  1,  1)
-            ],
-            // (0,-1, 1)
-            [
-                [0, -1, 0], //(-1, -1, -1)
-                [0, -1, 0], //(-1, -1,  0)
-                [0, -1, 1], //(-1, -1,  1)
-                [0, 0, 0],  //(-1,  0, -1)
-                [0, 0, 0],  //(-1,  0,  0)
-                [0, 0, 1],  //(-1,  0,  1)
-                [0, 0, 0],  //(-1,  1, -1)
-                [0, 0, 0],  //(-1,  1,  0)
-                [0, 0, 1],  //(-1,  1,  1)
-                [0, -1, 0], //( 0, -1, -1)
-                [0, -1, 0], //( 0, -1,  0)
-                [0, -1, 1], //( 0, -1,  1)
-                [0, 0, 0],  //( 0,  0, -1)
-                [0, 0, 0],  //( 0,  0,  0)
-                [0, 0, 1],  //( 0,  0,  1)
-                [0, 0, 0],  //( 0,  1, -1)
-                [0, 0, 0],  //( 0,  1,  0)
-                [0, 0, 1],  //( 0,  1,  1)
-                [0, -1, 0], //( 1, -1, -1)
-                [0, -1, 0], //( 1, -1,  0)
-                [0, -1, 1], //( 1, -1,  1)
-                [0, 0, 0],  //( 1,  0, -1)
-                [0, 0, 0],  //( 1,  0,  0)
-                [0, 0, 1],  //( 1,  0,  1)
-                [0, 0, 0],  //( 1,  1, -1)
-                [0, 0, 0],  //( 1,  1,  0)
-                [0, 0, 1],  //( 1,  1,  1)
-            ],
-            // (0,-1,-1)
-            [
-                [0, -1, -1], //(-1, -1, -1)
-                [0, -1, 0],  //(-1, -1,  0)
-                [0, -1, 0],  //(-1, -1,  1)
-                [0, 0, -1],  //(-1,  0, -1)
-                [0, 0, 0],   //(-1,  0,  0)
-                [0, 0, 0],   //(-1,  0,  1)
-                [0, 0, -1],  //(-1,  1, -1)
-                [0, 0, 0],   //(-1,  1,  0)
-                [0, 0, 0],   //(-1,  1,  1)
-                [0, -1, -1], //( 0, -1, -1)
-                [0, -1, 0],  //( 0, -1,  0)
-                [0, -1, 0],  //( 0, -1,  1)
-                [0, 0, -1],  //( 0,  0, -1)
-                [0, 0, 0],   //( 0,  0,  0)
-                [0, 0, 0],   //( 0,  0,  1)
-                [0, 0, -1],  //( 0,  1, -1)
-                [0, 0, 0],   //( 0,  1,  0)
-                [0, 0, 0],   //( 0,  1,  1)
-                [0, -1, -1], //( 1, -1, -1)
-                [0, -1, 0],  //( 1, -1,  0)
-                [0, -1, 0],  //( 1, -1,  1)
-                [0, 0, -1],  //( 1,  0, -1)
-                [0, 0, 0],   //( 1,  0,  0)
-                [0, 0, 0],   //( 1,  0,  1)
-                [0, 0, -1],  //( 1,  1, -1)
-                [0, 0, 0],   //( 1,  1,  0)
-                [0, 0, 0],   //( 1,  1,  1)
-            ],
-            // (1, 0, 0)
-            [
-                [0, 0, 0], //(-1, -1, -1)
-                [0, 0, 0], //(-1, -1,  0)
-                [0, 0, 0], //(-1, -1,  1)
-                [0, 0, 0], //(-1,  0, -1)
-                [0, 0, 0], //(-1,  0,  0)
-                [0, 0, 0], //(-1,  0,  1)
-                [0, 0, 0], //(-1,  1, -1)
-                [0, 0, 0], //(-1,  1,  0)
-                [0, 0, 0], //(-1,  1,  1)
-                [0, 0, 0], //( 0, -1, -1)
-                [0, 0, 0], //( 0, -1,  0)
-                [0, 0, 0], //( 0, -1,  1)
-                [0, 0, 0], //( 0,  0, -1)
-                [0, 0, 0], //( 0,  0,  0)
-                [0, 0, 0], //( 0,  0,  1)
-                [0, 0, 0], //( 0,  1, -1)
-                [0, 0, 0], //( 0,  1,  0)
-                [0, 0, 0], //( 0,  1,  1)
-                [1, 0, 0], //( 1, -1, -1)
-                [1, 0, 0], //( 1, -1,  0)
-                [1, 0, 0], //( 1, -1,  1)
-                [1, 0, 0], //( 1,  0, -1)
-                [1, 0, 0], //( 1,  0,  0)
-                [1, 0, 0], //( 1,  0,  1)
-                [1, 0, 0], //( 1,  1, -1)
-                [1, 0, 0], //( 1,  1,  0)
-                [1, 0, 0], //( 1,  1,  1)
-            ],
-            // (1, 0, 1)
-            [
-                [0, 0, 0], //(-1, -1, -1)
-                [0, 0, 0], //(-1, -1,  0)
-                [0, 0, 1], //(-1, -1,  1)
-                [0, 0, 0], //(-1,  0, -1)
-                [0, 0, 0], //(-1,  0,  0)
-                [0, 0, 1], //(-1,  0,  1)
-                [0, 0, 0], //(-1,  1, -1)
-                [0, 0, 0], //(-1,  1,  0)
-                [0, 0, 1], //(-1,  1,  1)
-                [0, 0, 0], //( 0, -1, -1)
-                [0, 0, 0], //( 0, -1,  0)
-                [0, 0, 1], //( 0, -1,  1)
-                [0, 0, 0], //( 0,  0, -1)
-                [0, 0, 0], //( 0,  0,  0)
-                [0, 0, 1], //( 0,  0,  1)
-                [0, 0, 0], //( 0,  1, -1)
-                [0, 0, 0], //( 0,  1,  0)
-                [0, 0, 1], //( 0,  1,  1)
-                [1, 0, 0], //( 1, -1, -1)
-                [1, 0, 0], //( 1, -1,  0)
-                [1, 0, 1], //( 1, -1,  1)
-                [1, 0, 0], //( 1,  0, -1)
-                [1, 0, 0], //( 1,  0,  0)
-                [1, 0, 1], //( 1,  0,  1)
-                [1, 0, 0], //( 1,  1, -1)
-                [1, 0, 0], //( 1,  1,  0)
-                [1, 0, 1], //( 1,  1,  1)
-            ],
-            // (1, 0,-1)
-            [
-                [0, 0, -1], //(-1, -1, -1)
-                [0, 0, 0],  //(-1, -1,  0)
-                [0, 0, 0],  //(-1, -1,  1)
-                [0, 0, -1], //(-1,  0, -1)
-                [0, 0, 0],  //(-1,  0,  0)
-                [0, 0, 0],  //(-1,  0,  1)
-                [0, 0, -1], //(-1,  1, -1)
-                [0, 0, 0],  //(-1,  1,  0)
-                [0, 0, 0],  //(-1,  1,  1)
-                [0, 0, -1], //( 0, -1, -1)
-                [0, 0, 0],  //( 0, -1,  0)
-                [0, 0, 0],  //( 0, -1,  1)
-                [0, 0, -1], //( 0,  0, -1)
-                [0, 0, 0],  //( 0,  0,  0)
-                [0, 0, 0],  //( 0,  0,  1)
-                [0, 0, -1], //( 0,  1, -1)
-                [0, 0, 0],  //( 0,  1,  0)
-                [0, 0, 0],  //( 0,  1,  1)
-                [1, 0, -1], //( 1, -1, -1)
-                [1, 0, 0],  //( 1, -1,  0)
-                [1, 0, 0],  //( 1, -1,  1)
-                [1, 0, -1], //( 1,  0, -1)
-                [1, 0, 0],  //( 1,  0,  0)
-                [1, 0, 0],  //( 1,  0,  1)
-                [1, 0, -1], //( 1,  1, -1)
-                [1, 0, 0],  //( 1,  1,  0)
-                [1, 0, 0],  //( 1,  1,  1)
-            ],
-            // (1, 1, 0)
-            [
-                [0, 0, 0], //(-1, -1, -1)
-                [0, 0, 0], //(-1, -1,  0)
-                [0, 0, 0], //(-1, -1,  1)
-                [0, 0, 0], //(-1,  0, -1)
-                [0, 0, 0], //(-1,  0,  0)
-                [0, 0, 0], //(-1,  0,  1)
-                [0, 1, 0], //(-1,  1, -1)
-                [0, 1, 0], //(-1,  1,  0)
-                [0, 1, 0], //(-1,  1,  1)
-                [0, 0, 0], //( 0, -1, -1)
-                [0, 0, 0], //( 0, -1,  0)
-                [0, 0, 0], //( 0, -1,  1)
-                [0, 0, 0], //( 0,  0, -1)
-                [0, 0, 0], //( 0,  0,  0)
-                [0, 0, 0], //( 0,  0,  1)
-                [0, 1, 0], //( 0,  1, -1)
-                [0, 1, 0], //( 0,  1,  0)
-                [0, 1, 0], //( 0,  1,  1)
-                [1, 0, 0], //( 1, -1, -1)
-                [1, 0, 0], //( 1, -1,  0)
-                [1, 0, 0], //( 1, -1,  1)
-                [1, 0, 0], //( 1,  0, -1)
-                [1, 0, 0], //( 1,  0,  0)
-                [1, 0, 0], //( 1,  0,  1)
-                [1, 1, 0], //( 1,  1, -1)
-                [1, 1, 0], //( 1,  1,  0)
-                [1, 1, 0], //( 1,  1,  1)
-            ],
-            // (1, 1, 1)
-            [
-                [0, 0, 0], //(-1, -1, -1)
-                [0, 0, 0], //(-1, -1,  0)
-                [0, 0, 1], //(-1, -1,  1)
-                [0, 0, 0], //(-1,  0, -1)
-                [0, 0, 0], //(-1,  0,  0)
-                [0, 0, 0], //(-1,  0,  1)
-                [0, 1, 0], //(-1,  1, -1)
-                [0, 1, 0], //(-1,  1,  0)
-                [0, 1, 1], //(-1,  1,  1)
-                [0, 0, 0], //( 0, -1, -1)
-                [0, 0, 0], //( 0, -1,  0)
-                [0, 0, 1], //( 0, -1,  1)
-                [0, 0, 0], //( 0,  0, -1)
-                [0, 0, 0], //( 0,  0,  0)
-                [0, 0, 1], //( 0,  0,  1)
-                [0, 1, 0], //( 0,  1, -1)
-                [0, 1, 0], //( 0,  1,  0)
-                [0, 1, 1], //( 0,  1,  1)
-                [1, 0, 0], //( 1, -1, -1)
-                [1, 0, 0], //( 1, -1,  0)
-                [1, 0, 1], //( 1, -1,  1)
-                [1, 0, 0], //( 1,  0, -1)
-                [1, 0, 0], //( 1,  0,  0)
-                [1, 0, 1], //( 1,  0,  1)
-                [1, 1, 0], //( 1,  1, -1)
-                [1, 1, 0], //( 1,  1,  0)
-                [1, 1, 1], //( 1,  1,  1)
-            ],
-            // (1, 1,-1)
-            [
-                [0, 0, -1], //(-1, -1, -1)
-                [0, 0, 0],  //(-1, -1,  0)
-                [0, 0, 0],  //(-1, -1,  1)
-                [0, 0, -1], //(-1,  0, -1)
-                [0, 0, 0],  //(-1,  0,  0)
-                [0, 0, 0],  //(-1,  0,  1)
-                [0, 1, -1], //(-1,  1, -1)
-                [0, 1, 0],  //(-1,  1,  0)
-                [0, 1, 0],  //(-1,  1,  1)
-                [0, 0, -1], //( 0, -1, -1)
-                [0, 0, 0],  //( 0, -1,  0)
-                [0, 0, 0],  //( 0, -1,  1)
-                [0, 0, -1], //( 0,  0, -1)
-                [0, 0, 0],  //( 0,  0,  0)
-                [0, 0, 0],  //( 0,  0,  1)
-                [0, 1, -1], //( 0,  1, -1)
-                [0, 1, 0],  //( 0,  1,  0)
-                [0, 1, 0],  //( 0,  1,  1)
-                [1, 0, -1], //( 1, -1, -1)
-                [1, 0, 0],  //( 1, -1,  0)
-                [1, 0, 0],  //( 1, -1,  1)
-                [1, 0, -1], //( 1,  0, -1)
-                [1, 0, 0],  //( 1,  0,  0)
-                [1, 0, 0],  //( 1,  0,  1)
-                [1, 1, -1], //( 1,  1, -1)
-                [1, 1, 0],  //( 1,  1,  0)
-                [1, 1, 0],  //( 1,  1,  1)
-            ],
-            // (1,-1, 0)
-            [
-                [0, -1, 0], //(-1, -1, -1)
-                [0, -1, 0], //(-1, -1,  0)
-                [0, -1, 0], //(-1, -1,  1)
-                [0, 0, 0],  //(-1,  0, -1)
-                [0, 0, 0],  //(-1,  0,  0)
-                [0, 0, 0],  //(-1,  0,  1)
-                [0, 0, 0],  //(-1,  1, -1)
-                [0, 0, 0],  //(-1,  1,  0)
-                [0, 0, 0],  //(-1,  1,  1)
-                [0, -1, 0], //( 0, -1, -1)
-                [0, -1, 0], //( 0, -1,  0)
-                [0, -1, 0], //( 0, -1,  1)
-                [0, 0, 0],  //( 0,  0, -1)
-                [0, 0, 0],  //( 0,  0,  0)
-                [0, 0, 0],  //( 0,  0,  1)
-                [0, 0, 0],  //( 0,  1, -1)
-                [0, 0, 0],  //( 0,  1,  0)
-                [0, 0, 0],  //( 0,  1,  1)
-                [1, -1, 0], //( 1, -1, -1)
-                [1, -1, 0], //( 1, -1,  0)
-                [1, -1, 0], //( 1, -1,  1)
-                [1, 0, 0],  //( 1,  0, -1)
-                [1, 0, 0],  //( 1,  0,  0)
-                [1, 0, 0],  //( 1,  0,  1)
-                [1, 0, 0],  //( 1,  1, -1)
-                [1, 0, 0],  //( 1,  1,  0)
-                [1, 0, 0],  //( 1,  1,  1)
-            ],
-            // (1,-1, 1)
-            [
-                [0, -1, 0], //(-1, -1, -1)
-                [0, -1, 0], //(-1, -1,  0)
-                [0, -1, 1], //(-1, -1,  1)
-                [0, 0, 0],  //(-1,  0, -1)
-                [0, 0, 0],  //(-1,  0,  0)
-                [0, 0, 1],  //(-1,  0,  1)
-                [0, 0, 0],  //(-1,  1, -1)
-                [0, 0, 0],  //(-1,  1,  0)
-                [0, 0, 1],  //(-1,  1,  1)
-                [0, -1, 0], //( 0, -1, -1)
-                [0, -1, 0], //( 0, -1,  0)
-                [0, -1, 1], //( 0, -1,  1)
-                [0, 0, 0],  //( 0,  0, -1)
-                [0, 0, 0],  //( 0,  0,  0)
-                [0, 0, 1],  //( 0,  0,  1)
-                [0, 0, 0],  //( 0,  1, -1)
-                [0, 0, 0],  //( 0,  1,  0)
-                [0, 0, 1],  //( 0,  1,  1)
-                [1, -1, 0], //( 1, -1, -1)
-                [1, -1, 0], //( 1, -1,  0)
-                [1, -1, 1], //( 1, -1,  1)
-                [1, 0, 0],  //( 1,  0, -1)
-                [1, 0, 0],  //( 1,  0,  0)
-                [1, 0, 1],  //( 1,  0,  1)
-                [1, 0, 0],  //( 1,  1, -1)
-                [1, 0, 0],  //( 1,  1,  0)
-                [1, 0, 1],  //( 1,  1,  1)
-            ],
-            // (1,-1,-1)
-            [
-                [0, -1, -1], //(-1, -1, -1)
-                [0, -1, 0],  //(-1, -1,  0)
-                [0, -1, 0],  //(-1, -1,  1)
-                [0, 0, -1],  //(-1,  0, -1)
-                [0, 0, 0],   //(-1,  0,  0)
-                [0, 0, 0],   //(-1,  0,  1)
-                [0, 0, -1],  //(-1,  1, -1)
-                [0, 0, 0],   //(-1,  1,  0)
-                [0, 0, 0],   //(-1,  1,  1)
-                [0, -1, -1], //( 0, -1, -1)
-                [0, -1, 0],  //( 0, -1,  0)
-                [0, -1, 0],  //( 0, -1,  1)
-                [0, 0, -1],  //( 0,  0, -1)
-                [0, 0, 0],   //( 0,  0,  0)
-                [0, 0, 0],   //( 0,  0,  1)
-                [0, 0, -1],  //( 0,  1, -1)
-                [0, 0, 0],   //( 0,  1,  0)
-                [0, 0, 0],   //( 0,  1,  1)
-                [1, -1, -1], //( 1, -1, -1)
-                [1, -1, 0],  //( 1, -1,  0)
-                [1, -1, 0],  //( 1, -1,  1)
-                [1, 0, -1],  //( 1,  0, -1)
-                [1, 0, 0],   //( 1,  0,  0)
-                [1, 0, 0],   //( 1,  0,  1)
-                [1, 0, -1],  //( 1,  1, -1)
-                [1, 0, 0],   //( 1,  1,  0)
-                [1, 0, 0],   //( 1,  1,  1)
-            ],
-            // (-1, 0, 0)
-            [
-                [-1, 0, 0], //(-1, -1, -1)
-                [-1, 0, 0], //(-1, -1,  0)
-                [-1, 0, 0], //(-1, -1,  1)
-                [-1, 0, 0], //(-1,  0, -1)
-                [-1, 0, 0], //(-1,  0,  0)
-                [-1, 0, 0], //(-1,  0,  1)
-                [-1, 0, 0], //(-1,  1, -1)
-                [-1, 0, 0], //(-1,  1,  0)
-                [-1, 0, 0], //(-1,  1,  1)
-                [0, 0, 0],  //( 0, -1, -1)
-                [0, 0, 0],  //( 0, -1,  0)
-                [0, 0, 0],  //( 0, -1,  1)
-                [0, 0, 0],  //( 0,  0, -1)
-                [0, 0, 0],  //( 0,  0,  0)
-                [0, 0, 0],  //( 0,  0,  1)
-                [0, 0, 0],  //( 0,  1, -1)
-                [0, 0, 0],  //( 0,  1,  0)
-                [0, 0, 0],  //( 0,  1,  1)
-                [0, 0, 0],  //( 1, -1, -1)
-                [0, 0, 0],  //( 1, -1,  0)
-                [0, 0, 0],  //( 1, -1,  1)
-                [0, 0, 0],  //( 1,  0, -1)
-                [0, 0, 0],  //( 1,  0,  0)
-                [0, 0, 0],  //( 1,  0,  1)
-                [0, 0, 0],  //( 1,  1, -1)
-                [0, 0, 0],  //( 1,  1,  0)
-                [0, 0, 0],  //( 1,  1,  1)
-            ],
-            // (-1, 0, 1)
-            [
-                [-1, 0, 0], //(-1, -1, -1)
-                [-1, 0, 0], //(-1, -1,  0)
-                [-1, 0, 1], //(-1, -1,  1)
-                [-1, 0, 0], //(-1,  0, -1)
-                [-1, 0, 0], //(-1,  0,  0)
-                [-1, 0, 1], //(-1,  0,  1)
-                [-1, 0, 0], //(-1,  1, -1)
-                [-1, 0, 0], //(-1,  1,  0)
-                [-1, 0, 1], //(-1,  1,  1)
-                [0, 0, 0],  //( 0, -1, -1)
-                [0, 0, 0],  //( 0, -1,  0)
-                [0, 0, 1],  //( 0, -1,  1)
-                [0, 0, 0],  //( 0,  0, -1)
-                [0, 0, 0],  //( 0,  0,  0)
-                [0, 0, 1],  //( 0,  0,  1)
-                [0, 0, 0],  //( 0,  1, -1)
-                [0, 0, 0],  //( 0,  1,  0)
-                [0, 0, 1],  //( 0,  1,  1)
-                [0, 0, 0],  //( 1, -1, -1)
-                [0, 0, 0],  //( 1, -1,  0)
-                [0, 0, 1],  //( 1, -1,  1)
-                [0, 0, 0],  //( 1,  0, -1)
-                [0, 0, 0],  //( 1,  0,  0)
-                [0, 0, 1],  //( 1,  0,  1)
-                [0, 0, 0],  //( 1,  1, -1)
-                [0, 0, 0],  //( 1,  1,  0)
-                [0, 0, 1],  //( 1,  1,  1)
-            ],
-            // (-1, 0,-1)
-            [
-                [-1, 0, -1], //(-1, -1, -1)
-                [-1, 0, 0],  //(-1, -1,  0)
-                [-1, 0, 0],  //(-1, -1,  1)
-                [-1, 0, -1], //(-1,  0, -1)
-                [-1, 0, 0],  //(-1,  0,  0)
-                [-1, 0, 0],  //(-1,  0,  1)
-                [-1, 0, -1], //(-1,  1, -1)
-                [-1, 0, 0],  //(-1,  1,  0)
-                [-1, 0, 0],  //(-1,  1,  1)
-                [0, 0, -1],  //( 0, -1, -1)
-                [0, 0, 0],   //( 0, -1,  0)
-                [0, 0, 0],   //( 0, -1,  1)
-                [0, 0, -1],  //( 0,  0, -1)
-                [0, 0, 0],   //( 0,  0,  0)
-                [0, 0, 0],   //( 0,  0,  1)
-                [0, 0, -1],  //( 0,  1, -1)
-                [0, 0, 0],   //( 0,  1,  0)
-                [0, 0, 0],   //( 0,  1,  1)
-                [0, 0, -1],  //( 1, -1, -1)
-                [0, 0, 0],   //( 1, -1,  0)
-                [0, 0, 0],   //( 1, -1,  1)
-                [0, 0, -1],  //( 1,  0, -1)
-                [0, 0, 0],   //( 1,  0,  0)
-                [0, 0, 0],   //( 1,  0,  1)
-                [0, 0, -1],  //( 1,  1, -1)
-                [0, 0, 0],   //( 1,  1,  0)
-                [0, 0, 0],   //( 1,  1,  1)
-            ],
-            // (-1, 1, 0)
-            [
-                [-1, 0, 0], //(-1, -1, -1)
-                [-1, 0, 0], //(-1, -1,  0)
-                [-1, 0, 0], //(-1, -1,  1)
-                [-1, 0, 0], //(-1,  0, -1)
-                [-1, 0, 0], //(-1,  0,  0)
-                [-1, 0, 0], //(-1,  0,  1)
-                [-1, 1, 0], //(-1,  1, -1)
-                [-1, 1, 0], //(-1,  1,  0)
-                [-1, 1, 0], //(-1,  1,  1)
-                [0, 0, 0],  //( 0, -1, -1)
-                [0, 0, 0],  //( 0, -1,  0)
-                [0, 0, 0],  //( 0, -1,  1)
-                [0, 0, 0],  //( 0,  0, -1)
-                [0, 0, 0],  //( 0,  0,  0)
-                [0, 0, 0],  //( 0,  0,  1)
-                [0, 1, 0],  //( 0,  1, -1)
-                [0, 1, 0],  //( 0,  1,  0)
-                [0, 1, 0],  //( 0,  1,  1)
-                [0, 0, 0],  //( 1, -1, -1)
-                [0, 0, 0],  //( 1, -1,  0)
-                [0, 0, 0],  //( 1, -1,  1)
-                [0, 0, 0],  //( 1,  0, -1)
-                [0, 0, 0],  //( 1,  0,  0)
-                [0, 0, 0],  //( 1,  0,  1)
-                [0, 1, 0],  //( 1,  1, -1)
-                [0, 1, 0],  //( 1,  1,  0)
-                [0, 1, 0],  //( 1,  1,  1)
-            ],
-            // (-1, 1, 1)
-            [
-                [-1, 0, 0], //(-1, -1, -1)
-                [-1, 0, 0], //(-1, -1,  0)
-                [-1, 0, 1], //(-1, -1,  1)
-                [-1, 0, 0], //(-1,  0, -1)
-                [-1, 0, 0], //(-1,  0,  0)
-                [-1, 0, 1], //(-1,  0,  1)
-                [-1, 1, 0], //(-1,  1, -1)
-                [-1, 1, 0], //(-1,  1,  0)
-                [-1, 1, 1], //(-1,  1,  1)
-                [0, 0, 0],  //( 0, -1, -1)
-                [0, 0, 0],  //( 0, -1,  0)
-                [0, 0, 1],  //( 0, -1,  1)
-                [0, 0, 0],  //( 0,  0, -1)
-                [0, 0, 0],  //( 0,  0,  0)
-                [0, 0, 1],  //( 0,  0,  1)
-                [0, 1, 0],  //( 0,  1, -1)
-                [0, 1, 0],  //( 0,  1,  0)
-                [0, 1, 1],  //( 0,  1,  1)
-                [0, 0, 0],  //( 1, -1, -1)
-                [0, 0, 0],  //( 1, -1,  0)
-                [0, 0, 1],  //( 1, -1,  1)
-                [0, 0, 0],  //( 1,  0, -1)
-                [0, 0, 0],  //( 1,  0,  0)
-                [0, 0, 1],  //( 1,  0,  1)
-                [0, 1, 0],  //( 1,  1, -1)
-                [0, 1, 0],  //( 1,  1,  0)
-                [0, 1, 1],  //( 1,  1,  1)
-            ],
-            // (-1, 1,-1)
-            [
-                [-1, 0, -1], //(-1, -1, -1)
-                [-1, 0, 0],  //(-1, -1,  0)
-                [-1, 0, 0],  //(-1, -1,  1)
-                [-1, 0, -1], //(-1,  0, -1)
-                [-1, 0, 0],  //(-1,  0,  0)
-                [-1, 0, 0],  //(-1,  0,  1)
-                [-1, 1, -1], //(-1,  1, -1)
-                [-1, 1, 0],  //(-1,  1,  0)
-                [-1, 1, 0],  //(-1,  1,  1)
-                [0, 0, -1],  //( 0, -1, -1)
-                [0, 0, 0],   //( 0, -1,  0)
-                [0, 0, 0],   //( 0, -1,  1)
-                [0, 0, -1],  //( 0,  0, -1)
-                [0, 0, 0],   //( 0,  0,  0)
-                [0, 0, 0],   //( 0,  0,  1)
-                [0, 1, -1],  //( 0,  1, -1)
-                [0, 1, 0],   //( 0,  1,  0)
-                [0, 1, 0],   //( 0,  1,  1)
-                [0, 0, -1],  //( 1, -1, -1)
-                [0, 0, 0],   //( 1, -1,  0)
-                [0, 0, 0],   //( 1, -1,  1)
-                [0, 0, -1],  //( 1,  0, -1)
-                [0, 0, 0],   //( 1,  0,  0)
-                [0, 0, 0],   //( 1,  0,  1)
-                [0, 1, -1],  //( 1,  1, -1)
-                [0, 1, 0],   //( 1,  1,  0)
-                [0, 1, 0],   //( 1,  1,  1)
-            ],
-            // (-1,-1, 0)
-            [
-                [-1, -1, 0], //(-1, -1, -1)
-                [-1, -1, 0], //(-1, -1,  0)
-                [-1, -1, 0], //(-1, -1,  1)
-                [-1, 0, 0],  //(-1,  0, -1)
-                [-1, 0, 0],  //(-1,  0,  0)
-                [-1, 0, 0],  //(-1,  0,  1)
-                [-1, 0, 0],  //(-1,  1, -1)
-                [-1, 0, 0],  //(-1,  1,  0)
-                [-1, 0, 0],  //(-1,  1,  1)
-                [0, -1, 0],  //( 0, -1, -1)
-                [0, -1, 0],  //( 0, -1,  0)
-                [0, -1, 0],  //( 0, -1,  1)
-                [0, 0, 0],   //( 0,  0, -1)
-                [0, 0, 0],   //( 0,  0,  0)
-                [0, 0, 0],   //( 0,  0,  1)
-                [0, 0, 0],   //( 0,  1, -1)
-                [0, 0, 0],   //( 0,  1,  0)
-                [0, 0, 0],   //( 0,  1,  1)
-                [0, -1, 0],  //( 1, -1, -1)
-                [0, -1, 0],  //( 1, -1,  0)
-                [0, -1, 0],  //( 1, -1,  1)
-                [0, 0, 0],   //( 1,  0, -1)
-                [0, 0, 0],   //( 1,  0,  0)
-                [0, 0, 0],   //( 1,  0,  1)
-                [0, 0, 0],   //( 1,  1, -1)
-                [0, 0, 0],   //( 1,  1,  0)
-                [0, 0, 0],   //( 1,  1,  1)
-            ],
-            // (-1,-1, 1)
-            [
-                [-1, -1, 0], //(-1, -1, -1)
-                [-1, -1, 0], //(-1, -1,  0)
-                [-1, -1, 1], //(-1, -1,  1)
-                [-1, 0, 0],  //(-1,  0, -1)
-                [-1, 0, 0],  //(-1,  0,  0)
-                [-1, 0, 1],  //(-1,  0,  1)
-                [-1, 0, 0],  //(-1,  1, -1)
-                [-1, 0, 0],  //(-1,  1,  0)
-                [-1, 0, 1],  //(-1,  1,  1)
-                [0, -1, 0],  //( 0, -1, -1)
-                [0, -1, 0],  //( 0, -1,  0)
-                [0, -1, 1],  //( 0, -1,  1)
-                [0, 0, 0],   //( 0,  0, -1)
-                [0, 0, 0],   //( 0,  0,  0)
-                [0, 0, 1],   //( 0,  0,  1)
-                [0, 0, 0],   //( 0,  1, -1)
-                [0, 0, 0],   //( 0,  1,  0)
-                [0, 0, 1],   //( 0,  1,  1)
-                [0, -1, 0],  //( 1, -1, -1)
-                [0, -1, 0],  //( 1, -1,  0)
-                [0, -1, 1],  //( 1, -1,  1)
-                [0, 0, 0],   //( 1,  0, -1)
-                [0, 0, 0],   //( 1,  0,  0)
-                [0, 0, 1],   //( 1,  0,  1)
-                [0, 0, 0],   //( 1,  1, -1)
-                [0, 0, 0],   //( 1,  1,  0)
-                [0, 0, 1],   //( 1,  1,  1)
-            ],
-            // (-1,-1,-1)
-            [
-                [-1, -1, -1], //(-1, -1, -1)
-                [-1, -1, 0],  //(-1, -1,  0)
-                [-1, -1, 0],  //(-1, -1,  1)
-                [-1, 0, -1],  //(-1,  0, -1)
-                [-1, 0, 0],   //(-1,  0,  0)
-                [-1, 0, 0],   //(-1,  0,  1)
-                [-1, 0, -1],  //(-1,  1, -1)
-                [-1, 0, 0],   //(-1,  1,  0)
-                [-1, 0, 0],   //(-1,  1,  1)
-                [0, -1, -1],  //( 0, -1, -1)
-                [0, -1, 0],   //( 0, -1,  0)
-                [0, -1, 0],   //( 0, -1,  1)
-                [0, 0, -1],   //( 0,  0, -1)
-                [0, 0, 0],    //( 0,  0,  0)
-                [0, 0, 0],    //( 0,  0,  1)
-                [0, 0, -1],   //( 0,  1, -1)
-                [0, 0, 0],    //( 0,  1,  0)
-                [0, 0, 0],    //( 0,  1,  1)
-                [0, -1, -1],  //( 1, -1, -1)
-                [0, -1, 0],   //( 1, -1,  0)
-                [0, -1, 0],   //( 1, -1,  1)
-                [0, 0, -1],   //( 1,  0, -1)
-                [0, 0, 0],    //( 1,  0,  0)
-                [0, 0, 0],    //( 1,  0,  1)
-                [0, 0, -1],   //( 1,  1, -1)
-                [0, 0, 0],    //( 1,  1,  0)
-                [0, 0, 0],    //( 1,  1,  1)
-            ],
-        ];
-        Self { di, index, pbc }
+        let mut pbc = [[[0i8; 3]; 27]; 27];
+        for (class, (di, pbc)) in di.iter_mut().zip(pbc.iter_mut()).enumerate()
+        {
+            // the side of each axis this class sits on: 0 bulk, 1 upper, -1 lower
+            let edges = [class / 9, (class / 3) % 3, class % 3]
+                .map(|c| [0, 1, -1][c] as isize);
+            for (neighbour, (di, pbc)) in
+                di.iter_mut().zip(pbc.iter_mut()).enumerate()
+            {
+                let steps = [neighbour / 9, (neighbour / 3) % 3, neighbour % 3]
+                    .map(|s| s as isize - 1);
+                for axis in 0..3 {
+                    // stepping off the edge we sit on wraps around the cell
+                    let wrap = if steps[axis] == edges[axis] {
+                        steps[axis]
+                    } else {
+                        0
+                    };
+                    *di += (steps[axis] - wrap * dims[axis]) * strides[axis];
+                    pbc[axis] = wrap as i8;
+                }
+            }
+        }
+        Self {
+            di,
+            pbc,
+            index: Shift::index_gen(size),
+        }
     }
 }
 
@@ -1938,23 +228,27 @@ pub struct Size {
 
 impl Size {
     /// The length of the flattened array for the density data in 3d
+    ///
+    /// # Panics
+    /// Panics if any dimension is less than 2 or the total size is too large
+    /// to be stored in the voxel map.
     fn new(x: usize, y: usize, z: usize) -> Self {
-        let x = x as isize;
-        let y = y as isize;
-        let z = z as isize;
-        let total = match x.checked_mul(y) {
-            Some(xy) => match xy.checked_mul(z) {
-                Some(xyz) => xyz as usize,
-                None => panic!("Grid size is too large!"),
-            },
-            None => panic!("Grid size is too large!"),
-        };
-        // VoxelMap stores the maxima of weighs as -2 - maxima the largest
-        // value maxima can be is Size::total so must check
-        if total as isize + 1 == isize::MAX {
-            panic!("Grid size is too large!");
+        if x < 2 || y < 2 || z < 2 {
+            panic!("Grid must be at least 2 voxels in every direction!");
         }
-        Self { x, y, z, total }
+        // VoxelMap stores the index of weights as -2 - index so the total
+        // must leave room for this encoding in an isize.
+        let total = x
+            .checked_mul(y)
+            .and_then(|xy| xy.checked_mul(z))
+            .filter(|&t| t < isize::MAX as usize - 1)
+            .unwrap_or_else(|| panic!("Grid size is too large!"));
+        Self {
+            x: x as isize,
+            y: y as isize,
+            z: z as isize,
+            total,
+        }
     }
 }
 
@@ -1980,29 +274,75 @@ mod tests {
     }
 
     #[test]
-    fn grid_full_shift() {
-        let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
-        let grid = Grid::new([3, 4, 5], lattice.to_cartesian, [0., 0., 0.0]);
-        let shift = [
-            -26, -25, -24, -21, -20, -19, -16, -15, -14, -6, -5, -4, -1, 1, 4,
-            5, 6, 14, 15, 16, 19, 20, 21, 24, 25, 26,
-        ];
-        assert_eq!(shift, grid.full_shift(26))
+    fn grid_to_3d_and_cartesian() {
+        let grid = Grid::new(
+            [3, 4, 5],
+            [[3., 0., 0.], [0., 4., 0.], [0., 0., 5.]],
+            [0.5, 0.5, 0.5],
+        );
+        // index = x * 20 + y * 5 + z
+        assert_eq!(grid.to_3d(2 * 20 + 3 * 5 + 4), [2, 3, 4]);
+        assert_eq!(grid.to_3d(0), [0, 0, 0]);
+        // each voxel is 1 x 1 x 1 so cartesian = index + origin
+        assert_eq!(grid.to_cartesian(2 * 20 + 3 * 5 + 4), [2.5, 3.5, 4.5]);
     }
 
     #[test]
-    fn grid_reduced_shift() {
-        let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
-        let grid = Grid::new([3, 4, 5], lattice.to_cartesian, [0., 0., 0.0]);
-        let shift = [20, -20, 5, -5, 1, -1];
-        assert_eq!(shift, grid.reduced_shift(26))
+    fn grid_voronoi_shifts_bulk() {
+        // cubic lattice so the Voronoi neighbours are the 6 nearest voxels
+        let grid = Grid::new(
+            [4, 4, 4],
+            [[4., 0., 0.], [0., 4., 0.], [0., 0., 4.]],
+            [0.; 3],
+        );
+        // voxel (1, 1, 1) is in the bulk so no images are crossed
+        let p = 16 + 4 + 1;
+        let mut neighbours = grid
+            .voronoi_shifts(p)
+            .map(|((pt, image), alpha)| {
+                assert!(image.is_zero());
+                assert!((alpha - 1.0).abs() < 1e-10);
+                pt
+            })
+            .collect::<Vec<isize>>();
+        neighbours.sort_unstable();
+        assert_eq!(
+            neighbours,
+            vec![p - 16, p - 4, p - 1, p + 1, p + 4, p + 16]
+        );
     }
 
     #[test]
-    fn grid_gradient_shift() {
-        let lattice = Lattice::new([[3., 3., 0.], [-3., 3., 0.], [1., 1., 1.]]);
-        let grid = Grid::new([3, 4, 5], lattice.to_cartesian, [0., 0., 0.0]);
-        assert_eq!(1, grid.gradient_shift(26, [0., 0., 1.]))
+    fn grid_voronoi_shifts_periodic() {
+        let grid = Grid::new(
+            [4, 4, 4],
+            [[4., 0., 0.], [0., 4., 0.], [0., 0., 4.]],
+            [0.; 3],
+        );
+        // voxel (0, 0, 0) wraps in the negative direction on every axis
+        let mut shifts = grid
+            .voronoi_shifts(0)
+            .map(|((pt, image), _)| (pt, image.decode()))
+            .collect::<Vec<_>>();
+        shifts.sort_unstable();
+        assert_eq!(
+            shifts,
+            vec![
+                (1, [0, 0, 0]),
+                (3, [0, 0, -1]),
+                (4, [0, 0, 0]),
+                (12, [0, -1, 0]),
+                (16, [0, 0, 0]),
+                (48, [-1, 0, 0]),
+            ]
+        );
+        // the nocheck variant visits the same voxels
+        let mut nocheck = grid
+            .voronoi_shifts_nocheck(0)
+            .map(|(pt, _)| pt)
+            .collect::<Vec<isize>>();
+        nocheck.sort_unstable();
+        assert_eq!(nocheck, vec![1, 3, 4, 12, 16, 48]);
     }
 
     #[test]
@@ -2139,7 +479,18 @@ mod tests {
 
     #[test]
     fn shift_get() {
-        assert_eq!(Shift::new(&Size::new(3, 4, 5)).get(25).0[0], -21)
+        let shift = Shift::new(&Size::new(3, 4, 5));
+        // voxel 25 = (1, 1, 0) is on the lower z edge
+        let (di, pbc) = shift.get(25);
+        assert_eq!(di[0], -21);
+        assert_eq!(pbc[0], [0, 0, -1]);
+        assert_eq!(pbc[13], [0, 0, 0]);
+        assert_eq!(pbc[14], [0, 0, 0]);
+        // voxel 59 = (2, 3, 4) is on the upper edge of every axis
+        let (di, pbc) = shift.get(59);
+        assert_eq!(di[26], -59);
+        assert_eq!(pbc[26], [1, 1, 1]);
+        assert_eq!(pbc[0], [0, 0, 0]);
     }
 
     #[test]
