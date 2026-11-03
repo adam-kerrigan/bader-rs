@@ -321,7 +321,7 @@ pub fn cage_pruning(
 /// # Returns
 /// A cleaner list of unique critical points.
 pub fn critical_point_merge(mut cps: Vec<CriticalPoint>) -> Vec<CriticalPoint> {
-    cps.sort_unstable_by(|a, b| b.atoms.len().cmp(&a.atoms.len()));
+    cps.sort_unstable_by_key(|a| std::cmp::Reverse(a.atoms.len()));
     let mut merged_points: Vec<CriticalPoint> = Vec::with_capacity(cps.len());
     // the kept points that contain each atom index
     let mut inverted_index: IntMap<u32, Vec<usize>> = IntMap::default();
